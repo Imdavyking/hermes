@@ -118,35 +118,16 @@ pub impl FieldImpl of FieldTrait {
         }
     }
 }
+use core::integer::u512_safe_div_rem_by_u256;
 
 // -------------------------------------------------------
 // mulmod for u256 — computes (a * b) % m
 // Uses u512 via splitting into 128-bit limbs
 // -------------------------------------------------------
+
+use core::num::traits::WideMul;
 fn field_mulmod(a: u256, b: u256, m: u256) -> u256 {
-    // a = a_hi * 2^128 + a_lo
-    // b = b_hi * 2^128 + b_lo
-    // a * b = (a_hi*b_hi)*2^256 + (a_hi*b_lo + a_lo*b_hi)*2^128 + a_lo*b_lo
-    // We need this mod m where m is ~254 bits
-
-    let a_lo: u256 = a.low.into();
-    let a_hi: u256 = a.high.into();
-    let b_lo: u256 = b.low.into();
-    let b_hi: u256 = b.high.into();
-
-    let shift: u256 = 0x100000000000000000000000000000000; // 2^128
-
-    // partial products (all fit in u256 since inputs are 128-bit)
-    let lo_lo = a_lo * b_lo;
-    let lo_hi = a_lo * b_hi;
-    let hi_lo = a_hi * b_lo;
-    let hi_hi = a_hi * b_hi;
-
-    // combine — this is approximate; for production use a proper u512 library
-    // or Cairo's built-in integer circuits
-    // For hackathon: use a library like cairo-math or integer extension
-    let mid = (lo_hi + hi_lo) * shift;
-    let result = lo_lo + mid + hi_hi * shift * shift;
-
-    result % m
+    let wide = a.wide_mul(b);
+    let (_, rem) = u512_safe_div_rem_by_u256(wide, m.try_into().expect('division by zero'));
+    rem
 }

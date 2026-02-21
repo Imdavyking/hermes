@@ -6,6 +6,7 @@ import {
   useReadContract,
   useSendTransaction,
 } from "@starknet-react/core";
+import { CallData, uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import abi from "../../assets/json/abi";
@@ -312,14 +313,27 @@ export default function UmbraHome() {
     if (!account || !contract || !commitment) return;
     setDepositLoading(true);
     try {
+      const commitData = uint256.bnToUint256(BigInt(commitment!));
+      const callData = CallData.compile([commitData]);
+
+      await account.estimateInvokeFee({
+        contractAddress: CONTRACT_ADDRESS,
+        entrypoint: "deposit",
+        calldata: callData,
+      });
       const tx = await account.execute([
-        contract.populate("deposit", [BigInt(commitment)]),
+        contract.populate("deposit", [commitData]),
       ]);
       await account.waitForTransaction(tx.transaction_hash);
       toast.success("Deposited into Umbra pool 🛡️");
       setStep(4);
     } catch (err: any) {
-      toast.error("Deposit failed: " + (err?.message ?? err));
+      const msg =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+
+      toast.error(msg);
     } finally {
       setDepositLoading(false);
     }
