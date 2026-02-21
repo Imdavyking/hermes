@@ -68,7 +68,7 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
       const noirInput = {
         // public inputs
         root: merkleProof.root.toString(),
-        nullifier_hash: nullifierHash,
+        nullfier_hash: nullifierHash,
         recipient,
         // private inputs
         nullifier: note.nullifier,
@@ -76,8 +76,15 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
         merkle_proof: merkleProof.pathElements.map((el) => el.toString()),
         is_even: merkleProof.pathIndices.map((el) => el % 2 === 0),
       };
+      const toastId = toast.loading("Generating ZK proof…");
 
-      const { callData } = await generateProof(noirInput);
+      const { callData } = await generateProof(noirInput, (message) => {
+        toast.update(toastId, { render: message });
+      });
+
+      console.log({ callData });
+
+      console.log("Proof generated, submitting transaction...");
 
       const tx = await account.execute([
         contract.populate("withdraw", [
