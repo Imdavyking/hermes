@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useAccount, useReadContract } from "@starknet-react/core";
+import { useEffect, useState } from "react";
+import { useAccount, useReadContract, useContract } from "@starknet-react/core";
 import { RiShieldKeyholeFill } from "react-icons/ri";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import abi from "../../assets/json/abi";
@@ -12,10 +12,35 @@ import {
 } from "./shared";
 import DepositTab from "./deposit-tab";
 import WithdrawTab from "./withdraw-tab";
+import { toast } from "react-toastify";
+
+const erc20Abi = [
+  {
+    name: "balance_of",
+    type: "function",
+    inputs: [
+      {
+        name: "account",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+    ],
+    outputs: [{ type: "core::integer::u256" }],
+    state_mutability: "view",
+  },
+  {
+    name: "decimals",
+    type: "function",
+    inputs: [],
+    outputs: [{ type: "core::integer::u8" }],
+    state_mutability: "view",
+  },
+] as const;
 
 export default function UmbraHome() {
   const { address } = useAccount();
   const [tab, setTab] = useState<Tab>("deposit");
+  const [pbtcBalance, setPBTCBalance] = useState<bigint | null>(null);
+  const [pstrkBalance, setPSTRKBalance] = useState<bigint | null>(null);
 
   const { data: currentRoot } = useReadContract({
     abi,
@@ -53,6 +78,65 @@ export default function UmbraHome() {
     refetchInterval: 30000,
   });
 
+  const { data: pbtcAddress } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "pbtc_address",
+    args: [],
+  });
+
+  const { data: pstrkAddress } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "pstrk_address",
+    args: [],
+  });
+
+  const { contract: erc20Contract } = useContract({
+    abi: erc20Abi,
+    address: CONTRACT_ADDRESS,
+  });
+
+  useEffect(() => {
+    if (!address || !erc20Contract || !pbtcAddress || !pstrkAddress) return;
+
+    const fetchBalances = async () => {
+      try {
+        for (let i = 0; i < 2; i++) {
+          const tokenAddress = i === 0 ? pbtcAddress : pstrkAddress;
+          erc20Contract.address =
+            `0x${BigInt(tokenAddress).toString(16)}` as `0x${string}`;
+
+          const balance = await erc20Contract.call("balance_of", [address], {
+            parseResponse: true,
+          });
+          const decimals = await erc20Contract.call("decimals", [], {
+            parseResponse: true,
+          });
+          console.log(
+            `Fetched balance for ${tokenAddress}:`,
+            balance,
+            decimals,
+          );
+
+          const finalBal =
+            BigInt(balance.toString()) / BigInt(10) ** BigInt(decimals);
+          if (i === 0) {
+            setPBTCBalance(finalBal);
+          } else {
+            setPSTRKBalance(finalBal);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch balances:", err);
+      }
+    };
+
+    fetchBalances();
+    const interval = setInterval(fetchBalances, 8000);
+    return () => clearInterval(interval);
+  }, [address, erc20Contract, pbtcAddress, pstrkAddress]);
+
   const poolDepositCount = leafCount ? Number(leafCount) : 0;
   const btcPriceDisplay = btcPrice
     ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
@@ -60,6 +144,15 @@ export default function UmbraHome() {
   const payoutDisplay = btcRate
     ? `${formatRate8(BigInt((btcRate as bigint).toString()))} pSTRK`
     : "—";
+
+  const pbtcDisplay =
+    pbtcBalance != null
+      ? `${(Number(pbtcBalance as bigint) / 1e8).toFixed(4)}`
+      : "—";
+  const pstrkDisplay =
+    pstrkBalance != null
+      ? `${(Number(pstrkBalance as bigint) / 1e18).toFixed(2)}`
+      : "—";
 
   return (
     <div
@@ -71,7 +164,6 @@ export default function UmbraHome() {
         overflowX: "hidden",
       }}
     >
-      {/* Grid background */}
       <div
         style={{
           position: "fixed",
@@ -85,7 +177,6 @@ export default function UmbraHome() {
           zIndex: 0,
         }}
       />
-      {/* Radial bloom */}
       <div
         style={{
           position: "fixed",
@@ -173,13 +264,13 @@ export default function UmbraHome() {
           )}
         </header>
 
-        {/* ── Stats ── */}
+        {/* ── Pool stats ── */}
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr 1fr",
             gap: "0.6rem",
-            marginBottom: "1.75rem",
+            marginBottom: "0.6rem",
           }}
         >
           <StatCard label="Pool depth" value={poolDepositCount} />
@@ -198,6 +289,22 @@ export default function UmbraHome() {
             value={currentRoot ? hexRoot(currentRoot) : "—"}
           />
         </div>
+
+        {/* ── Wallet balances — only when connected ── */}
+        {address && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "0.6rem",
+              marginBottom: "1.75rem",
+            }}
+          >
+            <StatCard label="Your pBTC" value={pbtcDisplay} />
+            <StatCard label="Your pSTRK" value={pstrkDisplay} />
+          </div>
+        )}
+        {!address && <div style={{ marginBottom: "1.75rem" }} />}
 
         {/* ── Tabs ── */}
         <div
