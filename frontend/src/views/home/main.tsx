@@ -11,7 +11,12 @@ import { CallData, hash, uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
+import {
+  CONTRACT_ADDRESS,
+  DEPLOY_BLOCK,
+  U128_MAX,
+  U64_MAX,
+} from "../../utils/constants";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import { merkleTree } from "../../helpers/merkle_tree";
 
@@ -328,33 +333,21 @@ export default function UmbraHome() {
       const tx = await account.execute(
         [contract.populate("deposit", [commitData])],
         {
+          maxFee: U128_MAX,
           resourceBounds: {
-            ...gas.resourceBounds,
+            l1_gas: gas.resourceBounds.l1_gas,
+            l1_data_gas: gas.resourceBounds.l1_data_gas,
             l2_gas: {
-              max_price_per_unit:
-                BigInt(gas.resourceBounds.l2_gas.max_price_per_unit) * 3n,
-              max_amount: BigInt(gas.resourceBounds.l2_gas.max_amount) * 3n, // hex string
+              max_amount: U64_MAX,
+              max_price_per_unit: U128_MAX,
             },
           },
+          version: "0x3",
         },
       );
 
-      console.log(
-        JSON.stringify(
-          {
-            resourceBounds: {
-              ...gas.resourceBounds,
-              l2_gas: {
-                ...gas.resourceBounds.l2_gas,
-                max_amount: BigInt(gas.resourceBounds.l2_gas.max_amount) * 10n, // hex string
-              },
-            },
-          },
-          (_, v) => (typeof v === "bigint" ? v.toString() : v),
-        ),
-      );
-
-      await account.waitForTransaction(tx.transaction_hash);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      console.log("Deposit receipt:", receipt);
       console.log("Deposit tx:", tx);
       toast.success(`Deposited into Umbra pool 🛡️`);
       setStep(4);
