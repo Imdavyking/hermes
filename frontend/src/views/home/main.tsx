@@ -4,14 +4,16 @@ import {
   useAccount,
   useContract,
   useReadContract,
+  useProvider,
   useSendTransaction,
 } from "@starknet-react/core";
-import { CallData, uint256 } from "starknet";
+import { CallData, hash, uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS } from "../../utils/constants";
+import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
+import { merkleTree } from "../../helpers/merkle_tree";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -192,7 +194,7 @@ export default function UmbraHome() {
   const [noteReady, setNoteReady] = useState(false);
   const [mintLoading, setMintLoading] = useState(false);
   const [depositLoading, setDepositLoading] = useState(false);
-
+  const { provider } = useProvider();
   // ── Withdraw state ─────────────────────────────────────────────────────────
   const [withdrawNote, setWithdrawNote] = useState("");
   const [recipient, setRecipient] = useState("");
@@ -339,9 +341,15 @@ export default function UmbraHome() {
     }
   };
 
+  type CommitmentData = {
+    nullifier: `0x${string}`;
+    secret: `0x${string}`;
+    commitment: `0x${string}`;
+  };
   // ── Withdraw ───────────────────────────────────────────────────────────────
   const handleWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!account || !contract) {
       toast.error("Connect your wallet.");
       return;
@@ -350,23 +358,63 @@ export default function UmbraHome() {
     setWithdrawError(null);
     setWithdrawLoading(true);
     try {
-      const note = JSON.parse(withdrawNote);
+      const note: CommitmentData = JSON.parse(withdrawNote);
+      console.log("Parsed note:", note);
+      const DEPOSIT_SELECTOR = hash.getSelectorFromName("Deposit");
+
+      const depositEvents = await provider.getEvents({
+        address: CONTRACT_ADDRESS,
+        keys: [[DEPOSIT_SELECTOR]],
+        from_block: { block_number: +DEPLOY_BLOCK },
+        to_block: "latest",
+        chunk_size: 100,
+      });
+
+      console.log({ depositEvents });
+
+      const commitments = depositEvents.events.map((e) => {
+        console.log({ e });
+        return "";
+      });
+
+      //     const nullifier = Fr.fromString(inputs[0]);
+      // const secret = Fr.fromString(inputs[1]);
+      // const recipient = Fr.fromString(inputs[2]);
+
+      // const nullfierHash = await bb.poseidon2Hash([nullifier]);
+      // const commitment = await bb.poseidon2Hash([nullifier, secret]);
+
+      // const leaves = inputs.slice(3);
+      // const tree = await merkleTree(leaves);
+      // const merkleProof = tree.proof(tree.getIndex(commitment.toString()));
+
+      // const input = {
+      //   // public inputs
+      //   root: merkleProof.root.toString(),
+      //   nullfier_hash: nullfierHash.toString(),
+      //   recipient: recipient.toString(),
+      //   // private inputs
+      //   secret: secret.toString(),
+      //   nullifier: nullifier.toString(),
+      //   merkle_proof: merkleProof.pathElements.map((el) => el.toString()),
+      //   is_even: merkleProof.pathIndices.map((el) => el % 2 === 0),
+      // };
       // TODO: compute merkle proof offchain, run Noir circuit
       // const { proof } = await generateWithdrawProof(note, currentRoot)
-      const proof: bigint[] = []; // placeholder
+      // const proof: bigint[] = []; // placeholder
 
-      const tx = await account.execute([
-        contract.populate("withdraw", [
-          proof,
-          BigInt(currentRoot as any), // current Merkle root
-          note.nullifier, // nullifier_hash = hash(nullifier)
-          recipient,
-        ]),
-      ]);
-      await account.waitForTransaction(tx.transaction_hash);
-      toast.success("Withdrawn! pSTRK minted to your wallet 🎉");
-      setWithdrawNote("");
-      setRecipient("");
+      // const tx = await account.execute([
+      //   contract.populate("withdraw", [
+      //     proof,
+      //     BigInt(currentRoot as any), // current Merkle root
+      //     note.nullifier, // nullifier_hash = hash(nullifier)
+      //     recipient,
+      //   ]),
+      // ]);
+      // await account.waitForTransaction(tx.transaction_hash);
+      // toast.success("Withdrawn! pSTRK minted to your wallet 🎉");
+      // setWithdrawNote("");
+      // setRecipient("");
     } catch (err: any) {
       const msg = err?.message ?? String(err);
       setWithdrawError(msg);
