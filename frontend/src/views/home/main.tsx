@@ -317,17 +317,46 @@ export default function UmbraHome() {
     try {
       const commitData = uint256.bnToUint256(BigInt(commitment!));
       const callData = CallData.compile([commitData]);
-
-      await account.estimateInvokeFee({
+      const gas = await account.estimateInvokeFee({
         contractAddress: CONTRACT_ADDRESS,
         entrypoint: "deposit",
         calldata: callData,
       });
-      const tx = await account.execute([
-        contract.populate("deposit", [commitData]),
-      ]);
+
+      console.log("Estimated fee:", gas);
+
+      const tx = await account.execute(
+        [contract.populate("deposit", [commitData])],
+        {
+          resourceBounds: {
+            ...gas.resourceBounds,
+            l2_gas: {
+              max_price_per_unit:
+                BigInt(gas.resourceBounds.l2_gas.max_price_per_unit) * 3n,
+              max_amount: BigInt(gas.resourceBounds.l2_gas.max_amount) * 3n, // hex string
+            },
+          },
+        },
+      );
+
+      console.log(
+        JSON.stringify(
+          {
+            resourceBounds: {
+              ...gas.resourceBounds,
+              l2_gas: {
+                ...gas.resourceBounds.l2_gas,
+                max_amount: BigInt(gas.resourceBounds.l2_gas.max_amount) * 10n, // hex string
+              },
+            },
+          },
+          (_, v) => (typeof v === "bigint" ? v.toString() : v),
+        ),
+      );
+
       await account.waitForTransaction(tx.transaction_hash);
-      toast.success("Deposited into Umbra pool 🛡️");
+      console.log("Deposit tx:", tx);
+      toast.success(`Deposited into Umbra pool 🛡️`);
       setStep(4);
     } catch (err: any) {
       const msg =
