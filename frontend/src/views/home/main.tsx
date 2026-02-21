@@ -5,7 +5,6 @@ import {
   useContract,
   useReadContract,
   useProvider,
-  useSendTransaction,
 } from "@starknet-react/core";
 import { CallData, hash, uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload, FaUpload } from "react-icons/fa";
@@ -19,6 +18,7 @@ import {
 } from "../../utils/constants";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import { merkleTree } from "../../helpers/merkle_tree";
+import { useZkVerifier } from "../../helpers/gen_proof";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -205,6 +205,7 @@ export default function UmbraHome() {
   const [recipient, setRecipient] = useState("");
   const [withdrawLoading, setWithdrawLoading] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
+  const { generateProof } = useZkVerifier();
 
   // ── Chain reads ────────────────────────────────────────────────────────────
   const { data: currentRoot } = useReadContract({
@@ -392,23 +393,47 @@ export default function UmbraHome() {
         chunk_size: 100,
       });
 
-      console.log({ depositEvents });
-
       const commitments = depositEvents.events.map((e) => {
-        console.log({ e });
-        return "";
+        // commitment is the first key after the selector
+        const low = BigInt(e.keys[1]);
+        const high = BigInt(e.keys[2]);
+        // u256 is stored as two felts (low, high)
+        return ((high << 128n) | low).toString();
       });
 
-      //     const nullifier = Fr.fromString(inputs[0]);
-      // const secret = Fr.fromString(inputs[1]);
-      // const recipient = Fr.fromString(inputs[2]);
+      console.log("Commitments from events:", commitments);
+      console.log("current commitment:", note.commitment);
+
+      const tree = await merkleTree(commitments);
+      const merkleProof = tree.proof(
+        tree.getIndex(BigInt(note.commitment).toString()),
+      );
+
+      const nullifierHash =
+        "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
+
+      const noirInput = {
+        // public inputs
+        root: merkleProof.root.toString(),
+        nullifier_hash: nullifierHash,
+        // private inputs
+        nullifier: note.nullifier,
+        secret: note.secret,
+        merkle_proof: merkleProof.pathElements.map((el) => el.toString()),
+        is_even: merkleProof.pathIndices.map((el) => el % 2 === 0),
+      };
+
+      const { callData } = await generateProof(noirInput);
+      console.log("Generated proof callData:", callData);
+
+      // recipient
 
       // const nullfierHash = await bb.poseidon2Hash([nullifier]);
       // const commitment = await bb.poseidon2Hash([nullifier, secret]);
 
       // const leaves = inputs.slice(3);
-      // const tree = await merkleTree(leaves);
-      // const merkleProof = tree.proof(tree.getIndex(commitment.toString()));
+      //
+      //
 
       // const input = {
       //   // public inputs
