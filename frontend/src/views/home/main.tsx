@@ -12,7 +12,6 @@ import {
 } from "./shared";
 import DepositTab from "./deposit-tab";
 import WithdrawTab from "./withdraw-tab";
-import { toast } from "react-toastify";
 
 const erc20Abi = [
   {
