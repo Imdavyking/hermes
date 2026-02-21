@@ -10,7 +10,17 @@ mod MockSTRK {
     #[abi(embed_v0)]
     impl ERC20Impl = ERC20Component::ERC20Impl<ContractState>;
     #[abi(embed_v0)]
-    impl ERC20MetadataImpl = ERC20Component::ERC20MetadataImpl<ContractState>;
+    impl ERC20MetadataImpl of openzeppelin::token::erc20::interface::IERC20Metadata<ContractState> {
+        fn name(self: @ContractState) -> ByteArray {
+            self.erc20.name()
+        }
+        fn symbol(self: @ContractState) -> ByteArray {
+            self.erc20.symbol()
+        }
+        fn decimals(self: @ContractState) -> u8 {
+            18
+        }
+    }
     impl ERC20InternalImpl = ERC20Component::InternalImpl<ContractState>;
 
     #[storage]
