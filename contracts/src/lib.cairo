@@ -78,8 +78,8 @@ mod PrivateSwap {
 
     // 1 pBTC — 8 decimals
     const DENOMINATION: u256 = 100_000_000;
-    // Merkle tree depth — supports up to 2^20 = ~1M deposits
-    const TREE_DEPTH: u32 = 20;
+    // Merkle tree depth — supports up to 2^10 = ~1k deposits
+    const TREE_DEPTH: u32 = 10;
     // Pragma pair keys
     const BTC_USD: felt252 = 'BTC/USD';
     const STRK_USD: felt252 = 'STRK/USD';

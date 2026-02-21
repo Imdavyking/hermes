@@ -1,10 +1,10 @@
 use dep::poseidon::poseidon2;
 
-pub fn compute_merkle_root(leaf: Field, merkle_proof: [Field; 20], is_even: [bool; 20]) -> Field {
+pub fn compute_merkle_root(leaf: Field, merkle_proof: [Field; 10], is_even: [bool; 10]) -> Field {
     // temporary variable to store the hash for the current level we are working on
     let mut hash = leaf;
     // increment through the levels
-    for i in 0..20 {
+    for i in 0..10 {
         // if the current level is even, we hash the current hash and the proof
         let (left, right) = if is_even[i] {
             (hash, merkle_proof[i])

@@ -8,8 +8,8 @@ fn main(
     // private inputs
     secret: Field,
     nullifier: Field,
-    merkle_proof: [Field; 20],
-    is_even: [bool; 20],
+    merkle_proof: [Field; 10],
+    is_even: [bool; 10],
 ) {
     // compute the commitment Poseidon(nullifier, secret)
     let commitment = poseidon2::Poseidon2::hash([nullifier, secret], 2);
