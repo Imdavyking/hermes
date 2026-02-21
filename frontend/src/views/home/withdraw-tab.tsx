@@ -5,11 +5,11 @@ import { hash } from "starknet";
 import { FaSpinner, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
-import abi from "../assets/json/abi";
-import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../utils/constants";
-import { merkleTree } from "../helpers/merkle_tree";
-import { useZkVerifier } from "../helpers/gen_proof";
-import { CommitmentData, btnPrimary, inputStyle } from "./shared";
+import abi from "../../assets/json/abi";
+import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
+import { merkleTree } from "../../helpers/merkle_tree";
+import { useZkVerifier } from "../../helpers/gen_proof";
+import { type CommitmentData, btnPrimary, inputStyle } from "./shared";
 
 interface WithdrawTabProps {
   payoutDisplay: string;
@@ -58,10 +58,12 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
       const noteCommitment = BigInt(note.commitment).toString();
       const tree = await merkleTree(commitments);
       const leafIndex = tree.getIndex(noteCommitment);
-      if (leafIndex === -1) throw new Error("Commitment not found in deposit events");
+      if (leafIndex === -1)
+        throw new Error("Commitment not found in deposit events");
 
       const merkleProof = tree.proof(leafIndex);
-      const nullifierHash = "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
+      const nullifierHash =
+        "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
 
       const noirInput = {
         // public inputs
@@ -100,7 +102,10 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
   };
 
   return (
-    <form onSubmit={handleWithdraw} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+    <form
+      onSubmit={handleWithdraw}
+      style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
+    >
       {/* Privacy notice */}
       <div
         style={{
@@ -113,10 +118,15 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
           padding: "1rem",
         }}
       >
-        <RiShieldKeyholeFill size={16} color="#ffc800" style={{ flexShrink: 0, marginTop: 1 }} />
+        <RiShieldKeyholeFill
+          size={16}
+          color="#ffc800"
+          style={{ flexShrink: 0, marginTop: 1 }}
+        />
         <div style={{ fontSize: "0.67rem", color: "#555", lineHeight: 1.75 }}>
-          A <span style={{ color: "#ffc800" }}>zero-knowledge proof</span> is generated locally. Your
-          nullifier and secret never leave your browser. The on-chain verifier only sees the Garaga proof.
+          A <span style={{ color: "#ffc800" }}>zero-knowledge proof</span> is
+          generated locally. Your nullifier and secret never leave your browser.
+          The on-chain verifier only sees the Garaga proof.
         </div>
       </div>
 
@@ -132,7 +142,14 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
           gap: "0.65rem",
         }}
       >
-        <label style={{ color: "#3a3a4a", fontSize: "0.6rem", letterSpacing: "0.15em", textTransform: "uppercase" }}>
+        <label
+          style={{
+            color: "#3a3a4a",
+            fontSize: "0.6rem",
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+          }}
+        >
           Paste or upload your note
         </label>
         <textarea
@@ -147,8 +164,14 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
             color: withdrawNote ? "#fff" : "#2a2a3a",
             fontSize: "0.72rem",
           }}
-          onFocus={(e) => { e.target.style.borderColor = "#ffc800"; e.target.style.boxShadow = "0 0 0 2px rgba(255,200,0,0.08)"; }}
-          onBlur={(e) => { e.target.style.borderColor = "#2a2a3a"; e.target.style.boxShadow = "none"; }}
+          onFocus={(e) => {
+            e.target.style.borderColor = "#ffc800";
+            e.target.style.boxShadow = "0 0 0 2px rgba(255,200,0,0.08)";
+          }}
+          onBlur={(e) => {
+            e.target.style.borderColor = "#2a2a3a";
+            e.target.style.boxShadow = "none";
+          }}
         />
         <label
           htmlFor="note-file"
@@ -180,7 +203,8 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
               const file = e.target.files?.[0];
               if (!file) return;
               const reader = new FileReader();
-              reader.onload = (ev) => setWithdrawNote(ev.target?.result as string);
+              reader.onload = (ev) =>
+                setWithdrawNote(ev.target?.result as string);
               reader.readAsText(file);
             }}
           />
@@ -199,7 +223,14 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
           gap: "0.6rem",
         }}
       >
-        <label style={{ color: "#3a3a4a", fontSize: "0.6rem", letterSpacing: "0.15em", textTransform: "uppercase" }}>
+        <label
+          style={{
+            color: "#3a3a4a",
+            fontSize: "0.6rem",
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+          }}
+        >
           Recipient address
         </label>
         <input
@@ -207,10 +238,23 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
           onChange={(e) => setRecipient(e.target.value)}
           placeholder="0x… (ideally a fresh wallet)"
           style={inputStyle}
-          onFocus={(e) => { e.target.style.borderColor = "#ffc800"; e.target.style.boxShadow = "0 0 0 2px rgba(255,200,0,0.08)"; }}
-          onBlur={(e) => { e.target.style.borderColor = "#2a2a3a"; e.target.style.boxShadow = "none"; }}
+          onFocus={(e) => {
+            e.target.style.borderColor = "#ffc800";
+            e.target.style.boxShadow = "0 0 0 2px rgba(255,200,0,0.08)";
+          }}
+          onBlur={(e) => {
+            e.target.style.borderColor = "#2a2a3a";
+            e.target.style.boxShadow = "none";
+          }}
         />
-        <p style={{ color: "#2a2a3a", fontSize: "0.62rem", margin: 0, letterSpacing: "0.06em" }}>
+        <p
+          style={{
+            color: "#2a2a3a",
+            fontSize: "0.62rem",
+            margin: 0,
+            letterSpacing: "0.06em",
+          }}
+        >
           ↗ Use a different wallet than your deposit address for maximum privacy
         </p>
       </div>
@@ -228,16 +272,38 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
         }}
       >
         <div>
-          <div style={{ color: "#3a3a4a", fontSize: "0.6rem", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+          <div
+            style={{
+              color: "#3a3a4a",
+              fontSize: "0.6rem",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              marginBottom: "0.25rem",
+            }}
+          >
             You receive
           </div>
-          <div style={{ color: "#ffc800", fontSize: "1.15rem", fontWeight: 900 }}>{payoutDisplay}</div>
+          <div
+            style={{ color: "#ffc800", fontSize: "1.15rem", fontWeight: 900 }}
+          >
+            {payoutDisplay}
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ color: "#2a2a3a", fontSize: "0.6rem", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.2rem" }}>
+          <div
+            style={{
+              color: "#2a2a3a",
+              fontSize: "0.6rem",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              marginBottom: "0.2rem",
+            }}
+          >
             via Pragma
           </div>
-          <div style={{ color: "#3a3a4a", fontSize: "0.65rem" }}>BTC/USD ÷ STRK/USD</div>
+          <div style={{ color: "#3a3a4a", fontSize: "0.65rem" }}>
+            BTC/USD ÷ STRK/USD
+          </div>
         </div>
       </div>
 
@@ -278,12 +344,25 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
 
       <button
         type="submit"
-        disabled={!withdrawNote.trim() || !recipient.trim() || withdrawLoading || !address}
-        style={btnPrimary(!!withdrawNote.trim() && !!recipient.trim() && !withdrawLoading && !!address)}
+        disabled={
+          !withdrawNote.trim() ||
+          !recipient.trim() ||
+          withdrawLoading ||
+          !address
+        }
+        style={btnPrimary(
+          !!withdrawNote.trim() &&
+            !!recipient.trim() &&
+            !withdrawLoading &&
+            !!address,
+        )}
       >
         {withdrawLoading ? (
           <>
-            <FaSpinner size={13} style={{ animation: "spin 1s linear infinite" }} />
+            <FaSpinner
+              size={13}
+              style={{ animation: "spin 1s linear infinite" }}
+            />
             Generating ZK proof…
           </>
         ) : (
@@ -294,7 +373,15 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
         )}
       </button>
 
-      <p style={{ color: "#2a2a3a", fontSize: "0.65rem", textAlign: "center", margin: 0, letterSpacing: "0.06em" }}>
+      <p
+        style={{
+          color: "#2a2a3a",
+          fontSize: "0.65rem",
+          textAlign: "center",
+          margin: 0,
+          letterSpacing: "0.06em",
+        }}
+      >
         Proof generated locally · verified by Garaga on Starknet
       </p>
     </form>
