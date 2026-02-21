@@ -121,6 +121,8 @@ export default function UmbraHome() {
 
           const finalBal =
             BigInt(balance.toString()) / BigInt(10) ** BigInt(decimals);
+
+          console.log({ finalBal, i });
           if (i === 0) {
             setPBTCBalance(finalBal);
           } else {
@@ -146,13 +148,9 @@ export default function UmbraHome() {
     : "—";
 
   const pbtcDisplay =
-    pbtcBalance != null
-      ? `${(Number(pbtcBalance as bigint) / 1e8).toFixed(4)}`
-      : "—";
+    pbtcBalance != null ? `${Number(pbtcBalance as bigint).toFixed(4)}` : "—";
   const pstrkDisplay =
-    pstrkBalance != null
-      ? `${(Number(pstrkBalance as bigint) / 1e18).toFixed(2)}`
-      : "—";
+    pstrkBalance != null ? `${Number(pstrkBalance as bigint).toFixed(2)}` : "—";
 
   return (
     <div
