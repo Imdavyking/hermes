@@ -10,6 +10,7 @@ import { FaSpinner, FaBitcoin, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
+import { poseidon2Hash } from "@zkpassport/poseidon2";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -19,12 +20,6 @@ function shortenAddress(addr: string) {
     ? addr
     : "0x" + BigInt(addr).toString(16);
   return `${hex.slice(0, 6)}…${hex.slice(-4)}`;
-}
-
-function formatPSTRK(raw: bigint): string {
-  const whole = raw / 10n ** 18n;
-  const frac = (raw % 10n ** 18n).toString().padStart(18, "0").slice(0, 2);
-  return `${whole.toLocaleString()}.${frac}`;
 }
 
 function formatRate8(raw: bigint): string {
@@ -231,8 +226,6 @@ export default function UmbraHome() {
     refetchInterval: 30000,
   });
 
-  console.log({ btcRate });
-
   const { data: btcPrice } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -260,8 +253,7 @@ export default function UmbraHome() {
         .join("");
     const n = randHex();
     const s = randHex();
-    // TODO: replace with real Poseidon2(nullifier, secret) via WASM
-    const c = randHex();
+    const c = "0x" + poseidon2Hash([BigInt(n), BigInt(s)]).toString(16);
     setNullifier(n);
     setSecret(s);
     setCommitment(c);
