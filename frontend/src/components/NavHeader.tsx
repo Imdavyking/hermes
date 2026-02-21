@@ -9,7 +9,7 @@ type NavLink = {
 };
 
 const mainLinks: NavLink[] = [];
-const adminLinks: NavLink[] = [{ to: "/new-round", label: "New Round" }];
+const adminLinks: NavLink[] = [];
 
 const NavHeader = () => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -113,7 +113,7 @@ const NavHeader = () => {
                 color: "#fff",
               }}
             >
-              Zy<span style={{ color: "#ffc800" }}>gram</span>
+              UM<span style={{ color: "#ffc800" }}>BRA</span>
             </span>
           </div>
         </Link>
@@ -128,96 +128,6 @@ const NavHeader = () => {
           className="desktop-nav"
         >
           {renderLinks(mainLinks)}
-
-          {/* Admin Dropdown */}
-          <div ref={dropdownRef} style={{ position: "relative" }}>
-            <button
-              onClick={() => setAdminDropdown((v) => !v)}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.3rem",
-                color: adminDropdown ? "#ffc800" : "#888",
-                fontSize: "0.8rem",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                fontFamily: "'DM Mono', monospace",
-                padding: 0,
-                transition: "color 0.2s",
-              }}
-              onMouseEnter={(e) =>
-                ((e.currentTarget as HTMLElement).style.color = "#ffc800")
-              }
-              onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLElement).style.color = adminDropdown
-                  ? "#ffc800"
-                  : "#888")
-              }
-            >
-              Admin
-              <ChevronDown
-                size={12}
-                style={{
-                  transition: "transform 0.2s",
-                  transform: adminDropdown ? "rotate(180deg)" : "rotate(0deg)",
-                }}
-              />
-            </button>
-
-            {adminDropdown && (
-              <div
-                style={{
-                  position: "absolute",
-                  right: 0,
-                  top: "calc(100% + 12px)",
-                  background: "#111118",
-                  border: "1px solid #222230",
-                  borderRadius: "8px",
-                  padding: "0.5rem",
-                  minWidth: 160,
-                  boxShadow: "0 16px 40px rgba(0,0,0,0.6)",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.25rem",
-                }}
-              >
-                {adminLinks.map(({ to, label }) => (
-                  <Link
-                    key={to}
-                    to={to}
-                    style={{
-                      color: location.pathname === to ? "#ffc800" : "#888",
-                      fontSize: "0.8rem",
-                      letterSpacing: "0.08em",
-                      textDecoration: "none",
-                      textTransform: "uppercase",
-                      fontFamily: "'DM Mono', monospace",
-                      padding: "0.6rem 0.75rem",
-                      borderRadius: "6px",
-                      transition: "background 0.15s, color 0.15s",
-                      display: "block",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.background =
-                        "rgba(255,200,0,0.08)";
-                      (e.currentTarget as HTMLElement).style.color = "#ffc800";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.background =
-                        "transparent";
-                      (e.currentTarget as HTMLElement).style.color =
-                        location.pathname === to ? "#ffc800" : "#888";
-                    }}
-                  >
-                    {label}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
 
           <ConnectWalletButton />
         </nav>
