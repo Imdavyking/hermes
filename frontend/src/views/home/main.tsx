@@ -143,9 +143,9 @@ export default function UmbraHome() {
     : "—";
 
   const pbtcDisplay =
-    pbtcBalance != null ? `${Number(pbtcBalance).toFixed(4)}` : "—";
+    pbtcBalance != null ? `${Number(pbtcBalance).toFixed(8)}` : "—";
   const pstrkDisplay =
-    pstrkBalance != null ? `${Number(pstrkBalance).toFixed(4)}` : "—";
+    pstrkBalance != null ? `${Number(pstrkBalance).toFixed(8)}` : "—";
 
   return (
     <div
