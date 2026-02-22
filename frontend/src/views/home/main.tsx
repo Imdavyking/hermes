@@ -3,13 +3,7 @@ import { useAccount, useReadContract, useContract } from "@starknet-react/core";
 import { RiShieldKeyholeFill } from "react-icons/ri";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import abi from "../../assets/json/abi";
-import {
-  type Tab,
-  StatCard,
-  formatRate8,
-  hexRoot,
-  shortenAddress,
-} from "./shared";
+import { type Tab, StatCard, hexRoot, shortenAddress } from "./shared";
 import DepositTab from "./deposit-tab";
 import WithdrawTab from "./withdraw-tab";
 
@@ -68,6 +62,8 @@ export default function UmbraHome() {
     refetchInterval: 30000,
   });
 
+  console.log("btcRate", btcRate);
+
   const { data: btcPrice } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -116,6 +112,8 @@ export default function UmbraHome() {
           const finalBal =
             Number(balance.toString()) / Number(10) ** Number(decimals);
 
+          console.log({ finalBal, decimals, balance, i });
+
           if (i === 0) {
             setPBTCBalance(finalBal);
           } else {
@@ -138,7 +136,7 @@ export default function UmbraHome() {
     : "—";
 
   const payoutDisplay = btcRate
-    ? `${formatRate8(BigInt(((btcRate as bigint) / 10n ** 18n).toString()))} pSTRK`
+    ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString())} pSTRK`
     : "—";
 
   const pbtcDisplay =
@@ -271,7 +269,7 @@ export default function UmbraHome() {
             label="1 pBTC →"
             value={
               btcRate
-                ? `${formatRate8(BigInt(((btcRate as bigint) / 10n ** 18n).toString()))} STRK`
+                ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString())} STRK`
                 : "—"
             }
             highlight

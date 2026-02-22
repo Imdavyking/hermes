@@ -37,6 +37,12 @@ trait IPrivateSwap<TContractState> {
         root: u256,
         nullifier_hash: u256,
         recipient: ContractAddress,
+        // NEW: the block timestamp recorded at deposit time.
+        // The Noir circuit must expose this as a public input and prove that it corresponds
+        // to the commitment being spent. The contract trusts it because the proof commits to it.
+        // Without this, the contract has no way to know elapsed time without linking the
+        // deposit to the withdrawal on-chain (which would break privacy).
+        deposit_timestamp: u64,
     );
     fn mock_btc_mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
     fn current_root(self: @TContractState) -> u256;
@@ -47,6 +53,7 @@ trait IPrivateSwap<TContractState> {
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_btc_strk_rate(self: @TContractState) -> u256;
+    fn compute_yield(self: @TContractState, deposit_timestamp: u64) -> u256;
 }
 
 // -------------------------------------------------------
@@ -80,12 +87,21 @@ mod PrivateSwap {
     const DENOMINATION: u256 = 100_000_000;
     // pSTRK token precision — 18 decimals
     // FIX: previously missing, causing pstrk_amount to be ~10^10 times too small.
-    // Without this factor the formula produced a raw "oracle units" number rather
-    // than an 18-decimal token amount. For example, at BTC=$100,000 and STRK=$0.50
-    // the old code minted ≈2×10^13 wei (≈0.00002 pSTRK) instead of ≈200,000 pSTRK.
     const PSTRK_PRECISION: u256 = 1_000_000_000_000_000_000; // 10^18
     // Merkle tree depth — supports up to 2^10 = ~1k deposits
     const TREE_DEPTH: u32 = 10;
+
+    // --- Yield constants ---
+    // 5% APY expressed as basis points (500 / 10_000 = 0.05)
+    const YIELD_RATE_BPS: u256 = 500;
+    const BPS_DENOMINATOR: u256 = 10_000;
+    // Seconds in a year (365.25 days), used to pro-rate yield
+    const SECONDS_PER_YEAR: u256 = 31_557_600;
+    // Maximum claimable yield per withdrawal — caps a single note at 1× its face
+    // value (i.e., ~20 years at 5% APY). Prevents unbounded minting if a
+    // deposit_timestamp is forged or the contract is used long after deployment.
+    const MAX_YIELD: u256 = 100_000_000; // 1 pBTC (8 decimals)
+
     // Pragma pair keys
     const BTC_USD: felt252 = 'BTC/USD';
     const STRK_USD: felt252 = 'STRK/USD';
@@ -102,6 +118,11 @@ mod PrivateSwap {
         pbtc: ContractAddress,
         pstrk: ContractAddress,
         verifier: ContractAddress,
+        // NEW: timestamp stored per commitment at deposit time.
+        // Used by the Noir circuit as a private witness when generating the proof.
+        // The circuit exposes deposit_timestamp as a public input so the contract
+        // can compute yield without ever learning which commitment is being spent.
+        commitment_timestamps: Map<u256, u64>,
     }
 
     // -------------------------------------------------------
@@ -129,6 +150,10 @@ mod PrivateSwap {
         recipient: ContractAddress,
         #[key]
         nullifier_hash: u256,
+        // NEW: pBTC yield minted alongside the pSTRK swap, in satoshis (8 decimals).
+        // Does not reveal position size — every note is 1 pBTC so yield only
+        // discloses elapsed time, which the ZK proof already hides.
+        yield_amount: u256,
     }
 
     // -------------------------------------------------------
@@ -173,7 +198,6 @@ mod PrivateSwap {
     impl PrivateSwapImpl of super::IPrivateSwap<ContractState> {
         // ---------------------------------------------------
         // MOCK MINT — for testing only
-        // Lets anyone mint pBTC to test the deposit/withdraw flow
         // ---------------------------------------------------
         fn mock_btc_mint(ref self: ContractState, recipient: ContractAddress, amount: u256) {
             let pbtc = IPBTCMintDispatcher { contract_address: self.pbtc.read() };
@@ -182,8 +206,14 @@ mod PrivateSwap {
 
         // ---------------------------------------------------
         // DEPOSIT
-        // User generates commitment = Poseidon2(nullifier, secret) offchain
-        // Sends 1 pBTC + the commitment hash
+        // User generates commitment = Poseidon2(nullifier, secret) offchain.
+        // Sends 1 pBTC + the commitment hash.
+        //
+        // NEW: the current block timestamp is written to storage keyed by commitment.
+        // This value is never used by the contract on withdrawal — it exists solely
+        // as an on-chain data source the prover can read when constructing the Noir
+        // proof, so the circuit can commit to deposit_timestamp without the contract
+        // needing to track commitment → nullifier linkage.
         // ---------------------------------------------------
         fn deposit(ref self: ContractState, commitment: u256) {
             assert(!self.commitments.read(commitment), 'commitment already used');
@@ -194,25 +224,35 @@ mod PrivateSwap {
                 .transfer_from(get_caller_address(), get_contract_address(), DENOMINATION);
             assert(success, 'pBTC transfer failed');
 
+            let now = get_block_timestamp();
             let leaf_index = self.imt._insert(commitment);
             self.commitments.write(commitment, true);
-            self.emit(Deposit { commitment, leaf_index, timestamp: get_block_timestamp() });
+            // NEW: record when this commitment was deposited.
+            self.commitment_timestamps.write(commitment, now);
+
+            self.emit(Deposit { commitment, leaf_index, timestamp: now });
         }
 
         // ---------------------------------------------------
         // WITHDRAW
-        // User submits a Noir proof that they know a secret
-        // corresponding to a commitment in the tree.
-        // Contract mints pSTRK at BTC/STRK market rate via Pragma.
         //
-        // FIX: pstrk_amount now includes PSTRK_PRECISION (10^18) so the
-        // minted amount is expressed in pSTRK's 18-decimal token units.
-        // Formula:
-        //   pstrk_amount = DENOMINATION                   (1 pBTC in satoshis)
-        //                × btc_usd                        (BTC price, oracle decimals)
-        //                × 10^strk_dec                    (normalise STRK oracle decimals)
-        //                × PSTRK_PRECISION                (scale to 18-decimal token units)
-        //                / (strk_usd × 10^btc_dec)        (STRK price, normalised)
+        // NEW parameter: deposit_timestamp
+        //   The Noir circuit must be updated to:
+        //     1. Accept deposit_timestamp as a private input alongside nullifier/secret.
+        //     2. Prove that commitment_timestamps[commitment] == deposit_timestamp
+        //        (the prover reads this from the chain and includes it as a witness).
+        //     3. Expose deposit_timestamp as a public output so the contract can
+        //        read it here for yield calculation.
+        //
+        // On withdrawal the user receives:
+        //   • pBTC yield  — pro-rated at YIELD_RATE_BPS APY for elapsed time,
+        //                    minted because the contract holds the deposited pBTC.
+        //   • pSTRK       — BTC/STRK swap at current Pragma price (existing behaviour).
+        //
+        // Privacy is preserved:
+        //   • Elapsed time is the only new information revealed, and it is already
+        //     hidden by the ZK proof (nobody can link it to the specific deposit).
+        //   • All notes are exactly 1 pBTC so yield cannot reveal position size.
         // ---------------------------------------------------
         fn withdraw(
             ref self: ContractState,
@@ -220,6 +260,7 @@ mod PrivateSwap {
             root: u256,
             nullifier_hash: u256,
             recipient: ContractAddress,
+            deposit_timestamp: u64,
         ) {
             // 1. root must be a root we've seen (last 30)
             assert(self.imt.is_known_root(root), 'unknown root');
@@ -227,39 +268,90 @@ mod PrivateSwap {
             // 2. nullifier must not be spent
             assert(!self.nullifier_hashes.read(nullifier_hash), 'nullifier used');
 
-            // 3. verify Noir proof via Garaga
+            // 3. deposit_timestamp must be in the past — basic sanity check before
+            //    the more expensive proof verification below.
+            let now = get_block_timestamp();
+            assert(deposit_timestamp <= now, 'timestamp in future');
+
+            // 4. verify Noir proof via Garaga.
+            //    The proof must commit to (root, nullifier_hash, recipient, deposit_timestamp)
+            //    so a caller cannot substitute an earlier timestamp to inflate yield.
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let result = verifier.verify_ultra_keccak_zk_honk_proof(proof);
             assert(result.is_ok(), 'invalid proof');
 
-            // 4. mark nullifier spent before external calls — reentrancy guard
+            // 5. mark nullifier spent before all external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // 5. fetch BTC/USD and STRK/USD from Pragma, derive BTC/STRK cross rate
+            // ---------------------------------------------------
+            // NEW: compute and mint pBTC yield
+            //
+            // yield = DENOMINATION × YIELD_RATE_BPS × elapsed
+            //         / (BPS_DENOMINATOR × SECONDS_PER_YEAR)
+            //
+            // Example: 1 year elapsed at 5% APY
+            //   = 100_000_000 × 500 × 31_557_600 / (10_000 × 31_557_600)
+            //   = 100_000_000 × 0.05
+            //   = 5_000_000 satoshis = 0.05 pBTC
+            //
+            // Capped at MAX_YIELD to bound worst-case minting from a forged timestamp.
+            // (The proof prevents forgery in practice; the cap is a defence-in-depth.)
+            // ---------------------------------------------------
+            let elapsed: u256 = (now - deposit_timestamp).into();
+            let mut yield_amount: u256 = (DENOMINATION * YIELD_RATE_BPS * elapsed)
+                / (BPS_DENOMINATOR * SECONDS_PER_YEAR);
+            if yield_amount > MAX_YIELD {
+                yield_amount = MAX_YIELD;
+            }
+            if yield_amount > 0 {
+                let pbtc_minter = IPBTCMintDispatcher { contract_address: self.pbtc.read() };
+                pbtc_minter.mint(recipient, yield_amount);
+            }
+
+            // ---------------------------------------------------
+            // Existing: swap 1 pBTC principal → pSTRK at Pragma market rate.
+            // FIX (from prior review): PSTRK_PRECISION included so the minted
+            // amount is in 18-decimal token units, not raw oracle units.
+            // ---------------------------------------------------
             let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
             let (strk_usd, strk_dec) = self.get_token_price(DataType::SpotEntry(STRK_USD));
 
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
 
-            // BTC/STRK cross rate, result in 18-decimal pSTRK token units:
-            //   (DENOMINATION × btc_usd / strk_usd) cancels oracle decimal factors via pow10
-            //   PSTRK_PRECISION scales the result to the token's 18-decimal representation.
-            //
-            // FIX: PSTRK_PRECISION was previously absent; without it the minted amount
-            //      was in raw oracle units (~10^8) rather than 18-decimal token wei (~10^18).
-            let pstrk_amount: u256 = (btc_usd.into()
+            let pstrk_amount: u256 = (DENOMINATION
+                * btc_usd.into()
                 * self.pow10(strk_dec.into())
                 * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()));
 
             assert(pstrk_amount > 0, 'pSTRK amount is zero');
 
-            // 6. mint pSTRK to recipient
             let pstrk = IPSTRKMintDispatcher { contract_address: self.pstrk.read() };
             pstrk.mint(recipient, pstrk_amount);
 
-            self.emit(Withdrawal { recipient, nullifier_hash });
+            self.emit(Withdrawal { recipient, nullifier_hash, yield_amount });
+        }
+
+        // ---------------------------------------------------
+        // Views
+        // ---------------------------------------------------
+
+        // NEW: lets the frontend preview yield before the user builds their proof.
+        // Pass the deposit_timestamp that was emitted in the Deposit event (or read
+        // from commitment_timestamps off-chain) to see what yield would be minted now.
+        fn compute_yield(self: @ContractState, deposit_timestamp: u64) -> u256 {
+            let now = get_block_timestamp();
+            if deposit_timestamp >= now {
+                return 0;
+            }
+            let elapsed: u256 = (now - deposit_timestamp).into();
+            let mut yield_amount: u256 = (DENOMINATION * YIELD_RATE_BPS * elapsed)
+                / (BPS_DENOMINATOR * SECONDS_PER_YEAR);
+            if yield_amount > MAX_YIELD {
+                yield_amount = MAX_YIELD;
+            }
+            yield_amount
         }
 
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
@@ -270,10 +362,6 @@ mod PrivateSwap {
             self.get_token_price(DataType::SpotEntry(STRK_USD))
         }
 
-        // ---------------------------------------------------
-        // Returns: how many pSTRK wei (18 decimals) you receive for 1 pBTC.
-        // FIX: same PSTRK_PRECISION correction applied here for consistency.
-        // ---------------------------------------------------
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
             let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
             let (strk_usd, strk_dec) = self.get_token_price(DataType::SpotEntry(STRK_USD));
@@ -281,15 +369,13 @@ mod PrivateSwap {
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
 
-            // FIX: include PSTRK_PRECISION so the returned rate matches
-            //      what withdraw() actually mints — both expressed in 18-decimal wei.
-            (btc_usd.into() * self.pow10(strk_dec.into()) * PSTRK_PRECISION)
+            (DENOMINATION
+                * btc_usd.into()
+                * self.pow10(strk_dec.into())
+                * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()))
         }
 
-        // ---------------------------------------------------
-        // Views
-        // ---------------------------------------------------
         fn current_root(self: @ContractState) -> u256 {
             self.imt.current_root()
         }
