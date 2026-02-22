@@ -112,16 +112,10 @@ export default function UmbraHome() {
           const decimals = await erc20Contract.call("decimals", [], {
             parseResponse: true,
           });
-          console.log(
-            `Fetched balance for ${tokenAddress}:`,
-            balance,
-            decimals,
-          );
 
           const finalBal =
             BigInt(balance.toString()) / BigInt(10) ** BigInt(decimals);
 
-          console.log({ finalBal, i });
           if (i === 0) {
             setPBTCBalance(finalBal);
           } else {
