@@ -78,6 +78,12 @@ mod PrivateSwap {
 
     // 1 pBTC — 8 decimals
     const DENOMINATION: u256 = 100_000_000;
+    // pSTRK token precision — 18 decimals
+    // FIX: previously missing, causing pstrk_amount to be ~10^10 times too small.
+    // Without this factor the formula produced a raw "oracle units" number rather
+    // than an 18-decimal token amount. For example, at BTC=$100,000 and STRK=$0.50
+    // the old code minted ≈2×10^13 wei (≈0.00002 pSTRK) instead of ≈200,000 pSTRK.
+    const PSTRK_PRECISION: u256 = 1_000_000_000_000_000_000; // 10^18
     // Merkle tree depth — supports up to 2^10 = ~1k deposits
     const TREE_DEPTH: u32 = 10;
     // Pragma pair keys
@@ -198,6 +204,15 @@ mod PrivateSwap {
         // User submits a Noir proof that they know a secret
         // corresponding to a commitment in the tree.
         // Contract mints pSTRK at BTC/STRK market rate via Pragma.
+        //
+        // FIX: pstrk_amount now includes PSTRK_PRECISION (10^18) so the
+        // minted amount is expressed in pSTRK's 18-decimal token units.
+        // Formula:
+        //   pstrk_amount = DENOMINATION                   (1 pBTC in satoshis)
+        //                × btc_usd                        (BTC price, oracle decimals)
+        //                × 10^strk_dec                    (normalise STRK oracle decimals)
+        //                × PSTRK_PRECISION                (scale to 18-decimal token units)
+        //                / (strk_usd × 10^btc_dec)        (STRK price, normalised)
         // ---------------------------------------------------
         fn withdraw(
             ref self: ContractState,
@@ -219,6 +234,7 @@ mod PrivateSwap {
 
             // 4. mark nullifier spent before external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
+
             // 5. fetch BTC/USD and STRK/USD from Pragma, derive BTC/STRK cross rate
             let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
             let (strk_usd, strk_dec) = self.get_token_price(DataType::SpotEntry(STRK_USD));
@@ -226,9 +242,16 @@ mod PrivateSwap {
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
 
-            //     BTC/STRK = (BTC/USD) / (STRK/USD)
-            // normalise decimal factors then scale to pSTRK 18 decimals
-            let pstrk_amount: u256 = (DENOMINATION * btc_usd.into() * self.pow10(strk_dec.into()))
+            // BTC/STRK cross rate, result in 18-decimal pSTRK token units:
+            //   (DENOMINATION × btc_usd / strk_usd) cancels oracle decimal factors via pow10
+            //   PSTRK_PRECISION scales the result to the token's 18-decimal representation.
+            //
+            // FIX: PSTRK_PRECISION was previously absent; without it the minted amount
+            //      was in raw oracle units (~10^8) rather than 18-decimal token wei (~10^18).
+            let pstrk_amount: u256 = (DENOMINATION
+                * btc_usd.into()
+                * self.pow10(strk_dec.into())
+                * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()));
 
             assert(pstrk_amount > 0, 'pSTRK amount is zero');
@@ -248,6 +271,10 @@ mod PrivateSwap {
             self.get_token_price(DataType::SpotEntry(STRK_USD))
         }
 
+        // ---------------------------------------------------
+        // Returns: how many pSTRK wei (18 decimals) you receive for 1 pBTC.
+        // FIX: same PSTRK_PRECISION correction applied here for consistency.
+        // ---------------------------------------------------
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
             let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
             let (strk_usd, strk_dec) = self.get_token_price(DataType::SpotEntry(STRK_USD));
@@ -255,8 +282,12 @@ mod PrivateSwap {
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
 
-            // how many pSTRK you get for 1 pBTC
-            (DENOMINATION * btc_usd.into() * self.pow10(strk_dec.into()))
+            // FIX: include PSTRK_PRECISION so the returned rate matches
+            //      what withdraw() actually mints — both expressed in 18-decimal wei.
+            (DENOMINATION
+                * btc_usd.into()
+                * self.pow10(strk_dec.into())
+                * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()))
         }
 
@@ -301,6 +332,7 @@ mod PrivateSwap {
             let output: PragmaPricesResponse = oracle.get_data(asset, AggregationMode::Median(()));
             (output.price, output.decimals)
         }
+
         fn pow10(self: @ContractState, n: u256) -> u256 {
             let mut result: u256 = 1;
             let mut i: u256 = 0;
