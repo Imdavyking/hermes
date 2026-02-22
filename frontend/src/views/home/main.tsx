@@ -38,8 +38,8 @@ const erc20Abi = [
 export default function UmbraHome() {
   const { address } = useAccount();
   const [tab, setTab] = useState<Tab>("deposit");
-  const [pbtcBalance, setPBTCBalance] = useState<bigint | null>(null);
-  const [pstrkBalance, setPSTRKBalance] = useState<bigint | null>(null);
+  const [pbtcBalance, setPBTCBalance] = useState<number | null>(null);
+  const [pstrkBalance, setPSTRKBalance] = useState<number | null>(null);
 
   const { data: currentRoot } = useReadContract({
     abi,
@@ -114,7 +114,9 @@ export default function UmbraHome() {
           });
 
           const finalBal =
-            BigInt(balance.toString()) / BigInt(10) ** BigInt(decimals);
+            Number(balance.toString()) / Number(10) ** Number(decimals);
+
+          console.log({ balance, finalBal, i, decimals });
 
           if (i === 0) {
             setPBTCBalance(finalBal);
@@ -141,9 +143,9 @@ export default function UmbraHome() {
     : "—";
 
   const pbtcDisplay =
-    pbtcBalance != null ? `${Number(pbtcBalance as bigint).toFixed(4)}` : "—";
+    pbtcBalance != null ? `${Number(pbtcBalance).toFixed(4)}` : "—";
   const pstrkDisplay =
-    pstrkBalance != null ? `${Number(pstrkBalance as bigint).toFixed(2)}` : "—";
+    pstrkBalance != null ? `${Number(pstrkBalance).toFixed(2)}` : "—";
 
   return (
     <div
