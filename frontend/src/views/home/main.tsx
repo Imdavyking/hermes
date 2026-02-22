@@ -116,8 +116,6 @@ export default function UmbraHome() {
           const finalBal =
             Number(balance.toString()) / Number(10) ** Number(decimals);
 
-          console.log({ balance, finalBal, i, decimals });
-
           if (i === 0) {
             setPBTCBalance(finalBal);
           } else {
@@ -138,8 +136,9 @@ export default function UmbraHome() {
   const btcPriceDisplay = btcPrice
     ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
     : "—";
+
   const payoutDisplay = btcRate
-    ? `${formatRate8(BigInt((btcRate as bigint).toString()))} pSTRK`
+    ? `${formatRate8(BigInt(((btcRate as bigint) / 10n ** 18n).toString()))} pSTRK`
     : "—";
 
   const pbtcDisplay =
@@ -272,7 +271,7 @@ export default function UmbraHome() {
             label="1 pBTC →"
             value={
               btcRate
-                ? `${formatRate8(BigInt((btcRate as bigint).toString()))} STRK`
+                ? `${formatRate8(BigInt(((btcRate as bigint) / 10n ** 18n).toString()))} STRK`
                 : "—"
             }
             highlight
