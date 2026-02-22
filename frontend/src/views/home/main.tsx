@@ -62,8 +62,6 @@ export default function UmbraHome() {
     refetchInterval: 30000,
   });
 
-  console.log("btcRate", btcRate);
-
   const { data: btcPrice } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -111,8 +109,6 @@ export default function UmbraHome() {
 
           const finalBal =
             Number(balance.toString()) / Number(10) ** Number(decimals);
-
-          console.log({ finalBal, decimals, balance, i });
 
           if (i === 0) {
             setPBTCBalance(finalBal);

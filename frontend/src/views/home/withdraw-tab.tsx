@@ -82,9 +82,9 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
         toast.update(toastId, { render: message });
       });
 
-      console.log({ callData });
-
-      console.log("Proof generated, submitting transaction...");
+      toast.update(toastId, {
+        render: "Proof generated, submitting transaction...",
+      });
 
       const tx = await account.execute([
         contract.populate("withdraw", [
