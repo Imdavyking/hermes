@@ -87,12 +87,7 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
       });
 
       const tx = await account.execute([
-        contract.populate("withdraw", [
-          callData.slice(1),
-          BigInt(merkleProof.root.toString()),
-          BigInt(nullifierHash),
-          recipient,
-        ]),
+        contract.populate("withdraw", [callData.slice(1), recipient]),
       ]);
 
       await account.waitForTransaction(tx.transaction_hash);
