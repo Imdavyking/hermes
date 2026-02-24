@@ -1,7 +1,6 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
 mod field;
 mod incremental_merkle_tree;
-mod pBTC;
 mod pSTRK;
 mod poseidon2;
 mod poseidon2lib;
@@ -136,16 +135,15 @@ mod PrivateSwap {
     // -------------------------------------------------------
     #[constructor]
     fn constructor(
-        ref self: ContractState,
-        pbtc_class_hash: ClassHash,
-        pstrk_class_hash: ClassHash,
-        verifier_class_hash: ClassHash,
+        ref self: ContractState, pstrk_class_hash: ClassHash, verifier_class_hash: ClassHash,
     ) {
-        // Deploy pBTC — no minter restriction, mock_btc_mint is open
-        let mut pbtc_calldata: Array<felt252> = array![];
-        let (pbtc_address, _) = deploy_syscall(pbtc_class_hash, 0, pbtc_calldata.span(), false)
-            .unwrap_syscall();
-        self.pbtc.write(pbtc_address);
+        self
+            .pbtc
+            .write(
+                0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
+                    .try_into()
+                    .unwrap(),
+            );
 
         // Deploy pSTRK — minter is this contract so withdraw can mint
         let contract_address = get_contract_address();
