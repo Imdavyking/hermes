@@ -41,9 +41,9 @@ trait IAggregatorProxy<TContractState> {
 struct PoolKey {
     token0: ContractAddress,
     token1: ContractAddress,
-    fee: u128, // 0.128 fixed-point, e.g. 0.3% = floor(0.003 * 2^128)
+    fee: u128,         // 0.128 fixed-point, e.g. 0.3% = floor(0.003 * 2^128)
     tick_spacing: u128,
-    extension: ContractAddress // 0 for standard pools
+    extension: ContractAddress, // 0 for standard pools
 }
 
 /// A signed 129-bit integer used for swap amounts.
@@ -51,15 +51,15 @@ struct PoolKey {
 #[derive(Copy, Drop, Serde)]
 struct i129 {
     mag: u128,
-    sign: bool // false = positive, true = negative
+    sign: bool, // false = positive, true = negative
 }
 
 #[derive(Copy, Drop, Serde)]
 struct SwapParameters {
     amount: i129,
-    is_token1: bool, // true if the input token is token1 in the pool
+    is_token1: bool,      // true if the input token is token1 in the pool
     sqrt_ratio_limit: u256, // price limit (slippage), use MIN/MAX for no limit
-    skip_ahead: u128 // set to 0
+    skip_ahead: u128,     // set to 0
 }
 
 /// Token balance delta returned from a swap
@@ -88,12 +88,17 @@ struct TokenAmount {
 #[starknet::interface]
 trait IEkuboCore<TContractState> {
     fn lock(ref self: TContractState, data: Array<felt252>) -> Array<felt252>;
-    fn swap(ref self: TContractState, pool_key: PoolKey, params: SwapParameters) -> Delta;
+    fn swap(
+        ref self: TContractState, pool_key: PoolKey, params: SwapParameters,
+    ) -> Delta;
     // Pay tokens owed to the core after a swap
     fn pay(ref self: TContractState, token: ContractAddress);
     // Withdraw tokens from core to a recipient
     fn withdraw(
-        ref self: TContractState, token: ContractAddress, recipient: ContractAddress, amount: u128,
+        ref self: TContractState,
+        token: ContractAddress,
+        recipient: ContractAddress,
+        amount: u128,
     );
 }
 
@@ -106,9 +111,9 @@ trait ILocker<TContractState> {
 /// Callback data passed through the lock/locked round-trip
 #[derive(Drop, Serde)]
 struct SwapCallbackData {
-    route: RouteNode, // single-hop: wBTC → STRK pool
+    route: RouteNode,       // single-hop: wBTC → STRK pool
     token_amount: TokenAmount, // exact input: how much wBTC to sell
-    recipient: ContractAddress // where to send the output STRK
+    recipient: ContractAddress, // where to send the output STRK
 }
 
 #[starknet::interface]
@@ -155,8 +160,7 @@ mod PrivateSwap {
 
     // Chainlink Sepolia feed addresses
     const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
-    const STRK_USD_FEED: felt252 =
-        0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
+    const STRK_USD_FEED: felt252 = 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
     const MAX_PRICE_AGE: u64 = 86400; // 24h for testnet
 
     // Ekubo Core on StarkNet Sepolia
@@ -219,7 +223,9 @@ mod PrivateSwap {
     // Constructor
     // -------------------------------------------------------
     #[constructor]
-    fn constructor(ref self: ContractState, verifier_class_hash: ClassHash) {
+    fn constructor(
+        ref self: ContractState, verifier_class_hash: ClassHash,
+    ) {
         self
             .wBTC
             .write(
@@ -267,8 +273,7 @@ mod PrivateSwap {
         // 3. STRK lands directly at recipient
         // ---------------------------------------------------
         fn withdraw(ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress) {
-            // ── Verify proof
-            // ─────────────────────────────────────────────
+            // ── Verify proof ─────────────────────────────────────────────
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified_proof = verifier.verify_ultra_keccak_zk_honk_proof(proof);
             assert(verified_proof.is_ok(), 'invalid proof');
@@ -283,8 +288,7 @@ mod PrivateSwap {
             // Mark nullifier spent BEFORE external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // ── Swap wBTC → STRK via Ekubo
-            // ───────────────────────────────
+            // ── Swap wBTC → STRK via Ekubo ───────────────────────────────
             let wbtc_address = self.wBTC.read();
             let strk_address: ContractAddress = STRK_TOKEN.try_into().unwrap();
             let core_address: ContractAddress = EKUBO_CORE.try_into().unwrap();
@@ -294,11 +298,12 @@ mod PrivateSwap {
             wBTC.approve(core_address, BTC_DENOMINATION);
 
             // token0 must be the lower address — sort wBTC and STRK
-            let (token0, token1, is_token1) = if wbtc_address.into() < strk_address.into() {
-                (wbtc_address, strk_address, false) // selling token0 (wBTC)
-            } else {
-                (strk_address, wbtc_address, true) // selling token1 (wBTC)
-            };
+            let (token0, token1, is_token1) =
+                if wbtc_address.into() < strk_address.into() {
+                    (wbtc_address, strk_address, false) // selling token0 (wBTC)
+                } else {
+                    (strk_address, wbtc_address, true)  // selling token1 (wBTC)
+                };
 
             let pool_key = PoolKey {
                 token0,

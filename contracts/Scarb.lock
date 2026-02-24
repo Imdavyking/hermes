@@ -5,6 +5,7 @@ version = 1
 name = "contracts"
 version = "0.1.0"
 dependencies = [
+ "ekubo",
  "garaga",
  "openzeppelin",
  "snforge_std",
@@ -14,6 +15,11 @@ dependencies = [
 name = "corelib_imports"
 version = "0.1.2"
 source = "git+https://github.com/keep-starknet-strange/garaga.git?tag=v1.0.1#aa91b6504c86995789edb4e78f9f9ba20571625c"
+
+[[package]]
+name = "ekubo"
+version = "0.1.0"
+source = "git+https://github.com/EkuboProtocol/starknet-contracts.git#8b4de8b5701d10b101c06b786740bf45b6cf15cb"
 
 [[package]]
 name = "garaga"
