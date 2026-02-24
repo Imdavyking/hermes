@@ -26,13 +26,7 @@ trait IPSTRKMint<TContractState> {
 #[starknet::interface]
 trait IPrivateSwap<TContractState> {
     fn deposit(ref self: TContractState, commitment: u256);
-    fn withdraw(
-        ref self: TContractState,
-        proof: Span<felt252>,
-        root: u256,
-        nullifier_hash: u256,
-        recipient: ContractAddress,
-    );
+    fn withdraw(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
     fn current_root(self: @TContractState) -> u256;
     fn next_leaf_index(self: @TContractState) -> u32;
     fn is_known_root(self: @TContractState, root: u256) -> bool;
@@ -186,31 +180,19 @@ mod PrivateSwap {
         // corresponding to a commitment in the tree.
         // Contract mints pSTRK at BTC/STRK market rate via Pragma.
         //
-        fn withdraw(
-            ref self: ContractState,
-            proof: Span<felt252>,
-            root: u256,
-            nullifier_hash: u256,
-            recipient: ContractAddress,
-        ) {
+        fn withdraw(ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress) {
+            let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
+            let verified_proof = verifier.verify_ultra_keccak_zk_honk_proof(proof);
+            assert(verified_proof.is_ok(), 'invalid proof');
+
+            let result = verified_proof.unwrap();
+            let root = *result.at(0);
+            let nullifier_hash = *result.at(1);
             // 1. root must be a root we've seen (last 30)
             assert(self.imt.is_known_root(root), 'unknown root');
 
             // 2. nullifier must not be spent
             assert(!self.nullifier_hashes.read(nullifier_hash), 'nullifier used');
-
-            // 3. verify Noir proof via Garaga
-            let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
-            let verified_proof = verifier.verify_ultra_keccak_zk_honk_proof(proof);
-
-            assert(verified_proof.is_ok(),'invalid proof');
-            
-            let result = verified_proof.unwrap();
-            let _root = *result.at(0);
-            let nullfier_hash = *result.at(1);
-
-            assert(_root == root, 'invalid root from proof');
-            assert(nullfier_hash > nullifier_hash, 'invalid null hash from proof');
 
             // 4. mark nullifier spent before external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
