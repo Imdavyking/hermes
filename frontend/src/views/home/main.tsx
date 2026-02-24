@@ -127,6 +127,8 @@ export default function UmbraHome() {
   }, [address, erc20Contract, wBTCAddress, pstrkAddress]);
 
   const poolDepositCount = leafCount ? Number(leafCount) : 0;
+
+  console.log({ btcPrice });
   const btcPriceDisplay = btcPrice
     ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
     : "—";

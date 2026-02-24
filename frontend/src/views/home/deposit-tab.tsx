@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract } from "@starknet-react/core";
-import { CallData, uint256 } from "starknet";
+import { CallData, uint256, type Uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
@@ -78,6 +78,35 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     setApproveLoading(true);
     try {
       const wBTCAddress = await contract.call("wBTC_address");
+      console.log("wBTC address:", wBTCAddress);
+      const hexAddr = "0x" + BigInt(wBTCAddress.toString()).toString(16);
+
+      const allowanceResult = await account.callContract({
+        contractAddress: hexAddr,
+        entrypoint: "allowance",
+        calldata: CallData.compile([address, CONTRACT_ADDRESS]),
+      });
+
+      const result = uint256.uint256ToBN({
+        low: allowanceResult[0],
+        high: allowanceResult[1],
+      });
+
+      const currentAllowance = result;
+      const required = BigInt(BTCDenomination);
+
+      if (currentAllowance >= required) {
+        toast.info("Allowance already sufficient, skipping approve.");
+        setStep(3);
+        return;
+      }
+
+      if (currentAllowance >= required) {
+        // Already approved — skip the tx and move on
+        toast.info("Allowance already sufficient, skipping approve.");
+        setStep(3);
+        return;
+      }
       const approveTx = await account.execute([
         {
           contractAddress: wBTCAddress.toString(),

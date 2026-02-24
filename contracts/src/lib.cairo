@@ -21,11 +21,21 @@ trait IPSTRKMint<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
+/// Chainlink round response struct — must match the ABI exactly.
+/// round_id is felt252 because Chainlink uses phase-prefixed IDs that overflow u128.
+#[derive(Drop, Serde)]
+struct Round {
+    round_id: felt252,
+    answer: u128,
+    block_num: u64,
+    started_at: u64,
+    updated_at: u64,
+}
+
 /// Chainlink AggregatorProxy interface
 #[starknet::interface]
 trait IAggregatorProxy<TContractState> {
-    fn latest_round_data(self: @TContractState) -> (u128, u128, u64, u64, u128);
-    // returns: (round_id, answer, started_at, updated_at, answered_in_round)
+    fn latest_round_data(self: @TContractState) -> Round;
     fn decimals(self: @TContractState) -> u8;
 }
 
@@ -78,8 +88,8 @@ mod PrivateSwap {
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
-    // Max price age: 1 hour. Revert if Chainlink hasn't updated within this window.
-    const MAX_PRICE_AGE: u64 = 3600;
+    // 24 hours — testnet feeds update infrequently
+    const MAX_PRICE_AGE: u64 = 86400;
 
     // -------------------------------------------------------
     // Storage
@@ -278,23 +288,22 @@ mod PrivateSwap {
     #[generate_trait]
     impl Private of PrivateTrait {
         /// Reads latest price from a Chainlink feed.
-        /// Returns (price, decimals) matching the old Pragma signature
-        /// so the rest of the math is unchanged.
+        /// Returns (price, decimals) — same signature as the old Pragma helper
+        /// so all the cross-rate math above is unchanged.
         fn get_chainlink_price(self: @ContractState, feed_address: felt252) -> (u128, u32) {
             let feed = IAggregatorProxyDispatcher {
                 contract_address: feed_address.try_into().unwrap(),
             };
 
-            let (_, answer, _, updated_at, _) = feed.latest_round_data();
-            // round_id, answer, started_at, updated_at, answered_in_round
+            let round = feed.latest_round_data();
 
             // Staleness check — revert if price is older than MAX_PRICE_AGE
             let block_time = get_block_timestamp();
-            assert(block_time - updated_at < MAX_PRICE_AGE, 'stale price');
-            assert(answer > 0, 'invalid price');
+            assert(block_time - round.updated_at < MAX_PRICE_AGE, 'stale price');
+            assert(round.answer > 0, 'invalid price');
 
             let decimals: u32 = feed.decimals().into(); // Chainlink feeds use 8 decimals
-            (answer, decimals)
+            (round.answer, decimals)
         }
 
         fn pow10(self: @ContractState, n: u256) -> u256 {
