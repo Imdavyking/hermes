@@ -201,8 +201,12 @@ mod PrivateSwap {
 
             // 3. verify Noir proof via Garaga
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
-            let result = verifier.verify_ultra_keccak_zk_honk_proof(proof);
-            assert(result.is_ok(), 'invalid proof');
+            let result = verifier.verify_ultra_keccak_zk_honk_proof(proof).unwrap();
+            let _root = *result.at(0);
+            let nullfier_hash = *result.at(1);
+
+            assert(_root == root, 'invalid root from proof');
+            assert(nullfier_hash > nullifier_hash, 'invalid null hash from proof');
 
             // 4. mark nullifier spent before external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
