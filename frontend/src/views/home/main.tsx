@@ -262,11 +262,12 @@ export default function UmbraHome() {
         >
           <StatCard label="Pool depth" value={poolDepositCount} />
           <StatCard label="BTC/USD" value={btcPriceDisplay} highlight />
+
           <StatCard
             label="1 wBTC →"
             value={
               btcRate
-                ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString())} STRK`
+                ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString()).toLocaleString(undefined, { maximumFractionDigits: 0 })} STRK`
                 : "—"
             }
             highlight
