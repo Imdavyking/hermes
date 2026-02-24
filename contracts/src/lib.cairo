@@ -219,12 +219,14 @@ mod PrivateSwap {
             //
             // FIX: PSTRK_PRECISION was previously absent; without it the minted amount
             //      was in raw oracle units (~10^8) rather than 18-decimal token wei (~10^18).
-            let pstrk_amount: u256 = (btc_usd.into()
-                * self.pow10(strk_dec.into())
-                * PSTRK_PRECISION)
+            let onestrk_btc: u256 = (btc_usd.into() * self.pow10(strk_dec.into()) * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()));
 
+            let pstrk_amount = onestrk_btc / (self.pow10(btc_dec.into()) / BTC_DENOMINATION);
+
             assert(pstrk_amount > 0, 'pSTRK amount is zero');
+
+            // 10 ** 8 / 10 ** 3
 
             // 6. mint pSTRK to recipient
             let pstrk = IPSTRKMintDispatcher { contract_address: self.pstrk.read() };
