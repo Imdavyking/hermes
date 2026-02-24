@@ -52,7 +52,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     const getDenom = async () => {
       if (!account) return;
       if (!contract) return;
-      const wBTCDenom = await contract.call("PSTRK_PRECISION");
+      const wBTCDenom = await contract.call("wBTC_denomination");
       setBTCDenomination(Number(wBTCDenom));
     };
     getDenom();
