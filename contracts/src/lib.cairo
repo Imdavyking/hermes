@@ -38,6 +38,7 @@ trait IPrivateSwap<TContractState> {
     fn is_known_root(self: @TContractState, root: u256) -> bool;
     fn pstrk_address(self: @TContractState) -> ContractAddress;
     fn wBTC_address(self: @TContractState) -> ContractAddress;
+    fn wBTC_denomination(self: @TContractState) -> u256;
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_btc_strk_rate(self: @TContractState) -> u256;
@@ -226,8 +227,6 @@ mod PrivateSwap {
 
             assert(pstrk_amount > 0, 'pSTRK amount is zero');
 
-            // 10 ** 8 / 10 ** 3
-
             // 6. mint pSTRK to recipient
             let pstrk = IPSTRKMintDispatcher { contract_address: self.pstrk.read() };
             pstrk.mint(recipient, pstrk_amount);
@@ -279,6 +278,10 @@ mod PrivateSwap {
 
         fn wBTC_address(self: @ContractState) -> ContractAddress {
             self.wBTC.read()
+        }
+
+        fn wBTC_denomination(self: @ContractState) -> u256 {
+            BTC_DENOMINATION
         }
     }
 

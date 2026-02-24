@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract } from "@starknet-react/core";
 import { CallData, uint256 } from "starknet";
@@ -28,8 +28,9 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   const [secret, setSecret] = useState("");
   const [commitment, setCommitment] = useState("");
   const [noteReady, setNoteReady] = useState(false);
-  const [mintLoading, setMintLoading] = useState(false);
+  const [approveLoading, setApproveLoading] = useState(false);
   const [depositLoading, setDepositLoading] = useState(false);
+  const [BTCDenomination, setBTCDenomination] = useState(0);
 
   const generateNote = useCallback(() => {
     const randHex = () =>
@@ -47,6 +48,16 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     setStep(2);
   }, []);
 
+  useEffect(() => {
+    const getDenom = async () => {
+      if (!account) return;
+      if (!contract) return;
+      const wBTCDenom = await contract.call("PSTRK_PRECISION");
+      setBTCDenomination(Number(wBTCDenom));
+    };
+    getDenom();
+  }, [account, contract]);
+
   const downloadNote = useCallback(() => {
     const note = JSON.stringify({ nullifier, secret, commitment }, null, 2);
     const blob = new Blob([note], { type: "application/json" });
@@ -59,33 +70,28 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     toast.success("Note saved — keep this file safe!");
   }, [nullifier, secret, commitment]);
 
-  const handleMintApprove = async () => {
+  const handleApprove = async () => {
     if (!account || !contract) {
       toast.error("Connect your wallet.");
       return;
     }
-    setMintLoading(true);
+    setApproveLoading(true);
     try {
-      const mintTx = await account.execute([
-        contract.populate("mock_btc_mint", [address as string, 100_000_000]),
-      ]);
-      await account.waitForTransaction(mintTx.transaction_hash);
-
       const wBTCAddress = await contract.call("wBTC_address");
       const approveTx = await account.execute([
         {
           contractAddress: wBTCAddress.toString(),
           entrypoint: "approve",
-          calldata: [CONTRACT_ADDRESS, 100_000_000, 0],
+          calldata: [CONTRACT_ADDRESS, BTCDenomination, 0],
         },
       ]);
       await account.waitForTransaction(approveTx.transaction_hash);
-      toast.success("wBTC minted and approved!");
+      toast.success("wBTC approved!");
       setStep(3);
     } catch (err: any) {
-      toast.error("Mint/approve failed: " + (err?.message ?? err));
+      toast.error("Approve failed: " + (err?.message ?? err));
     } finally {
-      setMintLoading(false);
+      setApproveLoading(false);
     }
   };
 
@@ -153,7 +159,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         />
         <StepRow
           n={2}
-          label="Mint wBTC & approve pool"
+          label="Approve pool"
           done={step > 2}
           active={step === 2}
         />
@@ -234,7 +240,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         </div>
       )}
 
-      {/* Step 2 — Mint + Approve */}
+      {/* Step 2 — Approve */}
       {step === 2 && noteReady && (
         <div
           style={{
@@ -257,22 +263,22 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
             Save umbra-note.json — required to withdraw
           </button>
           <button
-            onClick={handleMintApprove}
-            disabled={mintLoading}
-            style={btnPrimary(!mintLoading)}
+            onClick={handleApprove}
+            disabled={approveLoading}
+            style={btnPrimary(!approveLoading)}
           >
-            {mintLoading ? (
+            {approveLoading ? (
               <>
                 <FaSpinner
                   size={13}
                   style={{ animation: "spin 1s linear infinite" }}
                 />
-                Minting & Approving…
+                Approving…
               </>
             ) : (
               <>
                 <FaBitcoin size={13} />
-                Mint 1 wBTC & Approve
+                Approve {BTCDenomination / 10 ** 8} wBTC
               </>
             )}
           </button>
