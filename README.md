@@ -2,7 +2,7 @@
 
 > Deposit Bitcoin anonymously. Withdraw Starknet tokens. No one knows who you are.
 
-Umbra is a privacy-preserving BTC swap protocol built on Starknet. Users deposit pBTC into a shielded pool backed by a ZK-verified incremental Merkle tree, then withdraw an equivalent value in pSTRK — with zero on-chain link between depositor and withdrawer.
+Umbra is a privacy-preserving BTC swap protocol built on Starknet. Users deposit wBTC into a shielded pool backed by a ZK-verified incremental Merkle tree, then withdraw an equivalent value in pSTRK — with zero on-chain link between depositor and withdrawer.
 
 Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices are sourced from the **Pragma oracle** (BTC/USD and STRK/USD cross rate). The Merkle tree uses **Poseidon2 over BN254** to stay compatible with Noir's native hash.
 
@@ -12,8 +12,8 @@ Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices 
 
 ### Deposit
 
-1. Call `mock_btc_mint` to receive test pBTC (demo only)
-2. Approve PrivateSwap to spend `100,000,000` (1 pBTC, 8 decimals)
+1. Call `mock_btc_mint` to receive test wBTC (demo only)
+2. Approve PrivateSwap to spend `100,000,000` (1 wBTC, 8 decimals)
 3. Generate a random `nullifier` and `secret` offchain
 4. Compute `commitment = Poseidon2(nullifier, secret)`
 5. Save your note — `{ nullifier, secret }` — you will need it to withdraw
@@ -39,7 +39,7 @@ contracts/
 ├── poseidon2lib.cairo             # Public Poseidon2 API
 ├── incremental_merkle_tree.cairo  # On-chain IMT component (depth 20)
 ├── pragma_oracle.cairo            # Manual Pragma ABI (no lib dependency)
-├── pBTC.cairo                     # Mock wrapped Bitcoin (8 decimals)
+├── wBTC.cairo                     # Mock wrapped Bitcoin (8 decimals)
 └── pSTRK.cairo                    # Mock Starknet token (18 decimals, minted on withdraw)
 
 noir/
@@ -64,23 +64,23 @@ noir/
 
 ### PrivateSwap
 
-The main contract. Deploys pBTC, pSTRK, and the Garaga verifier internally from their class hashes.
+The main contract. Deploys wBTC, pSTRK, and the Garaga verifier internally from their class hashes.
 
 | Function                                           | Description                                 |
 | -------------------------------------------------- | ------------------------------------------- |
-| `mock_btc_mint(recipient, amount)`                 | Mint test pBTC for demo purposes            |
-| `deposit(commitment)`                              | Deposit 1 pBTC, insert commitment into tree |
+| `mock_btc_mint(recipient, amount)`                 | Mint test wBTC for demo purposes            |
+| `deposit(commitment)`                              | Deposit 1 wBTC, insert commitment into tree |
 | `withdraw(proof, root, nullifier_hash, recipient)` | Verify ZK proof, mint pSTRK at market rate  |
 | `current_root()`                                   | Latest Merkle root                          |
 | `next_leaf_index()`                                | Number of deposits so far                   |
 | `is_known_root(root)`                              | Check if root is in last 30 roots           |
-| `pbtc_address()`                                   | Deployed pBTC contract address              |
+| `wBTC_address()`                                   | Deployed wBTC contract address              |
 | `pstrk_address()`                                  | Deployed pSTRK contract address             |
 | `get_btc_usd_price()`                              | Live BTC/USD from Pragma                    |
 | `get_strk_usd_price()`                             | Live STRK/USD from Pragma                   |
-| `get_btc_strk_rate()`                              | Computed pSTRK payout for 1 pBTC            |
+| `get_btc_strk_rate()`                              | Computed pSTRK payout for 1 wBTC            |
 
-### pBTC (Private Bitcoin)
+### wBTC (Private Bitcoin)
 
 Mock ERC20 with 8 decimals. Freely mintable via PrivateSwap's `mock_btc_mint` for testing.
 
@@ -103,7 +103,7 @@ STRK/USD key: 6004514686061859652
 The BTC/STRK rate is computed as a cross rate:
 
 ```
-pSTRK amount = (1 pBTC × BTC/USD price) / STRK/USD price
+pSTRK amount = (1 wBTC × BTC/USD price) / STRK/USD price
 ```
 
 Both prices are returned with 8 decimals from Pragma, which are normalised before the division.
@@ -180,9 +180,9 @@ yarn deploy
 The deploy script:
 
 1. Declares the Garaga verifier class
-2. Declares pBTC class
+2. Declares wBTC class
 3. Declares pSTRK class
-4. Deploys PrivateSwap with all three class hashes — pBTC, pSTRK, and verifier are deployed internally
+4. Deploys PrivateSwap with all three class hashes — wBTC, pSTRK, and verifier are deployed internally
 
 ---
 
@@ -200,10 +200,10 @@ DEPLOYER_PRIVATE_KEY=0x...
 
 Umbra qualifies for the **Bitcoin track** through:
 
-- **BTC wrapper** — pBTC mirrors real wBTC (8 decimals, same denomination)
+- **BTC wrapper** — wBTC mirrors real wBTC (8 decimals, same denomination)
 - **BTCFi** — BTC is the deposit asset; the entire protocol is priced in BTC terms
 - **Live BTC price feed** — Pragma BTC/USD oracle drives every withdrawal payout
-- **Mainnet ready** — swap `pbtc_class_hash` for real wBTC (`0x03fe2b97c1fd336e750087d68b9b867997fd64a2661ff3ca5a7c771641e8e7ac`) to go live
+- **Mainnet ready** — swap `wBTC_class_hash` for real wBTC (`0x03fe2b97c1fd336e750087d68b9b867997fd64a2661ff3ca5a7c771641e8e7ac`) to go live
 
 ---
 

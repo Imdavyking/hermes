@@ -76,7 +76,7 @@ async function main() {
   });
 
   console.log("✅ PrivateSwap deployed at:", privateSwapContract.address);
-  console.log("pBTC address:", await privateSwapContract.pbtc_address());
+  console.log("wBTC address:", await privateSwapContract.wBTC_address());
   console.log("pSTRK address:", await privateSwapContract.pstrk_address());
 }
 

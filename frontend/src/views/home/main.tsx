@@ -32,7 +32,7 @@ const erc20Abi = [
 export default function UmbraHome() {
   const { address } = useAccount();
   const [tab, setTab] = useState<Tab>("deposit");
-  const [pbtcBalance, setPBTCBalance] = useState<number | null>(null);
+  const [wBTCBalance, setwBTCBalance] = useState<number | null>(null);
   const [pstrkBalance, setPSTRKBalance] = useState<number | null>(null);
 
   const { data: currentRoot } = useReadContract({
@@ -71,10 +71,10 @@ export default function UmbraHome() {
     refetchInterval: 30000,
   });
 
-  const { data: pbtcAddress } = useReadContract({
+  const { data: wBTCAddress } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
-    functionName: "pbtc_address",
+    functionName: "wBTC_address",
     args: [],
   });
 
@@ -91,12 +91,12 @@ export default function UmbraHome() {
   });
 
   useEffect(() => {
-    if (!address || !erc20Contract || !pbtcAddress || !pstrkAddress) return;
+    if (!address || !erc20Contract || !wBTCAddress || !pstrkAddress) return;
 
     const fetchBalances = async () => {
       try {
         for (let i = 0; i < 2; i++) {
-          const tokenAddress = i === 0 ? pbtcAddress : pstrkAddress;
+          const tokenAddress = i === 0 ? wBTCAddress : pstrkAddress;
           erc20Contract.address =
             `0x${BigInt(tokenAddress).toString(16)}` as `0x${string}`;
 
@@ -111,7 +111,7 @@ export default function UmbraHome() {
             Number(balance.toString()) / Number(10) ** Number(decimals);
 
           if (i === 0) {
-            setPBTCBalance(finalBal);
+            setwBTCBalance(finalBal);
           } else {
             setPSTRKBalance(finalBal);
           }
@@ -124,7 +124,7 @@ export default function UmbraHome() {
     fetchBalances();
     const interval = setInterval(fetchBalances, 8000);
     return () => clearInterval(interval);
-  }, [address, erc20Contract, pbtcAddress, pstrkAddress]);
+  }, [address, erc20Contract, wBTCAddress, pstrkAddress]);
 
   const poolDepositCount = leafCount ? Number(leafCount) : 0;
   const btcPriceDisplay = btcPrice
@@ -135,8 +135,8 @@ export default function UmbraHome() {
     ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString())} pSTRK`
     : "—";
 
-  const pbtcDisplay =
-    pbtcBalance != null ? `${Number(pbtcBalance).toFixed(8)}` : "—";
+  const wBTCDisplay =
+    wBTCBalance != null ? `${Number(wBTCBalance).toFixed(8)}` : "—";
   const pstrkDisplay =
     pstrkBalance != null ? `${Number(pstrkBalance).toFixed(8)}` : "—";
 
@@ -262,7 +262,7 @@ export default function UmbraHome() {
           <StatCard label="Pool depth" value={poolDepositCount} />
           <StatCard label="BTC/USD" value={btcPriceDisplay} highlight />
           <StatCard
-            label="1 pBTC →"
+            label="1 wBTC →"
             value={
               btcRate
                 ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString())} STRK`
@@ -286,7 +286,7 @@ export default function UmbraHome() {
               marginBottom: "1.75rem",
             }}
           >
-            <StatCard label="Your pBTC" value={pbtcDisplay} />
+            <StatCard label="Your wBTC" value={wBTCDisplay} />
             <StatCard label="Your pSTRK" value={pstrkDisplay} />
           </div>
         )}

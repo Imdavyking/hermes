@@ -71,16 +71,16 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
       ]);
       await account.waitForTransaction(mintTx.transaction_hash);
 
-      const pbtcAddress = await contract.call("pbtc_address");
+      const wBTCAddress = await contract.call("wBTC_address");
       const approveTx = await account.execute([
         {
-          contractAddress: pbtcAddress.toString(),
+          contractAddress: wBTCAddress.toString(),
           entrypoint: "approve",
           calldata: [CONTRACT_ADDRESS, 100_000_000, 0],
         },
       ]);
       await account.waitForTransaction(approveTx.transaction_hash);
-      toast.success("pBTC minted and approved!");
+      toast.success("wBTC minted and approved!");
       setStep(3);
     } catch (err: any) {
       toast.error("Mint/approve failed: " + (err?.message ?? err));
@@ -153,7 +153,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         />
         <StepRow
           n={2}
-          label="Mint pBTC & approve pool"
+          label="Mint wBTC & approve pool"
           done={step > 2}
           active={step === 2}
         />
@@ -272,7 +272,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
             ) : (
               <>
                 <FaBitcoin size={13} />
-                Mint 1 pBTC & Approve
+                Mint 1 wBTC & Approve
               </>
             )}
           </button>
@@ -316,7 +316,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
                 You send
               </div>
               <div style={{ color: "#fff", fontSize: "1rem", fontWeight: 700 }}>
-                1.00 pBTC
+                1.00 wBTC
               </div>
             </div>
             <div style={{ textAlign: "right" }}>

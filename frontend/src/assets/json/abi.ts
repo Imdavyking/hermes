@@ -99,7 +99,7 @@ const contractAbi = [
       },
       {
         type: "function",
-        name: "pbtc_address",
+        name: "wBTC_address",
         inputs: [],
         outputs: [
           { type: "core::starknet::contract_address::ContractAddress" },
@@ -134,7 +134,7 @@ const contractAbi = [
     name: "constructor",
     inputs: [
       {
-        name: "pbtc_class_hash",
+        name: "wBTC_class_hash",
         type: "core::starknet::class_hash::ClassHash",
       },
       {

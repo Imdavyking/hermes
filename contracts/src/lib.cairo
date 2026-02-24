@@ -22,10 +22,6 @@ trait IPSTRKMint<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
-#[starknet::interface]
-trait IPBTCMint<TContractState> {
-    fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
-}
 
 #[starknet::interface]
 trait IPrivateSwap<TContractState> {
@@ -37,12 +33,11 @@ trait IPrivateSwap<TContractState> {
         nullifier_hash: u256,
         recipient: ContractAddress,
     );
-    fn mock_btc_mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
     fn current_root(self: @TContractState) -> u256;
     fn next_leaf_index(self: @TContractState) -> u32;
     fn is_known_root(self: @TContractState, root: u256) -> bool;
     fn pstrk_address(self: @TContractState) -> ContractAddress;
-    fn pbtc_address(self: @TContractState) -> ContractAddress;
+    fn wBTC_address(self: @TContractState) -> ContractAddress;
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_btc_strk_rate(self: @TContractState) -> u256;
@@ -69,13 +64,12 @@ mod PrivateSwap {
         PragmaPricesResponse,
     };
     use super::{
-        ContractAddress, IPBTCMintDispatcher, IPBTCMintDispatcherTrait, IPSTRKMintDispatcher,
-        IPSTRKMintDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait,
-        get_block_timestamp, get_caller_address, get_contract_address,
+        ContractAddress, IPSTRKMintDispatcher, IPSTRKMintDispatcherTrait, IVerifierDispatcher,
+        IVerifierDispatcherTrait, get_block_timestamp, get_caller_address, get_contract_address,
     };
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
-    // 1 pBTC — 8 decimals
+    // 1 wBTC — 8 decimals
     const DENOMINATION: u256 = 100_000_000;
     // pSTRK token precision — 18 decimals
     // FIX: previously missing, causing pstrk_amount to be ~10^10 times too small.
@@ -98,7 +92,7 @@ mod PrivateSwap {
         imt: IncrementalMerkleTreeComponent::Storage,
         commitments: Map<u256, bool>,
         nullifier_hashes: Map<u256, bool>,
-        pbtc: ContractAddress,
+        wBTC: ContractAddress,
         pstrk: ContractAddress,
         verifier: ContractAddress,
     }
@@ -138,7 +132,7 @@ mod PrivateSwap {
         ref self: ContractState, pstrk_class_hash: ClassHash, verifier_class_hash: ClassHash,
     ) {
         self
-            .pbtc
+            .wBTC
             .write(
                 0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
                     .try_into()
@@ -170,27 +164,18 @@ mod PrivateSwap {
     #[abi(embed_v0)]
     impl PrivateSwapImpl of super::IPrivateSwap<ContractState> {
         // ---------------------------------------------------
-        // MOCK MINT — for testing only
-        // Lets anyone mint pBTC to test the deposit/withdraw flow
-        // ---------------------------------------------------
-        fn mock_btc_mint(ref self: ContractState, recipient: ContractAddress, amount: u256) {
-            let pbtc = IPBTCMintDispatcher { contract_address: self.pbtc.read() };
-            pbtc.mint(recipient, amount);
-        }
-
-        // ---------------------------------------------------
         // DEPOSIT
         // User generates commitment = Poseidon2(nullifier, secret) offchain
-        // Sends 1 pBTC + the commitment hash
+        // Sends 1 wBTC + the commitment hash
         // ---------------------------------------------------
         fn deposit(ref self: ContractState, commitment: u256) {
             assert(!self.commitments.read(commitment), 'commitment already used');
 
-            // pull exactly 1 pBTC from caller
-            let pbtc = IERC20Dispatcher { contract_address: self.pbtc.read() };
-            let success = pbtc
+            // pull exactly 1 wBTC from caller
+            let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
+            let success = wBTC
                 .transfer_from(get_caller_address(), get_contract_address(), DENOMINATION);
-            assert(success, 'pBTC transfer failed');
+            assert(success, 'wBTC transfer failed');
 
             let leaf_index = self.imt._insert(commitment);
             self.commitments.write(commitment, true);
@@ -206,7 +191,7 @@ mod PrivateSwap {
         // FIX: pstrk_amount now includes PSTRK_PRECISION (10^18) so the
         // minted amount is expressed in pSTRK's 18-decimal token units.
         // Formula:
-        //   pstrk_amount = DENOMINATION                   (1 pBTC in satoshis)
+        //   pstrk_amount = DENOMINATION                   (1 wBTC in satoshis)
         //                × btc_usd                        (BTC price, oracle decimals)
         //                × 10^strk_dec                    (normalise STRK oracle decimals)
         //                × PSTRK_PRECISION                (scale to 18-decimal token units)
@@ -269,7 +254,7 @@ mod PrivateSwap {
         }
 
         // ---------------------------------------------------
-        // Returns: how many pSTRK wei (18 decimals) you receive for 1 pBTC.
+        // Returns: how many pSTRK wei (18 decimals) you receive for 1 wBTC.
         // FIX: same PSTRK_PRECISION correction applied here for consistency.
         // ---------------------------------------------------
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
@@ -304,8 +289,8 @@ mod PrivateSwap {
             self.pstrk.read()
         }
 
-        fn pbtc_address(self: @ContractState) -> ContractAddress {
-            self.pbtc.read()
+        fn wBTC_address(self: @ContractState) -> ContractAddress {
+            self.wBTC.read()
         }
     }
 
