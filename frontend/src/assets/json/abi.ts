@@ -44,8 +44,6 @@ const contractAbi = [
         name: "withdraw",
         inputs: [
           { name: "proof", type: "core::array::Span::<core::felt252>" },
-          { name: "root", type: "core::integer::u256" },
-          { name: "nullifier_hash", type: "core::integer::u256" },
           {
             name: "recipient",
             type: "core::starknet::contract_address::ContractAddress",
@@ -86,6 +84,13 @@ const contractAbi = [
         name: "is_known_root",
         inputs: [{ name: "root", type: "core::integer::u256" }],
         outputs: [{ type: "core::bool" }],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
+        name: "wBTC_denomination",
+        inputs: [],
+        outputs: [{ type: "core::integer::u256" }],
         state_mutability: "view",
       },
       {
