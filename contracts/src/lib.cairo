@@ -69,8 +69,7 @@ mod PrivateSwap {
     };
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
-    // 1 wBTC — 8 decimals
-    const DENOMINATION: u256 = 100_000_000;
+    const BTC_DENOMINATION: u256 = 1_000;
     // pSTRK token precision — 18 decimals
     // FIX: previously missing, causing pstrk_amount to be ~10^10 times too small.
     // Without this factor the formula produced a raw "oracle units" number rather
@@ -174,7 +173,7 @@ mod PrivateSwap {
             // pull exactly 1 wBTC from caller
             let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
             let success = wBTC
-                .transfer_from(get_caller_address(), get_contract_address(), DENOMINATION);
+                .transfer_from(get_caller_address(), get_contract_address(), BTC_DENOMINATION);
             assert(success, 'wBTC transfer failed');
 
             let leaf_index = self.imt._insert(commitment);
