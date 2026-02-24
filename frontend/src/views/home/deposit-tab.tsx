@@ -95,12 +95,6 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
       const required = BigInt(BTCDenomination);
 
       if (currentAllowance >= required) {
-        toast.info("Allowance already sufficient, skipping approve.");
-        setStep(3);
-        return;
-      }
-
-      if (currentAllowance >= required) {
         // Already approved — skip the tx and move on
         toast.info("Allowance already sufficient, skipping approve.");
         setStep(3);
