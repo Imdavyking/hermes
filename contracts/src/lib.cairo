@@ -4,7 +4,6 @@ mod incremental_merkle_tree;
 mod pSTRK;
 mod poseidon2;
 mod poseidon2lib;
-mod pragma_oracle;
 
 // -------------------------------------------------------
 // Interfaces
@@ -22,6 +21,13 @@ trait IPSTRKMint<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
+/// Chainlink AggregatorProxy interface
+#[starknet::interface]
+trait IAggregatorProxy<TContractState> {
+    fn latest_round_data(self: @TContractState) -> (u128, u128, u64, u64, u128);
+    // returns: (round_id, answer, started_at, updated_at, answered_in_round)
+    fn decimals(self: @TContractState) -> u8;
+}
 
 #[starknet::interface]
 trait IPrivateSwap<TContractState> {
@@ -54,28 +60,26 @@ mod PrivateSwap {
     use starknet::syscalls::deploy_syscall;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
-    use crate::pragma_oracle::{
-        AggregationMode, DataType, IPragmaABIDispatcher, IPragmaABIDispatcherTrait,
-        PragmaPricesResponse,
-    };
     use super::{
-        ContractAddress, IPSTRKMintDispatcher, IPSTRKMintDispatcherTrait, IVerifierDispatcher,
+        ContractAddress, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait,
+        IPSTRKMintDispatcher, IPSTRKMintDispatcherTrait, IVerifierDispatcher,
         IVerifierDispatcherTrait, get_block_timestamp, get_caller_address, get_contract_address,
     };
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
     const BTC_DENOMINATION: u256 = 1_000;
-    // pSTRK token precision — 18 decimals
-    // FIX: previously missing, causing pstrk_amount to be ~10^10 times too small.
-    // Without this factor the formula produced a raw "oracle units" number rather
-    // than an 18-decimal token amount. For example, at BTC=$100,000 and STRK=$0.50
-    // the old code minted ≈2×10^13 wei (≈0.00002 pSTRK) instead of ≈200,000 pSTRK.
     const PSTRK_PRECISION: u256 = 1_000_000_000_000_000_000; // 10^18
-    // Merkle tree depth — supports up to 2^10 = ~1k deposits
     const TREE_DEPTH: u32 = 10;
-    // Pragma pair keys
-    const BTC_USD: felt252 = 'BTC/USD';
-    const STRK_USD: felt252 = 'STRK/USD';
+
+    // Chainlink Sepolia feed addresses
+    // BTC/USD — 8 decimals
+    const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
+    // STRK/USD — 8 decimals
+    const STRK_USD_FEED: felt252 =
+        0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
+
+    // Max price age: 1 hour. Revert if Chainlink hasn't updated within this window.
+    const MAX_PRICE_AGE: u64 = 3600;
 
     // -------------------------------------------------------
     // Storage
@@ -133,7 +137,6 @@ mod PrivateSwap {
                     .unwrap(),
             );
 
-        // Deploy pSTRK — minter is this contract so withdraw can mint
         let contract_address = get_contract_address();
         let mut pstrk_calldata: Array<felt252> = array![];
         pstrk_calldata.append(contract_address.into());
@@ -141,7 +144,6 @@ mod PrivateSwap {
             .unwrap_syscall();
         self.pstrk.write(pstrk_address);
 
-        // Deploy Verifier — no constructor args needed
         let mut verifier_calldata: Array<felt252> = array![];
         let (verifier_address, _) = deploy_syscall(
             verifier_class_hash, 0, verifier_calldata.span(), false,
@@ -178,8 +180,8 @@ mod PrivateSwap {
         // WITHDRAW
         // User submits a Noir proof that they know a secret
         // corresponding to a commitment in the tree.
-        // Contract mints pSTRK at BTC/STRK market rate via Pragma.
-        //
+        // Contract mints pSTRK at BTC/STRK market rate via Chainlink.
+        // ---------------------------------------------------
         fn withdraw(ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress) {
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified_proof = verifier.verify_ultra_keccak_zk_honk_proof(proof);
@@ -188,28 +190,26 @@ mod PrivateSwap {
             let result = verified_proof.unwrap();
             let root = *result.at(0);
             let nullifier_hash = *result.at(1);
+
             // 1. root must be a root we've seen (last 30)
             assert(self.imt.is_known_root(root), 'unknown root');
 
             // 2. nullifier must not be spent
             assert(!self.nullifier_hashes.read(nullifier_hash), 'nullifier used');
 
-            // 4. mark nullifier spent before external calls — reentrancy guard
+            // 3. mark nullifier spent before external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // 5. fetch BTC/USD and STRK/USD from Pragma, derive BTC/STRK cross rate
-            let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
-            let (strk_usd, strk_dec) = self.get_token_price(DataType::SpotEntry(STRK_USD));
+            // 4. fetch BTC/USD and STRK/USD from Chainlink, derive BTC/STRK cross rate
+            let (btc_usd, btc_dec) = self.get_chainlink_price(BTC_USD_FEED);
+            let (strk_usd, strk_dec) = self.get_chainlink_price(STRK_USD_FEED);
 
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
 
-            // BTC/STRK cross rate, result in 18-decimal pSTRK token units:
-            //   (DENOMINATION × btc_usd / strk_usd) cancels oracle decimal factors via pow10
-            //   PSTRK_PRECISION scales the result to the token's 18-decimal representation.
-            //
-            // FIX: PSTRK_PRECISION was previously absent; without it the minted amount
-            //      was in raw oracle units (~10^8) rather than 18-decimal token wei (~10^18).
+            // BTC/STRK cross rate in 18-decimal pSTRK token units:
+            //   (btc_usd / strk_usd) gives how many STRK per 1 BTC,
+            //   scaled by PSTRK_PRECISION to preserve 18-decimal token wei.
             let onestrk_btc: u256 = (btc_usd.into() * self.pow10(strk_dec.into()) * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()));
 
@@ -217,7 +217,7 @@ mod PrivateSwap {
 
             assert(pstrk_amount > 0, 'pSTRK amount is zero');
 
-            // 6. mint pSTRK to recipient
+            // 5. mint pSTRK to recipient
             let pstrk = IPSTRKMintDispatcher { contract_address: self.pstrk.read() };
             pstrk.mint(recipient, pstrk_amount);
 
@@ -225,24 +225,20 @@ mod PrivateSwap {
         }
 
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
-            self.get_token_price(DataType::SpotEntry(BTC_USD))
+            self.get_chainlink_price(BTC_USD_FEED)
         }
 
         fn get_strk_usd_price(self: @ContractState) -> (u128, u32) {
-            self.get_token_price(DataType::SpotEntry(STRK_USD))
+            self.get_chainlink_price(STRK_USD_FEED)
         }
 
-        // ---------------------------------------------------
-        // ---------------------------------------------------
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
-            let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
-            let (strk_usd, strk_dec) = self.get_token_price(DataType::SpotEntry(STRK_USD));
+            let (btc_usd, btc_dec) = self.get_chainlink_price(BTC_USD_FEED);
+            let (strk_usd, strk_dec) = self.get_chainlink_price(STRK_USD_FEED);
 
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
 
-            // FIX: include PSTRK_PRECISION so the returned rate matches
-            //      what withdraw() actually mints — both expressed in 18-decimal wei.
             (btc_usd.into() * self.pow10(strk_dec.into()) * PSTRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()))
         }
@@ -281,16 +277,24 @@ mod PrivateSwap {
 
     #[generate_trait]
     impl Private of PrivateTrait {
-        fn get_token_price(self: @ContractState, asset: DataType) -> (u128, u32) {
-            let oracle_address: ContractAddress =
-                0x036031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a
-                .try_into()
-                .unwrap();
-            let oracle = IPragmaABIDispatcher { contract_address: oracle_address };
-            // Ignore this warnings -> so we match the Pragma ABI exactly, which has no parentheses
-            // for the enum variants
-            let output: PragmaPricesResponse = oracle.get_data(asset, AggregationMode::Median(()));
-            (output.price, output.decimals)
+        /// Reads latest price from a Chainlink feed.
+        /// Returns (price, decimals) matching the old Pragma signature
+        /// so the rest of the math is unchanged.
+        fn get_chainlink_price(self: @ContractState, feed_address: felt252) -> (u128, u32) {
+            let feed = IAggregatorProxyDispatcher {
+                contract_address: feed_address.try_into().unwrap(),
+            };
+
+            let (_, answer, _, updated_at, _) = feed.latest_round_data();
+            // round_id, answer, started_at, updated_at, answered_in_round
+
+            // Staleness check — revert if price is older than MAX_PRICE_AGE
+            let block_time = get_block_timestamp();
+            assert(block_time - updated_at < MAX_PRICE_AGE, 'stale price');
+            assert(answer > 0, 'invalid price');
+
+            let decimals: u32 = feed.decimals().into(); // Chainlink feeds use 8 decimals
+            (answer, decimals)
         }
 
         fn pow10(self: @ContractState, n: u256) -> u256 {
