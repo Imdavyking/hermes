@@ -201,7 +201,11 @@ mod PrivateSwap {
 
             // 3. verify Noir proof via Garaga
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
-            let result = verifier.verify_ultra_keccak_zk_honk_proof(proof).unwrap();
+            let verified_proof = verifier.verify_ultra_keccak_zk_honk_proof(proof);
+
+            assert(verified_proof.is_ok(),'invalid proof');
+            
+            let result = verified_proof.unwrap();
             let _root = *result.at(0);
             let nullfier_hash = *result.at(1);
 
