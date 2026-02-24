@@ -165,12 +165,10 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // DEPOSIT
         // User generates commitment = Poseidon2(nullifier, secret) offchain
-        // Sends 1 wBTC + the commitment hash
         // ---------------------------------------------------
         fn deposit(ref self: ContractState, commitment: u256) {
             assert(!self.commitments.read(commitment), 'commitment already used');
 
-            // pull exactly 1 wBTC from caller
             let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
             let success = wBTC
                 .transfer_from(get_caller_address(), get_contract_address(), BTC_DENOMINATION);
@@ -187,15 +185,6 @@ mod PrivateSwap {
         // corresponding to a commitment in the tree.
         // Contract mints pSTRK at BTC/STRK market rate via Pragma.
         //
-        // FIX: pstrk_amount now includes PSTRK_PRECISION (10^18) so the
-        // minted amount is expressed in pSTRK's 18-decimal token units.
-        // Formula:
-        //   pstrk_amount = DENOMINATION                   (1 wBTC in satoshis)
-        //                × btc_usd                        (BTC price, oracle decimals)
-        //                × 10^strk_dec                    (normalise STRK oracle decimals)
-        //                × PSTRK_PRECISION                (scale to 18-decimal token units)
-        //                / (strk_usd × 10^btc_dec)        (STRK price, normalised)
-        // ---------------------------------------------------
         fn withdraw(
             ref self: ContractState,
             proof: Span<felt252>,
@@ -253,8 +242,6 @@ mod PrivateSwap {
         }
 
         // ---------------------------------------------------
-        // Returns: how many pSTRK wei (18 decimals) you receive for 1 wBTC.
-        // FIX: same PSTRK_PRECISION correction applied here for consistency.
         // ---------------------------------------------------
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
             let (btc_usd, btc_dec) = self.get_token_price(DataType::SpotEntry(BTC_USD));
