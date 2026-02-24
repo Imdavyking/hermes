@@ -87,12 +87,11 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         calldata: CallData.compile([address, CONTRACT_ADDRESS]),
       });
 
-      const result = uint256.uint256ToBN({
+      const currentAllowance = uint256.uint256ToBN({
         low: allowanceResult[0],
         high: allowanceResult[1],
       });
 
-      const currentAllowance = result;
       const required = BigInt(BTCDenomination);
 
       if (currentAllowance >= required) {
