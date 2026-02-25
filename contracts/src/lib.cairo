@@ -185,6 +185,10 @@ mod PrivateSwap {
     // wBTC lot size. Every deposit and order is exactly this many wBTC units.
     const BTC_DENOMINATION: u256 = 1_000;
 
+    // 1 wBTC expressed in its base units (8 decimals).
+    const WBTC_PRECISION: u256 = 100_000_000; // 10^8 — 1 full BTC in sats
+
+
     // 1 STRK expressed in its base units (18 decimals).
     const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;
 
@@ -479,8 +483,6 @@ mod PrivateSwap {
             );
 
             // get wbtc decimals
-            let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let WBTC_PRECISION = 10u256.pow(wBTC.decimals() as u32);
 
             let quoted_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
