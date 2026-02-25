@@ -221,4 +221,15 @@ Umbra qualifies for the **Bitcoin track** through:
 
 MIT
 
-<!-- https://youtu.be/v-pzkd-VGkE -->
+Hey!  those are two different WBTC contracts on Sepolia:
+
+0x52eeA312378ef46140EBE67dE8a143BA2304FD7C - WBTC on Uniswap Sepolia, but not compatible with StarkGate.
+
+0x92f3B59a79bFf5dc60c0d59eA13a44D082B2bdFC - The official WBTC that StarkGate uses for bridging to Starknet Sepolia
+
+- Get Sepolia ETH from a faucet (Alchemy, Google Cloud, Chainlink)
+- Swap it for WBTC on Uniswap Sepolia:
+  https://app.uniswap.org/explore/tokens/ethereum_sepolia/0x52eea312378ef46140ebe67de8a143ba2304fd7c
+- Then bridge WBTC to Starknet Sepolia via StarkGate
+
+Alternative: Aave's testnet faucet (https://app.aave.com/faucet/) switch to Sepolia network and you should be able to mint WBTC testnet tokens directly.
