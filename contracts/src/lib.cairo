@@ -36,8 +36,13 @@ trait IAggregatorProxy<TContractState> {
 #[starknet::interface]
 trait IPrivateSwap<TContractState> {
     fn deposit(ref self: TContractState, commitment: u256);
-    fn initate_lock(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress,hashlock: felt252,
-            timelock: u64);
+    fn initate_lock(
+        ref self: TContractState,
+        proof: Span<felt252>,
+        recipient: ContractAddress,
+        hashlock: felt252,
+        timelock: u64,
+    );
     fn current_root(self: @TContractState) -> u256;
     fn next_leaf_index(self: @TContractState) -> u32;
     fn is_known_root(self: @TContractState, root: u256) -> bool;
@@ -67,8 +72,8 @@ mod PrivateSwap {
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
     use super::{
         ContractAddress, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait,
-        IVerifierDispatcher,
-        IVerifierDispatcherTrait, get_block_timestamp, get_caller_address, get_contract_address,
+        IVerifierDispatcher, IVerifierDispatcherTrait, get_block_timestamp, get_caller_address,
+        get_contract_address,
     };
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
@@ -143,10 +148,14 @@ mod PrivateSwap {
             );
 
         let contract_address = get_contract_address();
-     
-        self.strk.write(0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
+
+        self
+            .strk
+            .write(
+                0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
                     .try_into()
-                    .unwrap(),);
+                    .unwrap(),
+            );
 
         let mut verifier_calldata: Array<felt252> = array![];
         let (verifier_address, _) = deploy_syscall(
@@ -181,10 +190,15 @@ mod PrivateSwap {
         }
 
         // ---------------------------------------------------
-        
+
         // ---------------------------------------------------
-        fn initate_lock(ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,hashlock: felt252,
-            timelock: u64,) {
+        fn initate_lock(
+            ref self: ContractState,
+            proof: Span<felt252>,
+            recipient: ContractAddress,
+            hashlock: felt252,
+            timelock: u64,
+        ) {
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified_proof = verifier.verify_ultra_keccak_zk_honk_proof(proof);
             assert(verified_proof.is_ok(), 'invalid proof');
@@ -201,8 +215,6 @@ mod PrivateSwap {
 
             // 3. mark nullifier spent before external calls — reentrancy guard
             self.nullifier_hashes.write(nullifier_hash, true);
-
-            
         }
 
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
