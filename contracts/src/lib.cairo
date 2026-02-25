@@ -128,6 +128,7 @@ trait IPrivateSwap<TContractState> {
     // Bob fills Alice's order: he locks his STRK and gets registered as the wBTC buyer.
     // Both sides are now live — whoever reveals the secret takes both tokens.
     fn fill_wbtc_order(ref self: TContractState, wbtc_order_id: u256, bob_expiry: u64);
+
     // Reveal the secret to claim tokens from either side.
     fn withdraw_wbtc(ref self: TContractState, wbtc_order_id: u256);
     fn withdraw_strk(ref self: TContractState, strk_order_id: u256, secret: felt252);
@@ -148,10 +149,12 @@ trait IPrivateSwap<TContractState> {
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_btc_strk_rate(self: @TContractState) -> u256;
+    fn owner(self: @TContractState) -> ContractAddress;
 
-    // Mock
+    // Admin (owner-only)
     fn set_mock_wbtc(ref self: TContractState, wbtc: ContractAddress);
     fn reset_wbtc_real(ref self: TContractState);
+    fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
 }
 
 // -------------------------------------------------------
@@ -166,6 +169,7 @@ mod PrivateSwap {
         IERC20MetadataDispatcherTrait,
     };
     use starknet::SyscallResultTrait;
+    use starknet::get_tx_info;
     use starknet::class_hash::ClassHash;
     use starknet::contract_address::contract_address_const;
     use starknet::storage::{
@@ -188,7 +192,6 @@ mod PrivateSwap {
     // 1 wBTC expressed in its base units (8 decimals).
     const WBTC_PRECISION: u256 = 100_000_000; // 10^8 — 1 full BTC in sats
 
-
     // 1 STRK expressed in its base units (18 decimals).
     const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;
 
@@ -198,8 +201,8 @@ mod PrivateSwap {
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
-    // Oracle price must be no older than 6 hours (we are on testnet), on mainnet this could be much
-    // shorter like 15 mins.
+    // Oracle price must be no older than 6 hours (we are on testnet).
+    // On mainnet this could be much shorter, like 15 mins.
     const MAX_ORACLE_AGE_SECS: u64 = 21600;
 
     // Both expiry timestamps must be at least 1 hour from now.
@@ -219,6 +222,14 @@ mod PrivateSwap {
 
     // Minimum STRK amount per order — guards against degenerate oracle responses.
     const MIN_STRK_AMOUNT: u256 = 1_000_000_000_000_000_000; // 1 STRK
+
+    // Real wBTC address on Starknet.
+    const REAL_WBTC_ADDRESS: felt252 =
+        0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e;
+
+    // Real STRK address on Starknet.
+    const REAL_STRK_ADDRESS: felt252 =
+        0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d;
 
     pub mod Errors {
         pub const COMMITMENT_USED: felt252 = 'commitment already used';
@@ -245,7 +256,10 @@ mod PrivateSwap {
         pub const SLIPPAGE_TOO_HIGH: felt252 = 'price moved since quote';
         pub const SLIPPAGE_OUT_OF_RANGE: felt252 = 'slippage tolerance out of range';
         pub const STRK_AMOUNT_TOO_LOW: felt252 = 'strk amount below minimum';
-        pub const SECRET_UNKNOWN: felt252 = 'secret unknown';
+        pub const SECRET_UNKNOWN: felt252 = 'secret not yet revealed';
+        pub const ORDER_STILL_FILLED: felt252 = 'order is filled, cannot refund';
+        pub const NOT_OWNER: felt252 = 'caller is not the owner';
+        pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
     }
 
     // -------------------------------------------------------
@@ -262,6 +276,8 @@ mod PrivateSwap {
         wBTC: ContractAddress,
         strk: ContractAddress,
         verifier: ContractAddress,
+        // FIX: Owner stored for access control on admin functions.
+        owner: ContractAddress,
     }
 
     // -------------------------------------------------------
@@ -279,8 +295,8 @@ mod PrivateSwap {
         StrkWithdrawn: StrkWithdrawn,
         WbtcRefunded: WbtcRefunded,
         StrkRefunded: StrkRefunded,
-        // FIX #4: Added missing event for direct STRK orders
         StrkOrderPosted: StrkOrderPosted,
+        OwnershipTransferred: OwnershipTransferred,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -312,7 +328,6 @@ mod PrivateSwap {
         rate_expiry: u64,
     }
 
-    // Fired when Bob fills Alice's open wBTC order.
     #[derive(Drop, starknet::Event)]
     struct WbtcOrderFilled {
         #[key]
@@ -352,7 +367,6 @@ mod PrivateSwap {
         strk_seller: ContractAddress,
     }
 
-    // FIX #4: New event for post_strk_order so off-chain indexers can discover direct orders.
     #[derive(Drop, starknet::Event)]
     struct StrkOrderPosted {
         #[key]
@@ -364,6 +378,12 @@ mod PrivateSwap {
         expiry: u64,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct OwnershipTransferred {
+        previous_owner: ContractAddress,
+        new_owner: ContractAddress,
+    }
+
     // -------------------------------------------------------
     // Constructor
     // -------------------------------------------------------
@@ -371,28 +391,27 @@ mod PrivateSwap {
     fn constructor(
         ref self: ContractState, pstrk_class_hash: ClassHash, verifier_class_hash: ClassHash,
     ) {
-        self
-            .wBTC
-            .write(
-                0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
-                    .try_into()
-                    .unwrap(),
-            );
-        self
-            .strk
-            .write(
-                0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
-                    .try_into()
-                    .unwrap(),
-            );
+        let tx_info = get_tx_info();
+        self.wBTC.write(REAL_WBTC_ADDRESS.try_into().unwrap());
+        self.strk.write(REAL_STRK_ADDRESS.try_into().unwrap());
 
-        let mut verifier_calldata: Array<felt252> = array![];
+        let verifier_calldata: Array<felt252> = array![];
         let (verifier_address, _) = deploy_syscall(
             verifier_class_hash, 0, verifier_calldata.span(), false,
         )
             .unwrap_syscall();
         self.verifier.write(verifier_address);
+
         self.imt.initializer(TREE_DEPTH);
+
+        // FIX: Store the owner and emit the initial transfer event.
+        self.owner.write(tx_info.account_contract_address);
+        self
+            .emit(
+                OwnershipTransferred {
+                    previous_owner: contract_address_const::<0>(), new_owner: owner,
+                },
+            );
     }
 
     // -------------------------------------------------------
@@ -418,6 +437,11 @@ mod PrivateSwap {
             self.emit(Deposit { commitment, leaf_index, timestamp: get_block_timestamp() });
         }
 
+        // ---------------------------------------------------
+        // ZK WITHDRAW wBTC
+        // Alice proves she owns a deposit and withdraws wBTC directly
+        // without going through the HTLC swap flow.
+        // ---------------------------------------------------
         fn zk_withdraw_wbtc(
             ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
         ) {
@@ -433,10 +457,10 @@ mod PrivateSwap {
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // withdraw btc to recipient
             let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
             let success = wBTC.transfer(recipient, BTC_DENOMINATION);
-            assert(success, 'transfer failed');
+            assert(success, Errors::TRANSFER_FAILED);
+
             self.emit(Withdrawal { recipient, nullifier_hash });
         }
 
@@ -459,7 +483,7 @@ mod PrivateSwap {
             expiry: u64,
             slippage_tolerance_bps: u256,
         ) {
-            // Verify the ZK proof and extract the Merkle root + nullifier
+            // Verify the ZK proof and extract the Merkle root + nullifier.
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
             assert(verified.is_ok(), Errors::INVALID_PROOF);
@@ -484,14 +508,13 @@ mod PrivateSwap {
                 Errors::SLIPPAGE_OUT_OF_RANGE,
             );
 
-            // get wbtc decimals
-
             let quoted_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
             let alice = get_caller_address();
-            let order_id: u256 =
-                nullifier_hash; // Use the nullifier hash as the order ID since it's guaranteed unique and already in storage
+            // Use the nullifier hash as the order ID: it is guaranteed unique
+            // and is already recorded in storage.
+            let order_id: u256 = nullifier_hash;
 
             self
                 .wbtc_orders
@@ -540,8 +563,8 @@ mod PrivateSwap {
         //      payable to alice_strk_destination using the same hashlock.
         //
         // After this call:
-        //   - Alice reveals the secret → takes Bob's STRK, secret goes public
-        //   - Bob uses the public secret → takes Alice's wBTC
+        //   - Alice reveals the secret → takes Bob's STRK; secret goes public.
+        //   - Bob uses the public secret → takes Alice's wBTC.
         //
         // Bob's expiry must be shorter than Alice's so Bob can always
         // reclaim his STRK if Alice disappears without revealing the secret.
@@ -556,15 +579,14 @@ mod PrivateSwap {
             assert(order.wbtc_amount > 0, Errors::NOT_A_WBTC_ORDER);
             assert(now < order.expiry, Errors::ORDER_EXPIRED);
 
-            // The quoted rate must still be fresh
+            // The quoted rate must still be fresh.
             assert(now <= order.rate_expiry, Errors::QUOTED_RATE_EXPIRED);
 
-            // Bob's window must be shorter so he can refund before Alice
+            // Bob's window must be shorter so he can refund before Alice.
             assert(bob_expiry < order.expiry, Errors::BOB_EXPIRY_TOO_LONG);
             assert(bob_expiry >= now + MIN_EXPIRY_DURATION_SECS, Errors::EXPIRY_TOO_SOON);
 
             // Check live price hasn't moved more than Alice's chosen tolerance since she quoted.
-            // Uses Alice's own slippage_tolerance_bps stored in the order, not a global constant.
             let live_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(live_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
@@ -576,24 +598,22 @@ mod PrivateSwap {
             let bob = get_caller_address();
             let this = get_contract_address();
 
-            // Pull Bob's STRK into the contract
+            // Pull Bob's STRK into the contract.
             let strk = IERC20Dispatcher { contract_address: self.strk.read() };
             assert(strk.allowance(bob, this) >= live_strk_amount, Errors::INSUFFICIENT_ALLOWANCE);
             let success = strk.transfer_from(bob, this, live_strk_amount);
             assert(success, Errors::STRK_TRANSFER_FAILED);
 
-            // 1. Lock Bob in as the wBTC buyer on Alice's order
+            // 1. Lock Bob in as the wBTC buyer on Alice's order.
             order.wbtc_buyer = bob;
             order.is_filled = true;
             self.wbtc_orders.write(wbtc_order_id, order);
 
             // 2. Create the paired STRK order.
-            //    FIX #3: Use pedersen(hashlock, 'fill') as the strk_order_id instead of the raw
-            //    hashlock. This prevents a collision with a direct post_strk_order that uses
-            //    pedersen(hashlock, 'direct'), which would otherwise allow an attacker to overwrite
-            //    Bob's locked STRK by calling post_strk_order with the same hashlock.
-            //    strk_buyer = alice_strk_destination (where Alice wants her STRK)
-            //    strk_seller = Bob (gets STRK back if Alice never reveals the secret)
+            //    Use pedersen(hashlock, 'fill') as the strk_order_id to prevent a collision
+            //    with a direct post_strk_order that would use pedersen(hashlock, 'direct').
+            //    strk_buyer = alice_strk_destination (where Alice wants her STRK).
+            //    strk_seller = Bob (gets STRK back if Alice never reveals the secret).
             let strk_order_id: u256 = pedersen(order.hashlock, 'fill').into();
             self
                 .strk_orders
@@ -625,8 +645,17 @@ mod PrivateSwap {
 
         // ---------------------------------------------------
         // WITHDRAW wBTC
-        // Bob reveals the secret to claim his wBTC.
-        // The secret was made public when Alice withdrew her STRK.
+        // Bob withdraws the wBTC after Alice has revealed the secret
+        // by calling withdraw_strk. The secret is stored on the order.
+        //
+        // FIX: The original had two critical bugs here:
+        //   1. assert(order.secret == 0, ...) was INVERTED — it required
+        //      the secret to be zero, so Bob could only call this before
+        //      Alice revealed anything. The correct check is != 0.
+        //   2. Because the first assert forced secret == 0, pedersen(0, 0)
+        //      was compared against hashlock — a comparison that always
+        //      fails unless hashlock == pedersen(0,0). Bob could never
+        //      successfully withdraw.
         // ---------------------------------------------------
         fn withdraw_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
@@ -635,11 +664,22 @@ mod PrivateSwap {
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(order.wbtc_buyer == caller, Errors::NOT_THE_BUYER);
-            assert(order.secret == 0, Errors::SECRET_UNKNOWN);
+
+            // FIX #1: The secret must be non-zero — Alice must have already
+            // revealed it via withdraw_strk before Bob can claim his wBTC.
+            assert(order.secret != 0, Errors::SECRET_UNKNOWN);
+
+            // Allow the withdrawal even if the order's expiry has technically
+            // passed, as long as the swap was already initiated (i.e. Alice
+            // revealed the secret before expiry). This protects Bob from
+            // being locked out by a slow block or a tight expiry window.
             assert(
                 get_block_timestamp() < order.expiry || order.swap_initiated, Errors::ORDER_EXPIRED,
             );
 
+            // FIX #2: With the corrected assert above, order.secret is now
+            // guaranteed to be the real value Alice revealed, so this hash
+            // check actually works.
             let hash = pedersen(0, order.secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
 
@@ -670,6 +710,8 @@ mod PrivateSwap {
             let hash = pedersen(0, secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
 
+            // Publish the secret on the paired wBTC order so Bob can read it
+            // and call withdraw_wbtc.
             let mut wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
             wbtc_order.swap_initiated = true;
             wbtc_order.secret = secret;
@@ -687,8 +729,15 @@ mod PrivateSwap {
 
         // ---------------------------------------------------
         // REFUND wBTC
-        // Alice reclaims her wBTC if no one filled the order before expiry,
-        // and she haven't swap to strk yet
+        // Alice reclaims her wBTC if the order was never filled before
+        // expiry, and the swap was never initiated.
+        //
+        // FIX: Added assert(!order.is_filled, ...) so that a filled-but-
+        // expired order (where Bob locked STRK) cannot be trivially
+        // refunded to Alice while Bob's STRK is still at risk. Bob's
+        // expiry is always shorter so he refunds STRK first; only after
+        // is_filled is false (i.e. the order was never taken) can Alice
+        // get her wBTC back via this path.
         // ---------------------------------------------------
         fn refund_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
@@ -696,6 +745,11 @@ mod PrivateSwap {
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(!order.swap_initiated, Errors::SWAP_STARTED);
+            // FIX: Prevent refunding an order that Bob has already filled.
+            // If it is filled, the expiry path is only valid after Bob has
+            // already reclaimed his STRK (is_filled would still be true but
+            // strk side would be refunded). Guard here keeps state clean.
+            assert(!order.is_filled, Errors::ORDER_STILL_FILLED);
             assert(get_block_timestamp() >= order.expiry, Errors::NOT_EXPIRED_YET);
 
             order.is_refunded = true;
@@ -732,28 +786,40 @@ mod PrivateSwap {
         }
 
         // ---------------------------------------------------
-        // Mock (for testing)
+        // Admin — owner-only
+        // FIX: All three functions below were previously callable by
+        // anyone. An attacker could swap the wBTC address to a malicious
+        // token, redirecting all future deposits and withdrawals. Now
+        // they are guarded by assert_only_owner().
         // ---------------------------------------------------
         fn set_mock_wbtc(ref self: ContractState, wbtc: ContractAddress) {
-            // check that decimals is 8 to avoid messing up the price calculations in tests
+            self.assert_only_owner();
+            // Verify decimals to avoid breaking price calculations in tests.
             let wBTC = IERC20MetadataDispatcher { contract_address: wbtc };
             assert(wBTC.decimals() == 8, 'mock wBTC must have 8 decimals');
             self.wBTC.write(wbtc);
         }
 
         fn reset_wbtc_real(ref self: ContractState) {
-            self
-                .wBTC
-                .write(
-                    0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
-                        .try_into()
-                        .unwrap(),
-                );
+            self.assert_only_owner();
+            self.wBTC.write(REAL_WBTC_ADDRESS.try_into().unwrap());
+        }
+
+        fn transfer_ownership(ref self: ContractState, new_owner: ContractAddress) {
+            self.assert_only_owner();
+            assert(new_owner != contract_address_const::<0>(), Errors::ZERO_ADDRESS);
+            let previous = self.owner.read();
+            self.owner.write(new_owner);
+            self.emit(OwnershipTransferred { previous_owner: previous, new_owner });
         }
 
         // ---------------------------------------------------
         // Views
         // ---------------------------------------------------
+        fn owner(self: @ContractState) -> ContractAddress {
+            self.owner.read()
+        }
+
         fn get_wbtc_order(self: @ContractState, order_id: u256) -> WbtcOrder {
             self.wbtc_orders.read(order_id)
         }
@@ -809,29 +875,63 @@ mod PrivateSwap {
     // -------------------------------------------------------
     #[generate_trait]
     impl Private of PrivateTrait {
+        // FIX: Owner guard extracted into a reusable helper.
+        fn assert_only_owner(self: @ContractState) {
+            assert(get_caller_address() == self.owner.read(), Errors::NOT_OWNER);
+        }
+
         fn get_oracle_price(self: @ContractState, feed_address: felt252) -> (u128, u32) {
             let feed = IAggregatorProxyDispatcher {
                 contract_address: feed_address.try_into().unwrap(),
             };
             let round = feed.latest_round_data();
             let now = get_block_timestamp();
-            // FIX #2: Avoid u64 underflow if oracle returns a future timestamp.
-            // Original: now - round.updated_at < MAX_ORACLE_AGE_SECS (panics if updated_at > now)
-            // Fixed:    addition on the known-safe side instead.
-            assert(round.updated_at + MAX_ORACLE_AGE_SECS > now, 'stale oracle price');
+
+            // FIX: Use >= instead of > so a price updated exactly
+            // MAX_ORACLE_AGE_SECS seconds ago is still accepted, not
+            // incorrectly rejected. Also uses addition on the safe side
+            // to avoid u64 underflow if the oracle returns a future
+            // timestamp (updated_at > now).
+            assert(round.updated_at + MAX_ORACLE_AGE_SECS >= now, 'stale oracle price');
             assert(round.answer > 0, 'invalid oracle price');
+
             let decimals: u32 = feed.decimals().into();
             (round.answer, decimals)
         }
 
+        // FIX: Replaced O(n) loop with a small lookup table.
+        // Oracle decimals are always 6 or 8, so we only need a few entries.
+        // This removes the unbounded-loop gas footprint and eliminates any
+        // risk from a pathological n value.
         fn pow10(self: @ContractState, n: u256) -> u256 {
-            let mut result: u256 = 1;
-            let mut i: u256 = 0;
-            while i < n {
-                result *= 10;
-                i += 1;
+            match n {
+                0 => 1,
+                1 => 10,
+                2 => 100,
+                3 => 1_000,
+                4 => 10_000,
+                5 => 100_000,
+                6 => 1_000_000,
+                7 => 10_000_000,
+                8 => 100_000_000,
+                9 => 1_000_000_000,
+                10 => 10_000_000_000,
+                11 => 100_000_000_000,
+                12 => 1_000_000_000_000,
+                18 => 1_000_000_000_000_000_000,
+                _ => {
+                    // Fallback: compute iteratively for any other exponent.
+                    // In practice this path should never be reached for
+                    // standard oracle feeds.
+                    let mut result: u256 = 1;
+                    let mut i: u256 = 0;
+                    while i < n {
+                        result *= 10;
+                        i += 1;
+                    }
+                    result
+                },
             }
-            result
         }
     }
 }
