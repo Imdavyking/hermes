@@ -124,7 +124,7 @@ trait IPrivateSwap<TContractState> {
 
     // Bob fills Alice's order: he locks his STRK and gets registered as the wBTC buyer.
     // Both sides are now live — whoever reveals the secret takes both tokens.
-    fn fill_wbtc_order(ref self: TContractState, wbtc_order_id: felt252, bob_expiry: u64);
+    fn fill_wbtc_order(ref self: TContractState, wbtc_order_id: u256, bob_expiry: u64);
 
     // Direct STRK order — used if Alice and Bob coordinate off-chain.
     fn post_strk_order(
@@ -136,16 +136,16 @@ trait IPrivateSwap<TContractState> {
     );
 
     // Reveal the secret to claim tokens from either side.
-    fn withdraw_wbtc(ref self: TContractState, wbtc_order_id: felt252, secret: felt252);
-    fn withdraw_strk(ref self: TContractState, strk_order_id: felt252, secret: felt252);
+    fn withdraw_wbtc(ref self: TContractState, wbtc_order_id: u256, secret: felt252);
+    fn withdraw_strk(ref self: TContractState, strk_order_id: u256, secret: felt252);
 
     // Reclaim tokens after expiry.
-    fn refund_wbtc(ref self: TContractState, wbtc_order_id: felt252);
-    fn refund_strk(ref self: TContractState, strk_order_id: felt252);
+    fn refund_wbtc(ref self: TContractState, wbtc_order_id: u256);
+    fn refund_strk(ref self: TContractState, strk_order_id: u256);
 
     // Views
-    fn get_wbtc_order(self: @TContractState, order_id: felt252) -> WbtcOrder;
-    fn get_strk_order(self: @TContractState, order_id: felt252) -> StrkOrder;
+    fn get_wbtc_order(self: @TContractState, order_id: u256) -> WbtcOrder;
+    fn get_strk_order(self: @TContractState, order_id: u256) -> StrkOrder;
     fn current_root(self: @TContractState) -> u256;
     fn next_leaf_index(self: @TContractState) -> u32;
     fn is_known_root(self: @TContractState, root: u256) -> bool;
@@ -262,7 +262,7 @@ mod PrivateSwap {
         imt: IncrementalMerkleTreeComponent::Storage,
         commitments: Map<u256, bool>,
         nullifier_hashes: Map<u256, bool>,
-        wbtc_orders: Map<felt252, WbtcOrder>,
+        wbtc_orders: Map<u256, WbtcOrder>,
         strk_orders: Map<felt252, StrkOrder>,
         wBTC: ContractAddress,
         strk: ContractAddress,
@@ -307,7 +307,7 @@ mod PrivateSwap {
     #[derive(Drop, starknet::Event)]
     struct WbtcOrderPosted {
         #[key]
-        order_id: felt252,
+        order_id: u256,
         wbtc_seller: ContractAddress,
         alice_strk_destination: ContractAddress,
         wbtc_amount: u256,
@@ -495,7 +495,7 @@ mod PrivateSwap {
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
             let alice = get_caller_address();
-            let order_id: felt252 = nullifier_hash.try_into().unwrap();
+            let order_id: u256 = nullifier_hash.try_into().unwrap();
 
             self
                 .wbtc_orders
@@ -548,8 +548,9 @@ mod PrivateSwap {
         // Bob's expiry must be shorter than Alice's so Bob can always
         // reclaim his STRK if Alice disappears without revealing the secret.
         // ---------------------------------------------------
-        fn fill_wbtc_order(ref self: ContractState, wbtc_order_id: felt252, bob_expiry: u64) {
-            let mut order = self.wbtc_orders.read(wbtc_order_id);
+        fn fill_wbtc_order(
+            ref self: ContractState, wbtc_order_id: u256, bob_expiry: u64,
+        ) { // let mut order = self.wbtc_orders.read(wbtc_order_id);
             let now = get_block_timestamp();
 
             assert(!order.is_filled, Errors::ORDER_ALREADY_FILLED);
@@ -686,7 +687,7 @@ mod PrivateSwap {
         // Bob reveals the secret to claim his wBTC.
         // The secret was made public when Alice withdrew her STRK.
         // ---------------------------------------------------
-        fn withdraw_wbtc(ref self: ContractState, wbtc_order_id: felt252, secret: felt252) {
+        fn withdraw_wbtc(ref self: ContractState, wbtc_order_id: u256, secret: felt252) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
             let caller = get_caller_address();
 
@@ -713,7 +714,7 @@ mod PrivateSwap {
         // Alice reveals the secret to claim her STRK.
         // This makes the secret public so Bob can then claim his wBTC.
         // ---------------------------------------------------
-        fn withdraw_strk(ref self: ContractState, strk_order_id: felt252, secret: felt252) {
+        fn withdraw_strk(ref self: ContractState, strk_order_id: u256, secret: felt252) {
             let mut order = self.strk_orders.read(strk_order_id);
             let caller = get_caller_address();
 
@@ -740,7 +741,7 @@ mod PrivateSwap {
         // Alice reclaims her wBTC if no one filled the order before expiry,
         // or if Bob filled but never revealed the secret.
         // ---------------------------------------------------
-        fn refund_wbtc(ref self: ContractState, wbtc_order_id: felt252) {
+        fn refund_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
 
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
@@ -763,7 +764,7 @@ mod PrivateSwap {
         // Bob's expiry is always shorter than Alice's, so he can always
         // do this before Alice could reclaim her wBTC.
         // ---------------------------------------------------
-        fn refund_strk(ref self: ContractState, strk_order_id: felt252) {
+        fn refund_strk(ref self: ContractState, strk_order_id: u256) {
             let mut order = self.strk_orders.read(strk_order_id);
 
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
@@ -803,11 +804,11 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // Views
         // ---------------------------------------------------
-        fn get_wbtc_order(self: @ContractState, order_id: felt252) -> WbtcOrder {
+        fn get_wbtc_order(self: @ContractState, order_id: u256) -> WbtcOrder {
             self.wbtc_orders.read(order_id)
         }
 
-        fn get_strk_order(self: @ContractState, order_id: felt252) -> StrkOrder {
+        fn get_strk_order(self: @ContractState, order_id: u256) -> StrkOrder {
             self.strk_orders.read(order_id)
         }
 
