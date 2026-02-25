@@ -361,7 +361,7 @@ export default function FillOrderPanel() {
               value={
                 (Number(selectedOrder.quotedStrkAmount) / 1e18).toLocaleString(
                   undefined,
-                  { maximumFractionDigits: 2 },
+                  { maximumFractionDigits: 8 },
                 ) + " STRK"
               }
               highlight
@@ -511,8 +511,8 @@ function OrderCard({
       <div style={{ textAlign: "right" }}>
         <div style={{ color: "#ffc800", fontSize: "0.82rem", fontWeight: 700 }}>
           {(Number(order.quotedStrkAmount) / 1e18).toLocaleString(undefined, {
-            maximumFractionDigits: 0,
-          })}{" "}
+            maximumFractionDigits: 8,
+          })}
           STRK
         </div>
         <div

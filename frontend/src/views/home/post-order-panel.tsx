@@ -62,7 +62,18 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
   });
 
   const quotedStrk = quotedStrkRaw
-    ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} STRK`
+    ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 8 })} STRK`
+    : "—";
+
+  const { data: wbtcDenom } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "wBTC_denomination",
+    args: [],
+  });
+
+  const denomDisplay = wbtcDenom
+    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })} sat wBTC`
     : "—";
 
   const generateSwapSecret = useCallback(() => {
@@ -207,7 +218,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
         <div>
           <div style={labelStyle}>You give</div>
           <div style={{ color: "#fff", fontSize: "1.1rem", fontWeight: 900 }}>
-            1,000 sat wBTC
+            {denomDisplay}
           </div>
         </div>
         <div style={{ color: "#3a3a4a", fontSize: "1.5rem" }}>→</div>
