@@ -478,7 +478,11 @@ mod PrivateSwap {
                 Errors::SLIPPAGE_OUT_OF_RANGE,
             );
 
-            let quoted_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / STRK_PRECISION;
+            // get wbtc decimals
+            let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
+            let WBTC_PRECISION = 10u256.pow(wBTC.decimals() as u32);
+
+            let quoted_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
             let alice = get_caller_address();
