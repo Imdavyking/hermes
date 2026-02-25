@@ -238,7 +238,7 @@ mod PrivateSwap {
         pub const BOB_EXPIRY_TOO_LONG: felt252 = 'bob expiry exceeds alice expiry';
         pub const QUOTED_RATE_EXPIRED: felt252 = 'quoted rate has expired';
         pub const SLIPPAGE_TOO_HIGH: felt252 = 'price moved since quote';
-        pub const SLIPPAGE_OUT_OF_RANGE: felt252 = 'slippage tolerance out of range'; // NEW
+        pub const SLIPPAGE_OUT_OF_RANGE: felt252 = 'slippage tolerance out of range';
         pub const STRK_AMOUNT_TOO_LOW: felt252 = 'strk amount below minimum';
     }
 
@@ -273,6 +273,8 @@ mod PrivateSwap {
         StrkWithdrawn: StrkWithdrawn,
         WbtcRefunded: WbtcRefunded,
         StrkRefunded: StrkRefunded,
+        // FIX #4: Added missing event for direct STRK orders
+        StrkOrderPosted: StrkOrderPosted,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -342,6 +344,18 @@ mod PrivateSwap {
         #[key]
         order_id: felt252,
         strk_seller: ContractAddress,
+    }
+
+    // FIX #4: New event for post_strk_order so off-chain indexers can discover direct orders.
+    #[derive(Drop, starknet::Event)]
+    struct StrkOrderPosted {
+        #[key]
+        order_id: felt252,
+        strk_seller: ContractAddress,
+        strk_buyer: ContractAddress,
+        strk_amount: u256,
+        hashlock: felt252,
+        expiry: u64,
     }
 
     // -------------------------------------------------------
@@ -562,10 +576,14 @@ mod PrivateSwap {
             order.is_filled = true;
             self.wbtc_orders.write(wbtc_order_id, order);
 
-            // 2. Create the paired STRK order
+            // 2. Create the paired STRK order.
+            //    FIX #3: Use pedersen(hashlock, 'fill') as the strk_order_id instead of the raw
+            //    hashlock. This prevents a collision with a direct post_strk_order that uses
+            //    pedersen(hashlock, 'direct'), which would otherwise allow an attacker to overwrite
+            //    Bob's locked STRK by calling post_strk_order with the same hashlock.
             //    strk_buyer = alice_strk_destination (where Alice wants her STRK)
             //    strk_seller = Bob (gets STRK back if Alice never reveals the secret)
-            let strk_order_id: felt252 = order.hashlock;
+            let strk_order_id: felt252 = pedersen(order.hashlock, 'fill');
             self
                 .strk_orders
                 .write(
@@ -618,7 +636,11 @@ mod PrivateSwap {
             let success = strk.transfer_from(bob, this, strk_amount);
             assert(success, Errors::STRK_TRANSFER_FAILED);
 
-            let order_id: felt252 = hashlock;
+            // FIX #3: Use pedersen(hashlock, 'direct') as the order_id instead of the raw hashlock.
+            // This gives direct orders a distinct key namespace from fill_wbtc_order orders
+            // (which use pedersen(hashlock, 'fill')), preventing any storage slot collision
+            // between the two paths even when they share the same underlying hashlock.
+            let order_id: felt252 = pedersen(hashlock, 'direct');
 
             self
                 .strk_orders
@@ -632,6 +654,16 @@ mod PrivateSwap {
                         expiry,
                         is_withdrawn: false,
                         is_refunded: false,
+                    },
+                );
+
+            // FIX #4: Emit event so off-chain indexers can discover direct STRK orders.
+            // Previously this function had no emit, making the off-chain coordination
+            // flow it is designed for completely invisible to indexers and UIs.
+            self
+                .emit(
+                    StrkOrderPosted {
+                        order_id, strk_seller: bob, strk_buyer, strk_amount, hashlock, expiry,
                     },
                 );
         }
@@ -799,7 +831,10 @@ mod PrivateSwap {
             };
             let round = feed.latest_round_data();
             let now = get_block_timestamp();
-            assert(now - round.updated_at < MAX_ORACLE_AGE_SECS, 'stale oracle price');
+            // FIX #2: Avoid u64 underflow if oracle returns a future timestamp.
+            // Original: now - round.updated_at < MAX_ORACLE_AGE_SECS (panics if updated_at > now)
+            // Fixed:    addition on the known-safe side instead.
+            assert(round.updated_at + MAX_ORACLE_AGE_SECS > now, 'stale oracle price');
             assert(round.answer > 0, 'invalid oracle price');
             let decimals: u32 = feed.decimals().into();
             (round.answer, decimals)
