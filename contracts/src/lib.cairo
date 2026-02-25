@@ -82,6 +82,7 @@ struct WbtcOrder {
     // True once Alice reclaimed her wBTC after expiry.
     is_refunded: bool,
     swap_initiated: bool,
+    secret: felt252,
 }
 
 // Created by Bob when he fills a WbtcOrder.
@@ -128,7 +129,7 @@ trait IPrivateSwap<TContractState> {
     // Both sides are now live — whoever reveals the secret takes both tokens.
     fn fill_wbtc_order(ref self: TContractState, wbtc_order_id: u256, bob_expiry: u64);
     // Reveal the secret to claim tokens from either side.
-    fn withdraw_wbtc(ref self: TContractState, wbtc_order_id: u256, secret: felt252);
+    fn withdraw_wbtc(ref self: TContractState, wbtc_order_id: u256);
     fn withdraw_strk(ref self: TContractState, strk_order_id: u256, secret: felt252);
 
     // Reclaim tokens after expiry.
@@ -244,6 +245,7 @@ mod PrivateSwap {
         pub const SLIPPAGE_TOO_HIGH: felt252 = 'price moved since quote';
         pub const SLIPPAGE_OUT_OF_RANGE: felt252 = 'slippage tolerance out of range';
         pub const STRK_AMOUNT_TOO_LOW: felt252 = 'strk amount below minimum';
+        pub const SECRET_UNKNOWN: felt252 = 'secret unknown';
     }
 
     // -------------------------------------------------------
@@ -509,6 +511,7 @@ mod PrivateSwap {
                         is_withdrawn: false,
                         is_refunded: false,
                         swap_initiated: false,
+                        secret: 0,
                     },
                 );
 
@@ -625,18 +628,19 @@ mod PrivateSwap {
         // Bob reveals the secret to claim his wBTC.
         // The secret was made public when Alice withdrew her STRK.
         // ---------------------------------------------------
-        fn withdraw_wbtc(ref self: ContractState, wbtc_order_id: u256, secret: felt252) {
+        fn withdraw_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
             let caller = get_caller_address();
 
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(order.wbtc_buyer == caller, Errors::NOT_THE_BUYER);
+            assert(order.secret == 0, Errors::SECRET_UNKNOWN);
             assert(
                 get_block_timestamp() < order.expiry || order.swap_initiated, Errors::ORDER_EXPIRED,
             );
 
-            let hash = pedersen(0, secret);
+            let hash = pedersen(0, order.secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
 
             order.is_withdrawn = true;
@@ -663,12 +667,13 @@ mod PrivateSwap {
             assert(order.strk_buyer == caller, Errors::NOT_THE_BUYER);
             assert(get_block_timestamp() < order.expiry, Errors::ORDER_EXPIRED);
 
-            let mut wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
-            wbtc_order.swap_initiated = true;
-            self.wbtc_orders.write(order.wbtc_order_id, wbtc_order);
-
             let hash = pedersen(0, secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
+
+            let mut wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
+            wbtc_order.swap_initiated = true;
+            wbtc_order.secret = secret;
+            self.wbtc_orders.write(order.wbtc_order_id, wbtc_order);
 
             order.is_withdrawn = true;
             self.strk_orders.write(strk_order_id, order);
