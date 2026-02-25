@@ -263,7 +263,7 @@ mod PrivateSwap {
         commitments: Map<u256, bool>,
         nullifier_hashes: Map<u256, bool>,
         wbtc_orders: Map<u256, WbtcOrder>,
-        strk_orders: Map<felt252, StrkOrder>,
+        strk_orders: Map<u256, StrkOrder>,
         wBTC: ContractAddress,
         strk: ContractAddress,
         verifier: ContractAddress,
@@ -495,7 +495,8 @@ mod PrivateSwap {
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
             let alice = get_caller_address();
-            let order_id: u256 = nullifier_hash.try_into().unwrap();
+            let order_id: u256 =
+                nullifier_hash; // Use the nullifier hash as the order ID since it's guaranteed unique and already in storage
 
             self
                 .wbtc_orders
@@ -548,9 +549,7 @@ mod PrivateSwap {
         // Bob's expiry must be shorter than Alice's so Bob can always
         // reclaim his STRK if Alice disappears without revealing the secret.
         // ---------------------------------------------------
-        fn fill_wbtc_order(
-            ref self: ContractState, wbtc_order_id: u256, bob_expiry: u64,
-        ) { 
+        fn fill_wbtc_order(ref self: ContractState, wbtc_order_id: u256, bob_expiry: u64) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
             let now = get_block_timestamp();
 
@@ -598,7 +597,7 @@ mod PrivateSwap {
             //    Bob's locked STRK by calling post_strk_order with the same hashlock.
             //    strk_buyer = alice_strk_destination (where Alice wants her STRK)
             //    strk_seller = Bob (gets STRK back if Alice never reveals the secret)
-            let strk_order_id: felt252 = pedersen(order.hashlock, 'fill');
+            let strk_order_id: u256 = pedersen(order.hashlock, 'fill').into();
             self
                 .strk_orders
                 .write(
@@ -660,7 +659,7 @@ mod PrivateSwap {
             self
                 .strk_orders
                 .write(
-                    order_id,
+                    order_id.into(),
                     StrkOrder {
                         strk_seller: bob,
                         strk_buyer,
