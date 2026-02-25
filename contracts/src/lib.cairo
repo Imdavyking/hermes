@@ -109,7 +109,7 @@ struct StrkOrder {
 trait IPrivateSwap<TContractState> {
     // Alice deposits wBTC into the anonymous pool.
     fn deposit(ref self: TContractState, commitment: u256);
-    fn zk_withdraw(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
+    fn zk_withdraw_wbtc(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
 
     // Alice posts an open order: "I have wBTC, I want STRK."
     // Uses a ZK proof to prove she has a deposit without revealing which one.
@@ -194,8 +194,9 @@ mod PrivateSwap {
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
-    // Oracle price must be no older than 1 hour.
-    const MAX_ORACLE_AGE_SECS: u64 = 3600;
+    // Oracle price must be no older than 6 hours (we are on testnet), on mainnet this could be much
+    // shorter like 15 mins.
+    const MAX_ORACLE_AGE_SECS: u64 = 21600;
 
     // Both expiry timestamps must be at least 1 hour from now.
     // This gives each party enough time to act before their window closes.
@@ -397,7 +398,9 @@ mod PrivateSwap {
             self.emit(Deposit { commitment, leaf_index, timestamp: get_block_timestamp() });
         }
 
-        fn zk_withdraw(ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress) {
+        fn zk_withdraw_wbtc(
+            ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
+        ) {
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
             assert(verified.is_ok(), Errors::INVALID_PROOF);
