@@ -683,7 +683,7 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // REFUND wBTC
         // Alice reclaims her wBTC if no one filled the order before expiry,
-        // or if Bob filled but never revealed the secret.
+        // and she haven't swap to strk yet
         // ---------------------------------------------------
         fn refund_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
