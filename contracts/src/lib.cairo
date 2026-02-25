@@ -168,8 +168,6 @@ mod PrivateSwap {
         IERC20Dispatcher, IERC20DispatcherTrait, IERC20MetadataDispatcher,
         IERC20MetadataDispatcherTrait,
     };
-    use starknet::SyscallResultTrait;
-    use starknet::get_tx_info;
     use starknet::class_hash::ClassHash;
     use starknet::contract_address::contract_address_const;
     use starknet::storage::{
@@ -177,6 +175,7 @@ mod PrivateSwap {
         StoragePointerWriteAccess,
     };
     use starknet::syscalls::deploy_syscall;
+    use starknet::{SyscallResultTrait, get_tx_info};
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
     use super::{
@@ -240,6 +239,7 @@ mod PrivateSwap {
         pub const NULLIFIER_USED: felt252 = 'nullifier already used';
         pub const EXPIRY_TOO_SOON: felt252 = 'expiry is too soon';
         pub const ALREADY_WITHDRAWN: felt252 = 'already withdrawn';
+        pub const NOT_A_STRK_ORDER: felt252 = 'order is not a STRK order';
         pub const ALREADY_REFUNDED: felt252 = 'already refunded';
         pub const SWAP_STARTED: felt252 = 'swap started';
         pub const NOT_THE_BUYER: felt252 = 'caller is not the buyer';
@@ -404,8 +404,10 @@ mod PrivateSwap {
 
         self.imt.initializer(TREE_DEPTH);
 
+        let owner = tx_info.account_contract_address;
+
         // FIX: Store the owner and emit the initial transfer event.
-        self.owner.write(tx_info.account_contract_address);
+        self.owner.write(owner);
         self
             .emit(
                 OwnershipTransferred {
@@ -741,15 +743,10 @@ mod PrivateSwap {
         // ---------------------------------------------------
         fn refund_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
-
+            assert(order.wbtc_amount > 0, Errors::NOT_A_WBTC_ORDER);
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(!order.swap_initiated, Errors::SWAP_STARTED);
-            // FIX: Prevent refunding an order that Bob has already filled.
-            // If it is filled, the expiry path is only valid after Bob has
-            // already reclaimed his STRK (is_filled would still be true but
-            // strk side would be refunded). Guard here keeps state clean.
-            assert(!order.is_filled, Errors::ORDER_STILL_FILLED);
             assert(get_block_timestamp() >= order.expiry, Errors::NOT_EXPIRED_YET);
 
             order.is_refunded = true;
@@ -770,7 +767,7 @@ mod PrivateSwap {
         // ---------------------------------------------------
         fn refund_strk(ref self: ContractState, strk_order_id: u256) {
             let mut order = self.strk_orders.read(strk_order_id);
-
+            assert(order.strk_amount > 0, Errors::NOT_A_STRK_ORDER);
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(get_block_timestamp() >= order.expiry, Errors::NOT_EXPIRED_YET);
