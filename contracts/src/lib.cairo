@@ -781,6 +781,9 @@ mod PrivateSwap {
         // Mock (for testing)
         // ---------------------------------------------------
         fn set_mock_wbtc(ref self: ContractState, wbtc: ContractAddress) {
+            // check that decimals is 8 to avoid messing up the price calculations in tests
+            let wBTC = IERC20Dispatcher { contract_address: wbtc };
+            assert(wBTC.decimals() == 8, 'mock wBTC must have 8 decimals');
             self.wBTC.write(wbtc);
         }
 
