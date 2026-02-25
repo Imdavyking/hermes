@@ -155,6 +155,10 @@ trait IPrivateSwap<TContractState> {
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_btc_strk_rate(self: @TContractState) -> u256;
+
+    // Mock
+    fn set_mock_wbtc(ref self: TContractState, wbtc: ContractAddress);
+    fn reset_wbtc_real(ref self: TContractState);
 }
 
 // -------------------------------------------------------
@@ -771,6 +775,23 @@ mod PrivateSwap {
             assert(success, Errors::TRANSFER_FAILED);
 
             self.emit(StrkRefunded { order_id: strk_order_id, strk_seller: order.strk_seller });
+        }
+
+        // ---------------------------------------------------
+        // Mock (for testing)
+        // ---------------------------------------------------
+        fn set_mock_wbtc(ref self: ContractState, wbtc: ContractAddress) {
+            self.wBTC.write(wbtc);
+        }
+
+        fn reset_wbtc_real(ref self: ContractState) {
+            self
+                .wBTC
+                .write(
+                    0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
+                        .try_into()
+                        .unwrap(),
+                );
         }
 
         // ---------------------------------------------------

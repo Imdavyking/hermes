@@ -18,7 +18,7 @@ mod MockSTRK {
             self.erc20.symbol()
         }
         fn decimals(self: @ContractState) -> u8 {
-            18
+            8
         }
     }
     impl ERC20InternalImpl = ERC20Component::InternalImpl<ContractState>;
@@ -38,7 +38,7 @@ mod MockSTRK {
 
     #[constructor]
     fn constructor(ref self: ContractState, minter: ContractAddress) {
-        self.erc20.initializer("Private Starknet", "pSTRK");
+        self.erc20.initializer("wBTC", "wBTC");
         self.minter.write(minter);
     }
 
