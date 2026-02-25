@@ -168,9 +168,13 @@ trait IPrivateSwap<TContractState> {
 #[starknet::contract]
 mod PrivateSwap {
     use core::pedersen::pedersen;
-    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use openzeppelin::token::erc20::interface::{
+        IERC20Dispatcher, IERC20DispatcherTrait, IERC20MetadataDispatcher,
+        IERC20MetadataDispatcherTrait,
+    };
     use starknet::SyscallResultTrait;
     use starknet::class_hash::ClassHash;
+    use starknet::contract_address::contract_address_const;
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
@@ -563,7 +567,7 @@ mod PrivateSwap {
 
             // Check live price hasn't moved more than Alice's chosen tolerance since she quoted.
             // Uses Alice's own slippage_tolerance_bps stored in the order, not a global constant.
-            let live_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / STRK_PRECISION;
+            let live_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(live_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
             let min_acceptable = order.quoted_strk_amount
@@ -781,7 +785,7 @@ mod PrivateSwap {
         // ---------------------------------------------------
         fn set_mock_wbtc(ref self: ContractState, wbtc: ContractAddress) {
             // check that decimals is 8 to avoid messing up the price calculations in tests
-            let wBTC = IERC20Dispatcher { contract_address: wbtc };
+            let wBTC = IERC20MetadataDispatcher { contract_address: wbtc };
             assert(wBTC.decimals() == 8, 'mock wBTC must have 8 decimals');
             self.wBTC.write(wbtc);
         }
