@@ -321,9 +321,9 @@ mod PrivateSwap {
     #[derive(Drop, starknet::Event)]
     struct WbtcOrderFilled {
         #[key]
-        wbtc_order_id: felt252,
+        wbtc_order_id: u256,
         #[key]
-        strk_order_id: felt252,
+        strk_order_id: u256,
         bob: ContractAddress,
         strk_amount_locked: u256,
         bob_expiry: u64,
@@ -332,28 +332,28 @@ mod PrivateSwap {
     #[derive(Drop, starknet::Event)]
     struct WbtcWithdrawn {
         #[key]
-        order_id: felt252,
+        order_id: u256,
         wbtc_buyer: ContractAddress,
     }
 
     #[derive(Drop, starknet::Event)]
     struct StrkWithdrawn {
         #[key]
-        order_id: felt252,
+        order_id: u256,
         strk_buyer: ContractAddress,
     }
 
     #[derive(Drop, starknet::Event)]
     struct WbtcRefunded {
         #[key]
-        order_id: felt252,
+        order_id: u256,
         wbtc_seller: ContractAddress,
     }
 
     #[derive(Drop, starknet::Event)]
     struct StrkRefunded {
         #[key]
-        order_id: felt252,
+        order_id: u256,
         strk_seller: ContractAddress,
     }
 
@@ -550,7 +550,8 @@ mod PrivateSwap {
         // ---------------------------------------------------
         fn fill_wbtc_order(
             ref self: ContractState, wbtc_order_id: u256, bob_expiry: u64,
-        ) { // let mut order = self.wbtc_orders.read(wbtc_order_id);
+        ) { 
+            let mut order = self.wbtc_orders.read(wbtc_order_id);
             let now = get_block_timestamp();
 
             assert(!order.is_filled, Errors::ORDER_ALREADY_FILLED);
