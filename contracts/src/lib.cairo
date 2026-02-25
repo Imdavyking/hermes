@@ -81,6 +81,7 @@ struct WbtcOrder {
     is_withdrawn: bool,
     // True once Alice reclaimed her wBTC after expiry.
     is_refunded: bool,
+    swap_initiated: bool,
 }
 
 // Created by Bob when he fills a WbtcOrder.
@@ -103,6 +104,7 @@ struct StrkOrder {
     is_withdrawn: bool,
     // True once Bob reclaimed his STRK after expiry.
     is_refunded: bool,
+    wbtc_order_id: u256,
 }
 
 #[starknet::interface]
@@ -505,6 +507,7 @@ mod PrivateSwap {
                         is_filled: false,
                         is_withdrawn: false,
                         is_refunded: false,
+                        swap_initiated: false,
                     },
                 );
 
@@ -600,6 +603,7 @@ mod PrivateSwap {
                         expiry: bob_expiry,
                         is_withdrawn: false,
                         is_refunded: false,
+                        wbtc_order_id,
                     },
                 );
 
@@ -656,6 +660,9 @@ mod PrivateSwap {
             assert(order.strk_buyer == caller, Errors::NOT_THE_BUYER);
             assert(get_block_timestamp() < order.expiry, Errors::ORDER_EXPIRED);
 
+            let wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
+            wbtc_order.swap_initiated = true;
+
             let hash = pedersen(0, secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
 
@@ -679,6 +686,7 @@ mod PrivateSwap {
 
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
+            assert(!order.swap_initiated, Errors::ALREADY_REFUNDED);
             assert(get_block_timestamp() >= order.expiry, Errors::NOT_EXPIRED_YET);
 
             order.is_refunded = true;
