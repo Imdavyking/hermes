@@ -241,7 +241,7 @@ mod PrivateSwap {
         pub const ALREADY_WITHDRAWN: felt252 = 'already withdrawn';
         pub const NOT_A_STRK_ORDER: felt252 = 'order is not a STRK order';
         pub const ALREADY_REFUNDED: felt252 = 'already refunded';
-        pub const INVALID_SECRET: felt252 = 'invalid secret';
+        pub const SECRET_CANNOT_BE_ZERO: felt252 = 'secret cannot be zero';
         pub const SWAP_STARTED: felt252 = 'swap started';
         pub const NOT_THE_BUYER: felt252 = 'caller is not the buyer';
         pub const ORDER_EXPIRED: felt252 = 'order has expired';
@@ -486,7 +486,7 @@ mod PrivateSwap {
             expiry: u64,
             slippage_tolerance_bps: u256,
         ) {
-            assert(hashlock != pedersen(0, 0), Errors::INVALID_SECRET);
+            assert(hashlock != pedersen(0, 0), Errors::SECRET_CANNOT_BE_ZERO);
             // Verify the ZK proof and extract the Merkle root + nullifier.
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
@@ -705,7 +705,7 @@ mod PrivateSwap {
         fn withdraw_strk(ref self: ContractState, strk_order_id: u256, secret: felt252) {
             let mut order = self.strk_orders.read(strk_order_id);
             let caller = get_caller_address();
-            assert(secret != 0, Errors::INVALID_SECRET);
+            assert(secret != 0, Errors::SECRET_CANNOT_BE_ZERO);
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(order.strk_buyer == caller, Errors::NOT_THE_BUYER);
