@@ -632,7 +632,10 @@ mod PrivateSwap {
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(order.wbtc_buyer == caller, Errors::NOT_THE_BUYER);
-            assert(get_block_timestamp() < order.expiry, Errors::ORDER_EXPIRED);
+            assert(
+                get_block_timestamp() < order.expiry && !order.swap_initiated,
+                Errors::ORDER_EXPIRED,
+            );
 
             let hash = pedersen(0, secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
