@@ -125,16 +125,6 @@ trait IPrivateSwap<TContractState> {
     // Bob fills Alice's order: he locks his STRK and gets registered as the wBTC buyer.
     // Both sides are now live — whoever reveals the secret takes both tokens.
     fn fill_wbtc_order(ref self: TContractState, wbtc_order_id: u256, bob_expiry: u64);
-
-    // Direct STRK order — used if Alice and Bob coordinate off-chain.
-    fn post_strk_order(
-        ref self: TContractState,
-        strk_buyer: ContractAddress,
-        strk_amount: u256,
-        hashlock: felt252,
-        expiry: u64,
-    );
-
     // Reveal the secret to claim tokens from either side.
     fn withdraw_wbtc(ref self: TContractState, wbtc_order_id: u256, secret: felt252);
     fn withdraw_strk(ref self: TContractState, strk_order_id: u256, secret: felt252);
@@ -621,63 +611,6 @@ mod PrivateSwap {
                         bob,
                         strk_amount_locked: live_strk_amount,
                         bob_expiry,
-                    },
-                );
-        }
-
-        // ---------------------------------------------------
-        // POST STRK ORDER (direct, off-chain coordination)
-        // Used when Alice and Bob have already agreed on terms off-chain.
-        // Bob posts this directly instead of going through fill_wbtc_order.
-        // ---------------------------------------------------
-        fn post_strk_order(
-            ref self: ContractState,
-            strk_buyer: ContractAddress,
-            strk_amount: u256,
-            hashlock: felt252,
-            expiry: u64,
-        ) {
-            assert(strk_amount > 0, Errors::ZERO_AMOUNT);
-            assert(
-                expiry >= get_block_timestamp() + MIN_EXPIRY_DURATION_SECS, Errors::EXPIRY_TOO_SOON,
-            );
-
-            let bob = get_caller_address();
-            let this = get_contract_address();
-
-            let strk = IERC20Dispatcher { contract_address: self.strk.read() };
-            assert(strk.allowance(bob, this) >= strk_amount, Errors::INSUFFICIENT_ALLOWANCE);
-            let success = strk.transfer_from(bob, this, strk_amount);
-            assert(success, Errors::STRK_TRANSFER_FAILED);
-
-            // FIX #3: Use pedersen(hashlock, 'direct') as the order_id instead of the raw hashlock.
-            // This gives direct orders a distinct key namespace from fill_wbtc_order orders
-            // (which use pedersen(hashlock, 'fill')), preventing any storage slot collision
-            // between the two paths even when they share the same underlying hashlock.
-            let order_id: felt252 = pedersen(hashlock, 'direct');
-
-            self
-                .strk_orders
-                .write(
-                    order_id.into(),
-                    StrkOrder {
-                        strk_seller: bob,
-                        strk_buyer,
-                        hashlock,
-                        strk_amount,
-                        expiry,
-                        is_withdrawn: false,
-                        is_refunded: false,
-                    },
-                );
-
-            // FIX #4: Emit event so off-chain indexers can discover direct STRK orders.
-            // Previously this function had no emit, making the off-chain coordination
-            // flow it is designed for completely invisible to indexers and UIs.
-            self
-                .emit(
-                    StrkOrderPosted {
-                        order_id, strk_seller: bob, strk_buyer, strk_amount, hashlock, expiry,
                     },
                 );
         }
