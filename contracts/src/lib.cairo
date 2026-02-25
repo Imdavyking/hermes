@@ -171,7 +171,6 @@ mod PrivateSwap {
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::SyscallResultTrait;
     use starknet::class_hash::ClassHash;
-    use starknet::contract_address::contract_address_const;
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
