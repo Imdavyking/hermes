@@ -293,42 +293,42 @@ mod PrivateSwap {
             let wBTC = IERC20Dispatcher { contract_address: wbtc_address };
             wBTC.approve(core_address, BTC_DENOMINATION);
 
-            // token0 must be the lower address — sort wBTC and STRK
-            let (token0, token1, is_token1) = if wbtc_address.into() < strk_address.into() {
-                (wbtc_address, strk_address, false) // selling token0 (wBTC)
-            } else {
-                (strk_address, wbtc_address, true) // selling token1 (wBTC)
-            };
+            // // token0 must be the lower address — sort wBTC and STRK
+            // let (token0, token1, is_token1) = if wbtc_address.into() < strk_address.into() {
+            //     (wbtc_address, strk_address, false) // selling token0 (wBTC)
+            // } else {
+            //     (strk_address, wbtc_address, true) // selling token1 (wBTC)
+            // };
 
-            let pool_key = PoolKey {
-                token0,
-                token1,
-                fee: WBTC_STRK_FEE,
-                tick_spacing: WBTC_STRK_TICK_SPACING,
-                extension: 0.try_into().unwrap(),
-            };
+            // let pool_key = PoolKey {
+            //     token0,
+            //     token1,
+            //     fee: WBTC_STRK_FEE,
+            //     tick_spacing: WBTC_STRK_TICK_SPACING,
+            //     extension: 0.try_into().unwrap(),
+            // };
 
-            // Exact input: sell exactly BTC_DENOMINATION wBTC
-            let amount = i129 { mag: BTC_DENOMINATION.try_into().unwrap(), sign: false };
+            // // Exact input: sell exactly BTC_DENOMINATION wBTC
+            // let amount = i129 { mag: BTC_DENOMINATION.try_into().unwrap(), sign: false };
 
-            // sqrt_ratio_limit: no price cap — accept whatever the pool gives
-            let sqrt_ratio_limit = if is_token1 {
-                MIN_SQRT_RATIO + 1
-            } else {
-                MAX_SQRT_RATIO - 1
-            };
+            // // sqrt_ratio_limit: no price cap — accept whatever the pool gives
+            // let sqrt_ratio_limit = if is_token1 {
+            //     MIN_SQRT_RATIO + 1
+            // } else {
+            //     MAX_SQRT_RATIO - 1
+            // };
 
-            let route = RouteNode { pool_key, sqrt_ratio_limit, skip_ahead: 0 };
-            let token_amount = TokenAmount { token: wbtc_address, amount };
+            // let route = RouteNode { pool_key, sqrt_ratio_limit, skip_ahead: 0 };
+            // let token_amount = TokenAmount { token: wbtc_address, amount };
 
-            let callback_data = SwapCallbackData { route, token_amount, recipient };
+            // let callback_data = SwapCallbackData { route, token_amount, recipient };
 
-            let core = IEkuboCoreDispatcher { contract_address: core_address };
+            // let core = IEkuboCoreDispatcher { contract_address: core_address };
 
-            // Triggers core.lock() → core calls back into our locked() below
-            call_core_with_callback::<SwapCallbackData, Delta>(core, @callback_data);
+            // // Triggers core.lock() → core calls back into our locked() below
+            // call_core_with_callback::<SwapCallbackData, Delta>(core, @callback_data);
 
-            self.emit(Withdrawal { recipient, nullifier_hash });
+            // self.emit(Withdrawal { recipient, nullifier_hash });
         }
 
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
