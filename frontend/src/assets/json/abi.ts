@@ -250,6 +250,13 @@ const contractAbi = [
       },
       {
         type: "function",
+        name: "get_quoted_strk_amount",
+        inputs: [],
+        outputs: [{ type: "core::integer::u256" }],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
         name: "set_mock_wbtc",
         inputs: [
           {

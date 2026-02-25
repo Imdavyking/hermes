@@ -150,6 +150,8 @@ trait IPrivateSwap<TContractState> {
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_btc_strk_rate(self: @TContractState) -> u256;
     fn owner(self: @TContractState) -> ContractAddress;
+    fn get_quoted_strk_amount(self: @TContractState) -> u256;
+
 
     // Admin (owner-only)
     fn set_mock_wbtc(ref self: TContractState, wbtc: ContractAddress);
@@ -817,6 +819,10 @@ mod PrivateSwap {
         // ---------------------------------------------------
         fn owner(self: @ContractState) -> ContractAddress {
             self.owner.read()
+        }
+
+        fn get_quoted_strk_amount(self: @ContractState) -> u256 {
+            self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION
         }
 
         fn get_wbtc_order(self: @ContractState, order_id: u256) -> WbtcOrder {

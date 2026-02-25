@@ -52,15 +52,17 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  const { data: btcRate } = useReadContract({
+  const { data: quotedStrkRaw } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
-    functionName: "get_btc_strk_rate",
+    functionName: "get_quoted_strk_amount",
     args: [],
+    watch: true,
+    refetchInterval: 30000,
   });
 
-  const quotedStrk = btcRate
-    ? `${(Number(btcRate as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} STRK`
+  const quotedStrk = quotedStrkRaw
+    ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} STRK`
     : "—";
 
   const generateSwapSecret = useCallback(() => {
