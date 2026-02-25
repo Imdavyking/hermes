@@ -229,6 +229,7 @@ mod PrivateSwap {
         pub const EXPIRY_TOO_SOON: felt252 = 'expiry is too soon';
         pub const ALREADY_WITHDRAWN: felt252 = 'already withdrawn';
         pub const ALREADY_REFUNDED: felt252 = 'already refunded';
+        pub const SWAP_STARTED: felt252 = 'swap started';
         pub const NOT_THE_BUYER: felt252 = 'caller is not the buyer';
         pub const ORDER_EXPIRED: felt252 = 'order has expired';
         pub const INVALID_SECRET: felt252 = 'secret does not match lock';
@@ -662,7 +663,7 @@ mod PrivateSwap {
 
             let mut wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
             wbtc_order.swap_initiated = true;
-            self.wbtc_orders.write(wbtc_order_id, wbtc_order);
+            self.wbtc_orders.write(order.wbtc_order_id, wbtc_order);
 
             let hash = pedersen(0, secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
@@ -687,7 +688,7 @@ mod PrivateSwap {
 
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
-            assert(!order.swap_initiated, Errors::ALREADY_REFUNDED);
+            assert(!order.swap_initiated, Errors::SWAP_STARTED);
             assert(get_block_timestamp() >= order.expiry, Errors::NOT_EXPIRED_YET);
 
             order.is_refunded = true;
