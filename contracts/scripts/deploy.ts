@@ -71,7 +71,7 @@ async function main() {
   // contract is identical in structure (ERC20 + mint), just configured
   // as wBTC (8 decimals, name "wBTC") in its constructor.
   const { sierraCode: mockBtcSierra, casmCode: mockBtcCasm } =
-    await getCompiledCode("contracts_MockBTC");
+    await getCompiledCode("contracts_MockWBTC");
   const mockBtcDeployResponse = await account.declareAndDeploy({
     contract: mockBtcSierra,
     casm: mockBtcCasm,
