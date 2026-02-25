@@ -87,7 +87,7 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
       });
 
       const tx = await account.execute([
-        contract.populate("withdraw", [callData.slice(1), recipient]),
+        contract.populate("zk_withdraw_wbtc", [callData.slice(1), recipient]),
       ]);
 
       await account.waitForTransaction(tx.transaction_hash);

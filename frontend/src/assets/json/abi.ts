@@ -29,6 +29,55 @@ const contractAbi = [
     ],
   },
   {
+    type: "struct",
+    name: "contracts::WbtcOrder",
+    members: [
+      {
+        name: "wbtc_seller",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+      {
+        name: "wbtc_buyer",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+      {
+        name: "alice_strk_destination",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+      { name: "hashlock", type: "core::felt252" },
+      { name: "wbtc_amount", type: "core::integer::u256" },
+      { name: "quoted_strk_amount", type: "core::integer::u256" },
+      { name: "slippage_tolerance_bps", type: "core::integer::u256" },
+      { name: "expiry", type: "core::integer::u64" },
+      { name: "rate_expiry", type: "core::integer::u64" },
+      { name: "is_filled", type: "core::bool" },
+      { name: "is_withdrawn", type: "core::bool" },
+      { name: "is_refunded", type: "core::bool" },
+      { name: "swap_initiated", type: "core::bool" },
+      { name: "secret", type: "core::felt252" },
+    ],
+  },
+  {
+    type: "struct",
+    name: "contracts::StrkOrder",
+    members: [
+      {
+        name: "strk_seller",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+      {
+        name: "strk_buyer",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+      { name: "hashlock", type: "core::felt252" },
+      { name: "strk_amount", type: "core::integer::u256" },
+      { name: "expiry", type: "core::integer::u64" },
+      { name: "is_withdrawn", type: "core::bool" },
+      { name: "is_refunded", type: "core::bool" },
+      { name: "wbtc_order_id", type: "core::integer::u256" },
+    ],
+  },
+  {
     type: "interface",
     name: "contracts::IPrivateSwap",
     items: [
@@ -41,7 +90,7 @@ const contractAbi = [
       },
       {
         type: "function",
-        name: "withdraw",
+        name: "zk_withdraw_wbtc",
         inputs: [
           { name: "proof", type: "core::array::Span::<core::felt252>" },
           {
@@ -54,16 +103,74 @@ const contractAbi = [
       },
       {
         type: "function",
-        name: "mock_btc_mint",
+        name: "post_wbtc_order",
         inputs: [
+          { name: "proof", type: "core::array::Span::<core::felt252>" },
           {
-            name: "recipient",
+            name: "alice_strk_destination",
             type: "core::starknet::contract_address::ContractAddress",
           },
-          { name: "amount", type: "core::integer::u256" },
+          { name: "hashlock", type: "core::felt252" },
+          { name: "expiry", type: "core::integer::u64" },
+          { name: "slippage_tolerance_bps", type: "core::integer::u256" },
         ],
         outputs: [],
         state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "fill_wbtc_order",
+        inputs: [
+          { name: "wbtc_order_id", type: "core::integer::u256" },
+          { name: "bob_expiry", type: "core::integer::u64" },
+        ],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "withdraw_wbtc",
+        inputs: [{ name: "wbtc_order_id", type: "core::integer::u256" }],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "withdraw_strk",
+        inputs: [
+          { name: "strk_order_id", type: "core::integer::u256" },
+          { name: "secret", type: "core::felt252" },
+        ],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "refund_wbtc",
+        inputs: [{ name: "wbtc_order_id", type: "core::integer::u256" }],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "refund_strk",
+        inputs: [{ name: "strk_order_id", type: "core::integer::u256" }],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "get_wbtc_order",
+        inputs: [{ name: "order_id", type: "core::integer::u256" }],
+        outputs: [{ type: "contracts::WbtcOrder" }],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
+        name: "get_strk_order",
+        inputs: [{ name: "order_id", type: "core::integer::u256" }],
+        outputs: [{ type: "contracts::StrkOrder" }],
+        state_mutability: "view",
       },
       {
         type: "function",
@@ -88,27 +195,27 @@ const contractAbi = [
       },
       {
         type: "function",
-        name: "wBTC_denomination",
-        inputs: [],
-        outputs: [{ type: "core::integer::u256" }],
-        state_mutability: "view",
-      },
-      {
-        type: "function",
-        name: "pstrk_address",
-        inputs: [],
-        outputs: [
-          { type: "core::starknet::contract_address::ContractAddress" },
-        ],
-        state_mutability: "view",
-      },
-      {
-        type: "function",
         name: "wBTC_address",
         inputs: [],
         outputs: [
           { type: "core::starknet::contract_address::ContractAddress" },
         ],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
+        name: "strk_address",
+        inputs: [],
+        outputs: [
+          { type: "core::starknet::contract_address::ContractAddress" },
+        ],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
+        name: "wBTC_denomination",
+        inputs: [],
+        outputs: [{ type: "core::integer::u256" }],
         state_mutability: "view",
       },
       {
@@ -132,16 +239,52 @@ const contractAbi = [
         outputs: [{ type: "core::integer::u256" }],
         state_mutability: "view",
       },
+      {
+        type: "function",
+        name: "owner",
+        inputs: [],
+        outputs: [
+          { type: "core::starknet::contract_address::ContractAddress" },
+        ],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
+        name: "set_mock_wbtc",
+        inputs: [
+          {
+            name: "wbtc",
+            type: "core::starknet::contract_address::ContractAddress",
+          },
+        ],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "reset_wbtc_real",
+        inputs: [],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "transfer_ownership",
+        inputs: [
+          {
+            name: "new_owner",
+            type: "core::starknet::contract_address::ContractAddress",
+          },
+        ],
+        outputs: [],
+        state_mutability: "external",
+      },
     ],
   },
   {
     type: "constructor",
     name: "constructor",
     inputs: [
-      {
-        name: "wBTC_class_hash",
-        type: "core::starknet::class_hash::ClassHash",
-      },
       {
         name: "pstrk_class_hash",
         type: "core::starknet::class_hash::ClassHash",
@@ -187,6 +330,159 @@ const contractAbi = [
   },
   {
     type: "event",
+    name: "contracts::PrivateSwap::WbtcOrderPosted",
+    kind: "struct",
+    members: [
+      { name: "order_id", type: "core::integer::u256", kind: "key" },
+      {
+        name: "wbtc_seller",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      {
+        name: "alice_strk_destination",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      {
+        name: "wbtc_amount",
+        type: "core::integer::u256",
+        kind: "data",
+      },
+      {
+        name: "quoted_strk_amount",
+        type: "core::integer::u256",
+        kind: "data",
+      },
+      { name: "hashlock", type: "core::felt252", kind: "data" },
+      { name: "expiry", type: "core::integer::u64", kind: "data" },
+      { name: "rate_expiry", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::WbtcOrderFilled",
+    kind: "struct",
+    members: [
+      {
+        name: "wbtc_order_id",
+        type: "core::integer::u256",
+        kind: "key",
+      },
+      {
+        name: "strk_order_id",
+        type: "core::integer::u256",
+        kind: "key",
+      },
+      {
+        name: "bob",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      {
+        name: "strk_amount_locked",
+        type: "core::integer::u256",
+        kind: "data",
+      },
+      { name: "bob_expiry", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::WbtcWithdrawn",
+    kind: "struct",
+    members: [
+      { name: "order_id", type: "core::integer::u256", kind: "key" },
+      {
+        name: "wbtc_buyer",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::StrkWithdrawn",
+    kind: "struct",
+    members: [
+      { name: "order_id", type: "core::integer::u256", kind: "key" },
+      {
+        name: "strk_buyer",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::WbtcRefunded",
+    kind: "struct",
+    members: [
+      { name: "order_id", type: "core::integer::u256", kind: "key" },
+      {
+        name: "wbtc_seller",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::StrkRefunded",
+    kind: "struct",
+    members: [
+      { name: "order_id", type: "core::integer::u256", kind: "key" },
+      {
+        name: "strk_seller",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::StrkOrderPosted",
+    kind: "struct",
+    members: [
+      { name: "order_id", type: "core::felt252", kind: "key" },
+      {
+        name: "strk_seller",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      {
+        name: "strk_buyer",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      {
+        name: "strk_amount",
+        type: "core::integer::u256",
+        kind: "data",
+      },
+      { name: "hashlock", type: "core::felt252", kind: "data" },
+      { name: "expiry", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::OwnershipTransferred",
+    kind: "struct",
+    members: [
+      {
+        name: "previous_owner",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      {
+        name: "new_owner",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+    ],
+  },
+  {
+    type: "event",
     name: "contracts::PrivateSwap::Event",
     kind: "enum",
     variants: [
@@ -203,6 +499,46 @@ const contractAbi = [
       {
         name: "Withdrawal",
         type: "contracts::PrivateSwap::Withdrawal",
+        kind: "nested",
+      },
+      {
+        name: "WbtcOrderPosted",
+        type: "contracts::PrivateSwap::WbtcOrderPosted",
+        kind: "nested",
+      },
+      {
+        name: "WbtcOrderFilled",
+        type: "contracts::PrivateSwap::WbtcOrderFilled",
+        kind: "nested",
+      },
+      {
+        name: "WbtcWithdrawn",
+        type: "contracts::PrivateSwap::WbtcWithdrawn",
+        kind: "nested",
+      },
+      {
+        name: "StrkWithdrawn",
+        type: "contracts::PrivateSwap::StrkWithdrawn",
+        kind: "nested",
+      },
+      {
+        name: "WbtcRefunded",
+        type: "contracts::PrivateSwap::WbtcRefunded",
+        kind: "nested",
+      },
+      {
+        name: "StrkRefunded",
+        type: "contracts::PrivateSwap::StrkRefunded",
+        kind: "nested",
+      },
+      {
+        name: "StrkOrderPosted",
+        type: "contracts::PrivateSwap::StrkOrderPosted",
+        kind: "nested",
+      },
+      {
+        name: "OwnershipTransferred",
+        type: "contracts::PrivateSwap::OwnershipTransferred",
         kind: "nested",
       },
     ],
