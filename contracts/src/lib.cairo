@@ -391,9 +391,7 @@ mod PrivateSwap {
     // Constructor
     // -------------------------------------------------------
     #[constructor]
-    fn constructor(
-        ref self: ContractState, pstrk_class_hash: ClassHash, verifier_class_hash: ClassHash,
-    ) {
+    fn constructor(ref self: ContractState, verifier_class_hash: ClassHash) {
         let tx_info = get_tx_info();
         self.wBTC.write(REAL_WBTC_ADDRESS.try_into().unwrap());
         self.strk.write(REAL_STRK_ADDRESS.try_into().unwrap());

@@ -26,9 +26,6 @@ async function main() {
       "../../verifier/target/dev/verifier_UltraKeccakZKHonkVerifier",
     );
 
-  const { sierraCode: pstrkSierra, casmCode: pstrkCasm } =
-    await getCompiledCode("contracts_MockSTRK");
-
   const { sierraCode: privateSwapSierra, casmCode: privateSwapCasm } =
     await getCompiledCode("contracts_PrivateSwap");
 
@@ -43,21 +40,9 @@ async function main() {
   const verifierClassHash = verifierDeclare.class_hash;
   console.log("Verifier class hash:", verifierClassHash);
 
-  // 3. Declare pSTRK
-  const pstrkDeclare = await account.declareIfNot({
-    contract: pstrkSierra,
-    casm: pstrkCasm,
-  });
-  if (pstrkDeclare.transaction_hash) {
-    await provider.waitForTransaction(pstrkDeclare.transaction_hash);
-  }
-  const pstrkClassHash = pstrkDeclare.class_hash;
-  console.log("pSTRK class hash:", pstrkClassHash);
-
   // 4. Declare + Deploy PrivateSwap with all three class hashes
   const privateSwapCalldata = new CallData(privateSwapSierra.abi);
   const constructorCalldata = privateSwapCalldata.compile("constructor", {
-    pstrk_class_hash: pstrkClassHash,
     verifier_class_hash: verifierClassHash,
   });
 
@@ -75,9 +60,52 @@ async function main() {
     providerOrAccount: provider,
   });
 
+  await provider.waitForTransaction(deployResponse.deploy.transaction_hash);
+
   console.log("✅ PrivateSwap deployed at:", privateSwapContract.address);
   console.log("wBTC address:", await privateSwapContract.wBTC_address());
   console.log("STRK address:", await privateSwapContract.strk_address());
+
+  // --- MOCKING
+  // Also load MockBTC — reuses the same MockSTRK artifact since the
+  // contract is identical in structure (ERC20 + mint), just configured
+  // as wBTC (8 decimals, name "wBTC") in its constructor.
+  const { sierraCode: mockBtcSierra, casmCode: mockBtcCasm } =
+    await getCompiledCode("contracts_MockBTC");
+  const mockBtcDeployResponse = await account.declareAndDeploy({
+    contract: mockBtcSierra,
+    casm: mockBtcCasm,
+    salt: stark.randomAddress(),
+  });
+  await provider.waitForTransaction(
+    mockBtcDeployResponse.deploy.transaction_hash,
+  );
+
+  const mockBtcAddress = mockBtcDeployResponse.deploy.contract_address;
+  console.log("✅ MockBTC deployed at:", mockBtcAddress);
+
+  // 5. Register MockBTC on PrivateSwap via set_mock_wbtc (owner-only)
+  console.log("\n--- Calling set_mock_wbtc ---");
+  const setMockTx = await privateSwapContract.set_mock_wbtc(mockBtcAddress);
+  await provider.waitForTransaction(setMockTx.transaction_hash);
+  console.log("✅ set_mock_wbtc confirmed, tx:", setMockTx.transaction_hash);
+
+  // Mint some MockBTC to the deployer address for testing
+  const mockBtcContract = new Contract({
+    abi: mockBtcSierra.abi,
+    address: mockBtcAddress,
+    providerOrAccount: account,
+  });
+
+  const mintAmount = BigInt(1_000_000_000); // 10k wBTC with 8 decimals
+  const mintTx = await mockBtcContract.mint(account.address, mintAmount);
+  await provider.waitForTransaction(mintTx.transaction_hash);
+  console.log(
+    `✅ Minted ${mintAmount} MockBTC to deployer, tx:`,
+    mintTx.transaction_hash,
+  );
+
+  //// --- END OF MOCK DEPLOYMENT ---
 }
 
 main()
