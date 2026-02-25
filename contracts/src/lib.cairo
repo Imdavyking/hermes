@@ -660,8 +660,9 @@ mod PrivateSwap {
             assert(order.strk_buyer == caller, Errors::NOT_THE_BUYER);
             assert(get_block_timestamp() < order.expiry, Errors::ORDER_EXPIRED);
 
-            let wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
+            let mut wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
             wbtc_order.swap_initiated = true;
+            self.wbtc_orders.write(wbtc_order_id, wbtc_order);
 
             let hash = pedersen(0, secret);
             assert(hash == order.hashlock, Errors::INVALID_SECRET);
