@@ -57,7 +57,7 @@ async function main() {
   const privateSwapContract = new Contract({
     abi: privateSwapSierra.abi,
     address: deployResponse.deploy.contract_address,
-    providerOrAccount: provider,
+    providerOrAccount: account,
   });
 
   await provider.waitForTransaction(deployResponse.deploy.transaction_hash);
