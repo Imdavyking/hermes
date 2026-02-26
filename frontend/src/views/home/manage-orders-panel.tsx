@@ -70,13 +70,18 @@ function toHex(raw: bigint | string) {
   return "0x" + BigInt(raw).toString(16);
 }
 
+// Addresses are stored zero-padded to 64 hex chars in the indexer
+function toHexAddr(raw: bigint | string) {
+  return "0x" + BigInt(raw).toString(16).padStart(64, "0");
+}
+
 // ── Custom hooks (Apollo-backed) ──────────────────────────────────────────────
 
 function useClaimableStrkOrders(active: boolean) {
   const { account } = useAccount();
   const now = Math.floor(Date.now() / 1000);
 
-  const myAddr = account?.address ? toHex(account.address) : "";
+  const myAddr = account?.address ? toHexAddr(account.address) : "";
 
   const {
     data,
@@ -110,7 +115,7 @@ function useClaimableWbtcOrders(active: boolean) {
   const { account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
 
-  const myAddr = account?.address ? toHex(account.address) : "";
+  const myAddr = account?.address ? toHexAddr(account.address) : "";
 
   // Fetch candidates from indexer (is_filled=true, buyer=me, not withdrawn)
   const { data, loading, refetch } = useQuery(
@@ -194,7 +199,7 @@ function useClaimableWbtcOrders(active: boolean) {
 function useRefundableWbtcOrders(active: boolean) {
   const { account } = useAccount();
   const now = Math.floor(Date.now() / 1000);
-  const myAddr = account?.address ? toHex(account.address) : "";
+  const myAddr = account?.address ? toHexAddr(account.address) : "";
 
   const {
     data,
@@ -224,7 +229,7 @@ function useRefundableWbtcOrders(active: boolean) {
 function useRefundableStrkOrders(active: boolean) {
   const { account } = useAccount();
   const now = Math.floor(Date.now() / 1000);
-  const myAddr = account?.address ? toHex(account.address) : "";
+  const myAddr = account?.address ? toHexAddr(account.address) : "";
 
   const {
     data,
