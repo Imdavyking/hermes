@@ -4,9 +4,8 @@ import cors from "cors";
 import path from "path";
 import fs from "fs";
 import Checkpoint, { LogLevel } from "@snapshot-labs/checkpoint";
-import { config } from "./config.ts";
+import { config } from "./config";
 import { writers } from "./writers";
-import checkpointBlocks from "./checkpoints.json";
 
 const dir = __dirname.endsWith("dist/src") ? "../" : "";
 const schemaFile = path.join(__dirname, `${dir}../src/schema.gql`);
@@ -23,7 +22,14 @@ const checkpoint = new Checkpoint(config, writers, schema, checkpointOptions);
 // Reset entities, seed checkpoints, then start indexing
 checkpoint
   .reset()
-  .then(() => checkpoint.seedCheckpoints(checkpointBlocks))
+  .then(() =>
+    checkpoint.seedCheckpoints([
+      {
+        contract: config.sources[0].contract,
+        blocks: [config.sources[0].start],
+      },
+    ]),
+  )
   .then(() => {
     checkpoint.start();
   });
