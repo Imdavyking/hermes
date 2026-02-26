@@ -23,7 +23,6 @@ export default function ConnectWalletButton() {
                 disconnect();
               }
             : async () => {
-                console.log("cll");
                 const { connector } = await starknetkitConnectModal();
                 if (!connector) {
                   return;
