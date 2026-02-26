@@ -1,9 +1,5 @@
-# -------------------------------------------------------
-# Deposit entity
-# Created when Alice locks wBTC into the anonymous pool.
-# -------------------------------------------------------
 type Deposit {
-  id: String!           # commitment (u256 as hex string)
+  id: String!
   commitment: String!
   leaf_index: Int!
   timestamp: BigInt!
@@ -11,45 +7,30 @@ type Deposit {
   tx_hash: String!
 }
 
-# -------------------------------------------------------
-# Withdrawal entity
-# Created when Alice does a ZK withdrawal of wBTC directly.
-# -------------------------------------------------------
 type Withdrawal {
-  id: String!           # nullifier_hash
+  id: String!
   recipient: String!
   nullifier_hash: String!
   block_number: Int!
   tx_hash: String!
 }
 
-# -------------------------------------------------------
-# WbtcOrder entity
-# Alice's open order: "I have wBTC, I want STRK."
-# Updated as the order progresses through its lifecycle.
-# -------------------------------------------------------
 type WbtcOrder {
-  id: String!                   # order_id (nullifier hash)
-  wbtc_seller: String!          # Alice's address
+  id: String!
+  wbtc_seller: String!
   alice_strk_destination: String!
-  wbtc_amount: String!          # u256 as string
-  quoted_strk_amount: String!   # u256 as string
+  wbtc_amount: String!
+  quoted_strk_amount: String!
   hashlock: String!
   expiry: BigInt!
   rate_expiry: BigInt!
-
-  # Set when Bob fills the order
-  wbtc_buyer: String            # Bob's address (null until filled)
-  strk_order_id: String         # paired StrkOrder id (null until filled)
-  strk_amount_locked: String    # u256 as string (null until filled)
-  bob_expiry: BigInt            # (null until filled)
-
-  # Status flags
+  wbtc_buyer: String
+  strk_order_id: String
+  strk_amount_locked: String
+  bob_expiry: BigInt
   is_filled: Boolean!
   is_withdrawn: Boolean!
   is_refunded: Boolean!
-
-  # Timestamps
   posted_at_block: Int!
   posted_tx_hash: String!
   filled_at_block: Int
@@ -57,37 +38,24 @@ type WbtcOrder {
   refunded_at_block: Int
 }
 
-# -------------------------------------------------------
-# StrkOrder entity
-# Bob's locked STRK side of the swap.
-# Also created directly for off-chain coordinated swaps.
-# -------------------------------------------------------
 type StrkOrder {
-  id: String!               # strk_order_id
-  strk_seller: String!      # Bob's address
-  strk_buyer: String!       # Alice's strk destination
-  strk_amount: String!      # u256 as string
+  id: String!
+  strk_seller: String!
+  strk_buyer: String!
+  strk_amount: String!
   hashlock: String!
   expiry: BigInt!
-  wbtc_order_id: String     # paired WbtcOrder id (null for direct orders)
-
-  # Status flags
+  wbtc_order_id: String
   is_withdrawn: Boolean!
   is_refunded: Boolean!
-
-  # Timestamps
   posted_at_block: Int!
   posted_tx_hash: String!
   withdrawn_at_block: Int
   refunded_at_block: Int
 }
 
-# -------------------------------------------------------
-# OwnershipTransfer entity
-# Tracks ownership changes on the contract.
-# -------------------------------------------------------
 type OwnershipTransfer {
-  id: String!             # tx_hash
+  id: String!
   previous_owner: String!
   new_owner: String!
   block_number: Int!
