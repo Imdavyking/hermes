@@ -44,6 +44,7 @@
     "siwe": "2.3.2",
     "starknet": "^8.5.2",
     "starknetkit": "3.4.3",
+    "@apollo/client": "^3.12.8",
     "unenv": "^1.10.0",
     "vite-plugin-node-polyfills": "^0.24.0",
     "vite-plugin-serve-static": "^1.1.0",
