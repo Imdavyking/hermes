@@ -16,6 +16,8 @@ import {
 } from "../../utils/constants";
 import { btnPrimary, inputStyle, btnGhost } from "./shared";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type ActionMode =
   | "withdraw_strk"
   | "withdraw_wbtc"
@@ -35,7 +37,7 @@ interface OrderStatus {
   expiry?: number;
 }
 
-interface ClaimableOrder {
+interface ClaimableStrkOrder {
   strkOrderId: string;
   wbtcOrderId: string;
   strkAmount: string;
@@ -50,973 +52,621 @@ interface ClaimableWbtcOrder {
   expiry: number;
 }
 
-export default function ManageOrdersPanel() {
+interface RefundableWbtcOrder {
+  wbtcOrderId: string;
+  wbtcAmount: string;
+  expiry: number;
+}
+
+interface RefundableStrkOrder {
+  strkOrderId: string;
+  strkAmount: string;
+  expiry: number;
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+async function paginateEvents(
+  provider: any,
+  selector: string,
+  fromBlock: number,
+  onPage: (events: any[]) => Promise<void>,
+) {
+  let continuationToken: string | undefined;
+  do {
+    const page = await provider.getEvents({
+      address: CONTRACT_ADDRESS,
+      keys: [[selector]],
+      from_block: { block_number: fromBlock },
+      to_block: "latest",
+      chunk_size: 200,
+      ...(continuationToken ? { continuation_token: continuationToken } : {}),
+    });
+    await onPage(page.events);
+    continuationToken = (page as any).continuation_token ?? undefined;
+  } while (continuationToken);
+}
+
+function toHex(raw: bigint | string) {
+  return "0x" + BigInt(raw).toString(16);
+}
+
+function decodeU256Key(low: string, high: string) {
+  return toHex((BigInt(high) << 128n) | BigInt(low));
+}
+
+// ── Custom hooks ──────────────────────────────────────────────────────────────
+
+function useClaimableStrkOrders() {
   const { account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
   const { provider } = useProvider();
+  const [orders, setOrders] = useState<ClaimableStrkOrder[]>([]);
+  const [scanning, setScanning] = useState(false);
 
-  const [mode, setMode] = useState<ActionMode>("withdraw_strk");
-  const [orderId, setOrderId] = useState("");
-  const [secret, setSecret] = useState("");
-  const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-
-  // Claimable orders auto-scan (Alice's STRK orders)
-  const [claimableOrders, setClaimableOrders] = useState<ClaimableOrder[]>([]);
-  const [scanningOrders, setScanningOrders] = useState(false);
-
-  // Claimable wBTC orders auto-scan (Bob's wBTC orders)
-  const [claimableWbtcOrders, setClaimableWbtcOrders] = useState<
-    ClaimableWbtcOrder[]
-  >([]);
-  const [scanningWbtcOrders, setScanningWbtcOrders] = useState(false);
-
-  const scanClaimableOrders = useCallback(async () => {
+  const scan = useCallback(async () => {
     if (!account?.address || !contract || !provider) return;
-    setScanningOrders(true);
+    setScanning(true);
     try {
-      const SELECTOR = hash.getSelectorFromName("WbtcOrderFilled");
-      const claimable: ClaimableOrder[] = [];
-      let continuationToken: string | undefined;
       const now = Math.floor(Date.now() / 1000);
-      const myAddr = "0x" + BigInt(account.address).toString(16);
+      const myAddr = toHex(account.address);
+      const result: ClaimableStrkOrder[] = [];
 
-      do {
-        const page = await provider.getEvents({
-          address: CONTRACT_ADDRESS,
-          keys: [[SELECTOR]],
-          from_block: { block_number: +DEPLOY_BLOCK },
-          to_block: "latest",
-          chunk_size: 200,
-          ...(continuationToken
-            ? { continuation_token: continuationToken }
-            : {}),
-        });
-
-        for (const e of page.events) {
-          try {
-            // keys: [selector, wbtcId_low, wbtcId_high, strkId_low, strkId_high]
-            const wbtcLow = BigInt(e.keys[1]);
-            const wbtcHigh = BigInt(e.keys[2]);
-            const wbtcOrderId =
-              "0x" + ((wbtcHigh << 128n) | wbtcLow).toString(16);
-
-            const strkLow = BigInt(e.keys[3]);
-            const strkHigh = BigInt(e.keys[4]);
-            const strkOrderId =
-              "0x" + ((strkHigh << 128n) | strkLow).toString(16);
-
-            const o = (await contract.call("get_strk_order", [
-              uint256.bnToUint256(BigInt(strkOrderId)),
-            ])) as any;
-
-            const buyer = "0x" + BigInt(o.strk_buyer).toString(16);
-
-            if (
-              buyer === myAddr &&
-              !o.is_withdrawn &&
-              !o.is_refunded &&
-              Number(o.expiry) > now
-            ) {
-              claimable.push({
-                strkOrderId,
-                wbtcOrderId,
-                strkAmount: o.strk_amount?.toString() ?? "0",
-                expiry: Number(o.expiry),
-                hashlock: "0x" + BigInt(o.hashlock).toString(16),
-              });
+      await paginateEvents(
+        provider,
+        hash.getSelectorFromName("WbtcOrderFilled"),
+        +DEPLOY_BLOCK,
+        async (events) => {
+          for (const e of events) {
+            try {
+              const wbtcOrderId = decodeU256Key(e.keys[1], e.keys[2]);
+              const strkOrderId = decodeU256Key(e.keys[3], e.keys[4]);
+              const o = (await contract.call("get_strk_order", [
+                uint256.bnToUint256(BigInt(strkOrderId)),
+              ])) as any;
+              if (
+                toHex(o.strk_buyer) === myAddr &&
+                !o.is_withdrawn &&
+                !o.is_refunded &&
+                Number(o.expiry) > now
+              ) {
+                result.push({
+                  strkOrderId,
+                  wbtcOrderId,
+                  strkAmount: o.strk_amount?.toString() ?? "0",
+                  expiry: Number(o.expiry),
+                  hashlock: toHex(o.hashlock),
+                });
+              }
+            } catch {
+              /* skip malformed */
             }
-          } catch {
-            // skip malformed events
           }
-        }
+        },
+      );
 
-        continuationToken = (page as any).continuation_token ?? undefined;
-      } while (continuationToken);
-
-      setClaimableOrders(claimable);
+      setOrders(result);
     } catch (err: any) {
-      toast.error("Failed to scan orders: " + err?.message);
+      toast.error("Failed to scan STRK orders: " + err?.message);
     } finally {
-      setScanningOrders(false);
+      setScanning(false);
     }
   }, [account?.address, contract, provider]);
 
-  // Auto-scan when switching to withdraw_strk tab
-  useEffect(() => {
-    if (mode === "withdraw_strk") {
-      scanClaimableOrders();
-    }
-  }, [mode, scanClaimableOrders]);
+  const remove = (id: string) =>
+    setOrders((p) => p.filter((o) => o.strkOrderId !== id));
+  return { orders, scanning, scan, remove };
+}
 
-  const scanClaimableWbtcOrders = useCallback(async () => {
+function useClaimableWbtcOrders() {
+  const { account } = useAccount();
+  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
+  const { provider } = useProvider();
+  const [orders, setOrders] = useState<ClaimableWbtcOrder[]>([]);
+  const [scanning, setScanning] = useState(false);
+
+  const scan = useCallback(async () => {
     if (!account?.address || !contract || !provider) return;
-    setScanningWbtcOrders(true);
+    setScanning(true);
     try {
-      const SELECTOR = hash.getSelectorFromName("WbtcOrderFilled");
-      const claimable: ClaimableWbtcOrder[] = [];
-      let continuationToken: string | undefined;
-      const myAddr = "0x" + BigInt(account.address).toString(16);
+      const myAddr = toHex(account.address);
+      const result: ClaimableWbtcOrder[] = [];
 
-      do {
-        const page = await provider.getEvents({
-          address: CONTRACT_ADDRESS,
-          keys: [[SELECTOR]],
-          from_block: { block_number: +DEPLOY_BLOCK },
-          to_block: "latest",
-          chunk_size: 200,
-          ...(continuationToken
-            ? { continuation_token: continuationToken }
-            : {}),
-        });
-
-        for (const e of page.events) {
-          try {
-            const wbtcLow = BigInt(e.keys[1]);
-            const wbtcHigh = BigInt(e.keys[2]);
-            const wbtcOrderId =
-              "0x" + ((wbtcHigh << 128n) | wbtcLow).toString(16);
-
-            const o = (await contract.call("get_wbtc_order", [
-              uint256.bnToUint256(BigInt(wbtcOrderId)),
-            ])) as any;
-
-            const buyer = "0x" + BigInt(o.wbtc_buyer).toString(16);
-            const secretRevealed = BigInt(o.secret ?? 0) !== 0n;
-
-            // Bob can claim if: he is the buyer, secret is revealed, not yet withdrawn/refunded
-            // swap_initiated=true means Alice revealed — Bob can claim even past expiry
-            if (
-              buyer === myAddr &&
-              secretRevealed &&
-              !o.is_withdrawn &&
-              !o.is_refunded
-            ) {
-              claimable.push({
-                wbtcOrderId,
-                wbtcAmount: o.wbtc_amount?.toString() ?? "0",
-                swapInitiated: Boolean(o.swap_initiated),
-                expiry: Number(o.expiry),
-              });
+      await paginateEvents(
+        provider,
+        hash.getSelectorFromName("WbtcOrderFilled"),
+        +DEPLOY_BLOCK,
+        async (events) => {
+          for (const e of events) {
+            try {
+              const wbtcOrderId = decodeU256Key(e.keys[1], e.keys[2]);
+              const o = (await contract.call("get_wbtc_order", [
+                uint256.bnToUint256(BigInt(wbtcOrderId)),
+              ])) as any;
+              const secretRevealed = BigInt(o.secret ?? 0) !== 0n;
+              if (
+                toHex(o.wbtc_buyer) === myAddr &&
+                secretRevealed &&
+                !o.is_withdrawn &&
+                !o.is_refunded
+              ) {
+                result.push({
+                  wbtcOrderId,
+                  wbtcAmount: o.wbtc_amount?.toString() ?? "0",
+                  swapInitiated: Boolean(o.swap_initiated),
+                  expiry: Number(o.expiry),
+                });
+              }
+            } catch {
+              /* skip malformed */
             }
-          } catch {
-            // skip malformed events
           }
-        }
+        },
+      );
 
-        continuationToken = (page as any).continuation_token ?? undefined;
-      } while (continuationToken);
-
-      setClaimableWbtcOrders(claimable);
+      setOrders(result);
     } catch (err: any) {
       toast.error("Failed to scan wBTC orders: " + err?.message);
     } finally {
-      setScanningWbtcOrders(false);
+      setScanning(false);
     }
   }, [account?.address, contract, provider]);
 
-  // Auto-scan when switching to withdraw_wbtc tab
-  useEffect(() => {
-    if (mode === "withdraw_wbtc") {
-      scanClaimableWbtcOrders();
-    }
-  }, [mode, scanClaimableWbtcOrders]);
+  const remove = (id: string) =>
+    setOrders((p) => p.filter((o) => o.wbtcOrderId !== id));
+  return { orders, scanning, scan, remove };
+}
 
-  const lookupOrder = async (overrideId?: string) => {
-    const id = overrideId ?? orderId;
-    if (!contract || !id.trim()) return;
-    setLookupLoading(true);
-    setOrderStatus(null);
+function useRefundableWbtcOrders() {
+  const { account } = useAccount();
+  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
+  const { provider } = useProvider();
+  const [orders, setOrders] = useState<RefundableWbtcOrder[]>([]);
+  const [scanning, setScanning] = useState(false);
+
+  const scan = useCallback(async () => {
+    if (!account?.address || !contract || !provider) return;
+    setScanning(true);
     try {
-      const idU256 = uint256.bnToUint256(BigInt(id.trim()));
       const now = Math.floor(Date.now() / 1000);
+      const myAddr = toHex(account.address);
+      const result: RefundableWbtcOrder[] = [];
 
-      if (mode === "withdraw_strk" || mode === "refund_strk") {
-        const o = (await contract.call("get_strk_order", [idU256])) as any;
-        setOrderStatus({
-          isWithdrawn: Boolean(o.is_withdrawn),
-          isRefunded: Boolean(o.is_refunded),
-          isFilled: false,
-          isExpired: now >= Number(o.expiry),
-          swapInitiated: false,
-          secretRevealed: false,
-          strkAmount: o.strk_amount?.toString(),
-          expiry: Number(o.expiry),
-          hashlock: "0x" + BigInt(o.hashlock).toString(16),
-        });
-      } else {
-        const o = (await contract.call("get_wbtc_order", [idU256])) as any;
-        setOrderStatus({
-          isWithdrawn: Boolean(o.is_withdrawn),
-          isRefunded: Boolean(o.is_refunded),
-          isFilled: Boolean(o.is_filled),
-          isExpired: now >= Number(o.expiry),
-          swapInitiated: Boolean(o.swap_initiated),
-          secretRevealed: BigInt(o.secret ?? 0) !== 0n,
-          wbtcAmount: o.wbtc_amount?.toString(),
-          expiry: Number(o.expiry),
-          hashlock: "0x" + BigInt(o.hashlock).toString(16),
-        });
-      }
+      await paginateEvents(
+        provider,
+        hash.getSelectorFromName("WbtcOrderPosted"),
+        +DEPLOY_BLOCK,
+        async (events) => {
+          for (const e of events) {
+            try {
+              const wbtcOrderId = decodeU256Key(e.keys[1], e.keys[2]);
+              const o = (await contract.call("get_wbtc_order", [
+                uint256.bnToUint256(BigInt(wbtcOrderId)),
+              ])) as any;
+              if (
+                toHex(o.wbtc_seller) === myAddr &&
+                now >= Number(o.expiry) &&
+                !o.is_filled &&
+                !o.is_withdrawn &&
+                !o.is_refunded &&
+                !o.swap_initiated
+              ) {
+                result.push({
+                  wbtcOrderId,
+                  wbtcAmount: o.wbtc_amount?.toString() ?? "0",
+                  expiry: Number(o.expiry),
+                });
+              }
+            } catch {
+              /* skip malformed */
+            }
+          }
+        },
+      );
+
+      setOrders(result);
     } catch (err: any) {
-      toast.error("Lookup failed: " + err?.message);
+      toast.error("Failed to scan refundable wBTC orders: " + err?.message);
     } finally {
-      setLookupLoading(false);
+      setScanning(false);
     }
-  };
+  }, [account?.address, contract, provider]);
 
-  const loadSecretFromFile = (file: File) => {
-    const r = new FileReader();
-    r.onload = (ev) => {
-      try {
-        const data = JSON.parse(ev.target?.result as string);
-        if (data.swapSecret) setSecret(data.swapSecret);
-      } catch {
-        toast.error("Invalid secret file.");
-      }
-    };
-    r.readAsText(file);
-  };
+  const remove = (id: string) =>
+    setOrders((p) => p.filter((o) => o.wbtcOrderId !== id));
+  return { orders, scanning, scan, remove };
+}
 
-  const handleWithdrawStrk = async () => {
-    if (!account || !contract || !orderId || !secret) return;
-    setActionLoading(true);
+function useRefundableStrkOrders() {
+  const { account } = useAccount();
+  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
+  const { provider } = useProvider();
+  const [orders, setOrders] = useState<RefundableStrkOrder[]>([]);
+  const [scanning, setScanning] = useState(false);
+
+  const scan = useCallback(async () => {
+    if (!account?.address || !contract || !provider) return;
+    setScanning(true);
     try {
-      const idU256 = uint256.bnToUint256(BigInt(orderId.trim()));
-      const tx = await account.execute(
-        [contract.populate("withdraw_strk", [idU256, secret])],
-        { maxFee: U128_MAX, version: "0x3" } as any,
+      const now = Math.floor(Date.now() / 1000);
+      const myAddr = toHex(account.address);
+      const result: RefundableStrkOrder[] = [];
+
+      await paginateEvents(
+        provider,
+        hash.getSelectorFromName("WbtcOrderFilled"),
+        +DEPLOY_BLOCK,
+        async (events) => {
+          for (const e of events) {
+            try {
+              const strkOrderId = decodeU256Key(e.keys[3], e.keys[4]);
+              const o = (await contract.call("get_strk_order", [
+                uint256.bnToUint256(BigInt(strkOrderId)),
+              ])) as any;
+              if (
+                toHex(o.strk_seller) === myAddr &&
+                now >= Number(o.expiry) &&
+                !o.is_withdrawn &&
+                !o.is_refunded
+              ) {
+                result.push({
+                  strkOrderId,
+                  strkAmount: o.strk_amount?.toString() ?? "0",
+                  expiry: Number(o.expiry),
+                });
+              }
+            } catch {
+              /* skip malformed */
+            }
+          }
+        },
       );
-      await account.waitForTransaction(tx.transaction_hash);
-      toast.success(
-        "STRK claimed! Your secret is now public — Bob can claim wBTC.",
-      );
-      setOrderStatus((prev) => (prev ? { ...prev, isWithdrawn: true } : null));
-      // Remove from claimable list
-      setClaimableOrders((prev) =>
-        prev.filter((o) => o.strkOrderId !== orderId),
-      );
+
+      setOrders(result);
     } catch (err: any) {
-      toast.error(err?.message ?? String(err));
+      toast.error("Failed to scan refundable STRK orders: " + err?.message);
     } finally {
-      setActionLoading(false);
+      setScanning(false);
     }
-  };
+  }, [account?.address, contract, provider]);
 
-  const handleWithdrawWbtc = async () => {
-    if (!account || !contract || !orderId) return;
-    setActionLoading(true);
-    try {
-      const idU256 = uint256.bnToUint256(BigInt(orderId.trim()));
-      const tx = await account.execute(
-        [contract.populate("withdraw_wbtc", [idU256])],
-        { maxFee: U128_MAX, version: "0x3" } as any,
-      );
-      await account.waitForTransaction(tx.transaction_hash);
-      toast.success("wBTC claimed! Swap complete.");
-      setOrderStatus((prev) => (prev ? { ...prev, isWithdrawn: true } : null));
-      setClaimableWbtcOrders((prev) =>
-        prev.filter((o) => o.wbtcOrderId !== orderId),
-      );
-    } catch (err: any) {
-      toast.error(err?.message ?? String(err));
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  const remove = (id: string) =>
+    setOrders((p) => p.filter((o) => o.strkOrderId !== id));
+  return { orders, scanning, scan, remove };
+}
 
-  const handleRefundWbtc = async () => {
-    if (!account || !contract || !orderId) return;
-    setActionLoading(true);
-    try {
-      const idU256 = uint256.bnToUint256(BigInt(orderId.trim()));
-      const tx = await account.execute(
-        [contract.populate("refund_wbtc", [idU256])],
-        { maxFee: U128_MAX, version: "0x3" } as any,
-      );
-      await account.waitForTransaction(tx.transaction_hash);
-      toast.success("wBTC refunded back to you.");
-      setOrderStatus((prev) => (prev ? { ...prev, isRefunded: true } : null));
-    } catch (err: any) {
-      toast.error(err?.message ?? String(err));
-    } finally {
-      setActionLoading(false);
-    }
-  };
+// ── Presentational components ─────────────────────────────────────────────────
 
-  const handleRefundStrk = async () => {
-    if (!account || !contract || !orderId) return;
-    setActionLoading(true);
-    try {
-      const idU256 = uint256.bnToUint256(BigInt(orderId.trim()));
-      const tx = await account.execute(
-        [contract.populate("refund_strk", [idU256])],
-        { maxFee: U128_MAX, version: "0x3" } as any,
-      );
-      await account.waitForTransaction(tx.transaction_hash);
-      toast.success("STRK refunded back to you.");
-      setOrderStatus((prev) => (prev ? { ...prev, isRefunded: true } : null));
-    } catch (err: any) {
-      toast.error(err?.message ?? String(err));
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const MODES: {
-    key: ActionMode;
-    label: string;
-    sublabel: string;
-    icon: React.ReactNode;
-  }[] = [
-    {
-      key: "withdraw_strk",
-      label: "Claim STRK",
-      sublabel: "Alice reveals secret",
-      icon: <RiMoneyDollarCircleLine size={13} />,
-    },
-    {
-      key: "withdraw_wbtc",
-      label: "Claim wBTC",
-      sublabel: "Bob uses revealed secret",
-      icon: <RiArrowRightLine size={13} />,
-    },
-    {
-      key: "refund_wbtc",
-      label: "Refund wBTC",
-      sublabel: "Alice, if order expired",
-      icon: <RiRefund2Line size={13} />,
-    },
-    {
-      key: "refund_strk",
-      label: "Refund STRK",
-      sublabel: "Bob, if Alice vanished",
-      icon: <RiRefund2Line size={13} />,
-    },
-  ];
-
-  const canAct = () => {
-    if (!orderStatus) return false;
-    if (orderStatus.isWithdrawn || orderStatus.isRefunded) return false;
-    if (mode === "withdraw_strk") return !orderStatus.isExpired && !!secret;
-    if (mode === "withdraw_wbtc") return orderStatus.secretRevealed;
-    if (mode === "refund_wbtc")
-      return (
-        orderStatus.isExpired &&
-        !orderStatus.swapInitiated &&
-        !orderStatus.isFilled
-      );
-    if (mode === "refund_strk") return orderStatus.isExpired;
-    return false;
-  };
-
-  const getStatusMessage = () => {
-    if (!orderStatus) return null;
-    if (orderStatus.isWithdrawn)
-      return { text: "Already claimed.", color: "#22c55e" };
-    if (orderStatus.isRefunded)
-      return { text: "Already refunded.", color: "#22c55e" };
-    if (mode === "withdraw_strk" && orderStatus.isExpired)
-      return {
-        text: "STRK order expired — use Refund STRK instead.",
-        color: "#f87171",
-      };
-    if (mode === "withdraw_wbtc" && !orderStatus.secretRevealed)
-      return {
-        text: "Secret not yet revealed. Wait for Alice to call withdraw_strk first.",
-        color: "#f59e0b",
-      };
-    if (mode === "withdraw_wbtc" && orderStatus.secretRevealed)
-      return {
-        text: "Secret is on-chain! You can claim your wBTC.",
-        color: "#22c55e",
-      };
-    if (mode === "refund_wbtc" && orderStatus.isFilled)
-      return {
-        text: "Order is filled — cannot refund while Bob's STRK is locked.",
-        color: "#f87171",
-      };
-    if (mode === "refund_wbtc" && !orderStatus.isExpired)
-      return { text: "Order hasn't expired yet.", color: "#f59e0b" };
-    if (mode === "refund_strk" && !orderStatus.isExpired)
-      return { text: "Order hasn't expired yet.", color: "#f59e0b" };
-    return null;
-  };
-
-  const statusMsg = getStatusMessage();
-  const executeAction = () => {
-    if (mode === "withdraw_strk") handleWithdrawStrk();
-    else if (mode === "withdraw_wbtc") handleWithdrawWbtc();
-    else if (mode === "refund_wbtc") handleRefundWbtc();
-    else handleRefundStrk();
-  };
-
-  const now = Math.floor(Date.now() / 1000);
-
+function OrderListSection({
+  title,
+  scanning,
+  onRefresh,
+  connected,
+  emptyText,
+  children,
+}: {
+  title: string;
+  scanning: boolean;
+  onRefresh: () => void;
+  connected: boolean;
+  emptyText: string;
+  children: React.ReactNode;
+}) {
+  const count = React.Children.count(children);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      {/* Mode selector */}
+    <div style={styles.section}>
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "0.5rem",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
         }}
       >
-        {MODES.map(({ key, label, sublabel, icon }) => (
-          <button
-            key={key}
-            onClick={() => {
-              setMode(key);
-              setOrderStatus(null);
-              setOrderId("");
-            }}
-            style={{
-              background: mode === key ? "rgba(255,200,0,0.08)" : "#111118",
-              border: `1px solid ${mode === key ? "rgba(255,200,0,0.35)" : "#1e1e2e"}`,
-              borderRadius: 8,
-              padding: "0.8rem",
-              cursor: "pointer",
-              transition: "all 0.15s",
-              textAlign: "left",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.4rem",
-                color: mode === key ? "#ffc800" : "#555",
-                fontSize: "0.72rem",
-                fontWeight: 700,
-                marginBottom: "0.2rem",
-              }}
-            >
-              {icon} {label}
-            </div>
-            <div
-              style={{
-                color: "#2a2a3a",
-                fontSize: "0.58rem",
-                letterSpacing: "0.08em",
-              }}
-            >
-              {sublabel}
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <HintBox mode={mode} />
-
-      {/* ── Claimable orders list (withdraw_strk only) ── */}
-      {mode === "withdraw_strk" && (
-        <div style={section}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <div style={sectionLabel}>Your claimable STRK orders</div>
-            <button
-              onClick={scanClaimableOrders}
-              disabled={scanningOrders}
-              style={{
-                ...btnGhost,
-                width: "auto",
-                padding: "0.3rem 0.65rem",
-                fontSize: "0.62rem",
-              }}
-            >
-              {scanningOrders ? (
-                <FaSpinner
-                  size={10}
-                  style={{ animation: "spin 1s linear infinite" }}
-                />
-              ) : (
-                <FaSync size={10} />
-              )}
-              &nbsp;Refresh
-            </button>
-          </div>
-
-          {!account && (
-            <div
-              style={{
-                color: "#3a3a4a",
-                fontSize: "0.68rem",
-                textAlign: "center",
-                padding: "1rem 0",
-              }}
-            >
-              Connect wallet to see your orders
-            </div>
-          )}
-
-          {account && scanningOrders && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                color: "#3a3a4a",
-                fontSize: "0.68rem",
-                padding: "0.5rem 0",
-              }}
-            >
-              <FaSpinner
-                size={11}
-                style={{ animation: "spin 1s linear infinite" }}
-              />
-              Scanning on-chain events…
-            </div>
-          )}
-
-          {account && !scanningOrders && claimableOrders.length === 0 && (
-            <div
-              style={{
-                color: "#2a2a3a",
-                fontSize: "0.68rem",
-                textAlign: "center",
-                padding: "1rem 0",
-                letterSpacing: "0.06em",
-              }}
-            >
-              No claimable orders found for your address
-            </div>
-          )}
-
-          {claimableOrders.map((o) => {
-            const minsLeft = Math.floor((o.expiry - now) / 60);
-            const isSelected = orderId === o.strkOrderId;
-            return (
-              <button
-                key={o.strkOrderId}
-                onClick={() => {
-                  setOrderId(o.strkOrderId);
-                  lookupOrder(o.strkOrderId);
-                }}
-                style={{
-                  background: isSelected ? "rgba(255,200,0,0.08)" : "#0a0a0f",
-                  border: `1px solid ${isSelected ? "rgba(255,200,0,0.4)" : "#1e1e2e"}`,
-                  borderRadius: 8,
-                  padding: "0.85rem 1rem",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  width: "100%",
-                  transition: "all 0.15s",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        color: "#ffc800",
-                        fontSize: "0.82rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {(Number(o.strkAmount) / 1e18).toLocaleString(undefined, {
-                        maximumFractionDigits: 6,
-                      })}{" "}
-                      STRK
-                    </div>
-                    <div
-                      style={{
-                        color: "#3a3a4a",
-                        fontSize: "0.6rem",
-                        marginTop: "0.2rem",
-                        fontFamily: "'DM Mono', monospace",
-                      }}
-                    >
-                      {o.strkOrderId.slice(0, 10)}…{o.strkOrderId.slice(-6)}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div
-                      style={{
-                        color: minsLeft < 60 ? "#f87171" : "#555",
-                        fontSize: "0.62rem",
-                      }}
-                    >
-                      {minsLeft < 60
-                        ? `⚠ ${minsLeft}m left`
-                        : `${Math.floor(minsLeft / 60)}h left`}
-                    </div>
-                    <div
-                      style={{
-                        color: isSelected ? "#ffc800" : "#2a2a3a",
-                        fontSize: "0.58rem",
-                        marginTop: "0.15rem",
-                      }}
-                    >
-                      {isSelected ? "✓ selected" : "click to select"}
-                    </div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Claimable wBTC orders list (withdraw_wbtc only) ── */}
-      {mode === "withdraw_wbtc" && (
-        <div style={section}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <div style={sectionLabel}>Your claimable wBTC orders</div>
-            <button
-              onClick={scanClaimableWbtcOrders}
-              disabled={scanningWbtcOrders}
-              style={{
-                ...btnGhost,
-                width: "auto",
-                padding: "0.3rem 0.65rem",
-                fontSize: "0.62rem",
-              }}
-            >
-              {scanningWbtcOrders ? (
-                <FaSpinner
-                  size={10}
-                  style={{ animation: "spin 1s linear infinite" }}
-                />
-              ) : (
-                <FaSync size={10} />
-              )}
-              &nbsp;Refresh
-            </button>
-          </div>
-
-          {!account && (
-            <div
-              style={{
-                color: "#3a3a4a",
-                fontSize: "0.68rem",
-                textAlign: "center",
-                padding: "1rem 0",
-              }}
-            >
-              Connect wallet to see your orders
-            </div>
-          )}
-
-          {account && scanningWbtcOrders && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                color: "#3a3a4a",
-                fontSize: "0.68rem",
-                padding: "0.5rem 0",
-              }}
-            >
-              <FaSpinner
-                size={11}
-                style={{ animation: "spin 1s linear infinite" }}
-              />
-              Scanning on-chain events…
-            </div>
-          )}
-
-          {account &&
-            !scanningWbtcOrders &&
-            claimableWbtcOrders.length === 0 && (
-              <div
-                style={{
-                  color: "#2a2a3a",
-                  fontSize: "0.68rem",
-                  textAlign: "center",
-                  padding: "1rem 0",
-                  letterSpacing: "0.06em",
-                }}
-              >
-                No claimable wBTC orders found — Alice may not have revealed her
-                secret yet
-              </div>
-            )}
-
-          {claimableWbtcOrders.map((o) => {
-            const isSelected = orderId === o.wbtcOrderId;
-            const expired = Math.floor(Date.now() / 1000) >= o.expiry;
-            return (
-              <button
-                key={o.wbtcOrderId}
-                onClick={() => {
-                  setOrderId(o.wbtcOrderId);
-                  lookupOrder(o.wbtcOrderId);
-                }}
-                style={{
-                  background: isSelected ? "rgba(255,200,0,0.08)" : "#0a0a0f",
-                  border: `1px solid ${isSelected ? "rgba(255,200,0,0.4)" : "#1e1e2e"}`,
-                  borderRadius: 8,
-                  padding: "0.85rem 1rem",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  width: "100%",
-                  transition: "all 0.15s",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        color: "#ffc800",
-                        fontSize: "0.82rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {Number(o.wbtcAmount).toLocaleString()} sat wBTC
-                    </div>
-                    <div
-                      style={{
-                        color: "#3a3a4a",
-                        fontSize: "0.6rem",
-                        marginTop: "0.2rem",
-                        fontFamily: "'DM Mono', monospace",
-                      }}
-                    >
-                      {o.wbtcOrderId.slice(0, 10)}…{o.wbtcOrderId.slice(-6)}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div
-                      style={{
-                        color: "#22c55e",
-                        fontSize: "0.62rem",
-                        fontWeight: 700,
-                      }}
-                    >
-                      ✓ secret revealed
-                    </div>
-                    <div
-                      style={{
-                        color: expired ? "#555" : "#3a3a4a",
-                        fontSize: "0.58rem",
-                        marginTop: "0.15rem",
-                      }}
-                    >
-                      {expired
-                        ? "expired (swap_initiated)"
-                        : `expires ${new Date(o.expiry * 1000).toLocaleTimeString()}`}
-                    </div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Order ID lookup ── */}
-      <div style={section}>
-        <div style={sectionLabel}>
-          {mode.includes("strk") ? "STRK order ID" : "wBTC order ID"}
-        </div>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <input
-            value={orderId}
-            onChange={(e) => setOrderId(e.target.value)}
-            placeholder="0x…"
-            style={{ ...inputStyle, flex: 1 }}
-          />
-          <button
-            onClick={() => lookupOrder()}
-            disabled={lookupLoading || !orderId.trim()}
-            style={{
-              ...btnPrimary(!!(orderId.trim() && !lookupLoading)),
-              width: "auto",
-              padding: "0.6rem 1rem",
-              flexShrink: 0,
-            }}
-          >
-            {lookupLoading ? (
-              <FaSpinner
-                size={11}
-                style={{ animation: "spin 1s linear infinite" }}
-              />
-            ) : (
-              "Check"
-            )}
-          </button>
-        </div>
-
-        {orderStatus && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "0.4rem",
-              background: "#0a0a0f",
-              borderRadius: 8,
-              padding: "0.85rem",
-            }}
-          >
-            <StatusRow
-              label="Withdrawn"
-              value={orderStatus.isWithdrawn ? "Yes" : "No"}
-              bad={orderStatus.isWithdrawn}
-            />
-            <StatusRow
-              label="Refunded"
-              value={orderStatus.isRefunded ? "Yes" : "No"}
-              bad={orderStatus.isRefunded}
-            />
-            {orderStatus.expiry && (
-              <StatusRow
-                label="Expiry"
-                value={new Date(orderStatus.expiry * 1000).toLocaleString()}
-                bad={orderStatus.isExpired}
-              />
-            )}
-            {mode === "withdraw_wbtc" && (
-              <StatusRow
-                label="Secret revealed"
-                value={orderStatus.secretRevealed ? "Yes ✓" : "Not yet"}
-                good={orderStatus.secretRevealed}
-              />
-            )}
-            {orderStatus.strkAmount && (
-              <StatusRow
-                label="STRK amount"
-                value={
-                  (Number(orderStatus.strkAmount) / 1e18).toLocaleString(
-                    undefined,
-                    { maximumFractionDigits: 8 },
-                  ) + " STRK"
-                }
-              />
-            )}
-            {orderStatus.wbtcAmount && (
-              <StatusRow
-                label="wBTC amount"
-                value={orderStatus.wbtcAmount + " sat"}
-              />
-            )}
-          </div>
-        )}
-
-        {statusMsg && (
-          <div
-            style={{
-              color: statusMsg.color,
-              fontSize: "0.68rem",
-              padding: "0.6rem",
-              background: statusMsg.color + "10",
-              borderRadius: 6,
-              lineHeight: 1.6,
-            }}
-          >
-            {statusMsg.text}
-          </div>
-        )}
-      </div>
-
-      {/* ── Secret input (withdraw_strk only) ── */}
-      {mode === "withdraw_strk" && (
-        <div style={section}>
-          <div style={sectionLabel}>Your swap secret</div>
-          <input
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="0x… (your secret from umbra-swap-secret.json)"
-            style={inputStyle}
-          />
-          <label
-            htmlFor="secret-file"
-            style={uploadLabel}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#555")}
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.borderColor = "#1e1e2e")
-            }
-          >
-            <FaUpload size={10} /> Upload umbra-swap-secret.json
-            <input
-              id="secret-file"
-              type="file"
-              accept=".json"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) loadSecretFromFile(f);
-              }}
-            />
-          </label>
-          {secret && (
-            <p
-              style={{
-                color: "#3a3a4a",
-                fontSize: "0.62rem",
-                margin: 0,
-                wordBreak: "break-all",
-              }}
-            >
-              Secret: {secret.slice(0, 22)}…
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* ── Action button ── */}
-      <button
-        onClick={executeAction}
-        disabled={!canAct() || actionLoading || !account}
-        style={btnPrimary(!!(canAct() && !actionLoading && account))}
-      >
-        {actionLoading ? (
-          <>
-            <FaSpinner
-              size={13}
-              style={{ animation: "spin 1s linear infinite" }}
-            />{" "}
-            Processing…
-          </>
-        ) : (
-          <>
-            {MODES.find((m) => m.key === mode)?.icon}{" "}
-            {MODES.find((m) => m.key === mode)?.label}
-          </>
-        )}
-      </button>
-
-      {!account && (
-        <p
+        <div style={styles.sectionLabel}>{title}</div>
+        <button
+          onClick={onRefresh}
+          disabled={scanning}
           style={{
-            color: "#f59e0b",
-            fontSize: "0.65rem",
-            textAlign: "center",
-            margin: 0,
+            ...btnGhost,
+            width: "auto",
+            padding: "0.3rem 0.65rem",
+            fontSize: "0.62rem",
           }}
         >
-          Connect your wallet to act on orders
-        </p>
+          {scanning ? (
+            <FaSpinner
+              size={10}
+              style={{ animation: "spin 1s linear infinite" }}
+            />
+          ) : (
+            <FaSync size={10} />
+          )}
+          &nbsp;Refresh
+        </button>
+      </div>
+
+      {!connected && (
+        <div style={styles.emptyState}>Connect wallet to see your orders</div>
+      )}
+
+      {connected && scanning && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            color: "#3a3a4a",
+            fontSize: "0.68rem",
+            padding: "0.25rem 0",
+          }}
+        >
+          <FaSpinner
+            size={11}
+            style={{ animation: "spin 1s linear infinite" }}
+          />{" "}
+          Scanning on-chain events…
+        </div>
+      )}
+
+      {connected && !scanning && count === 0 && (
+        <div style={styles.emptyState}>{emptyText}</div>
+      )}
+
+      {children}
+    </div>
+  );
+}
+
+function OrderCard({
+  id,
+  primaryValue,
+  badgeLabel,
+  badgeColor,
+  subLabel,
+  selected,
+  onClick,
+}: {
+  id: string;
+  primaryValue: string;
+  badgeLabel: string;
+  badgeColor: string;
+  subLabel: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: selected ? "rgba(255,200,0,0.08)" : "#0a0a0f",
+        border: `1px solid ${selected ? "rgba(255,200,0,0.4)" : "#1e1e2e"}`,
+        borderRadius: 8,
+        padding: "0.85rem 1rem",
+        cursor: "pointer",
+        textAlign: "left",
+        width: "100%",
+        transition: "all 0.15s",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <div
+            style={{ color: "#ffc800", fontSize: "0.82rem", fontWeight: 700 }}
+          >
+            {primaryValue}
+          </div>
+          <div
+            style={{
+              color: "#3a3a4a",
+              fontSize: "0.6rem",
+              marginTop: "0.2rem",
+              fontFamily: "'DM Mono', monospace",
+            }}
+          >
+            {id.slice(0, 10)}…{id.slice(-6)}
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div
+            style={{ color: badgeColor, fontSize: "0.62rem", fontWeight: 700 }}
+          >
+            {badgeLabel}
+          </div>
+          <div
+            style={{
+              color: selected ? "#ffc800" : "#2a2a3a",
+              fontSize: "0.58rem",
+              marginTop: "0.15rem",
+            }}
+          >
+            {subLabel}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function OrderLookup({
+  mode,
+  orderId,
+  onOrderIdChange,
+  onLookup,
+  loading,
+  orderStatus,
+  statusMsg,
+}: {
+  mode: ActionMode;
+  orderId: string;
+  onOrderIdChange: (v: string) => void;
+  onLookup: () => void;
+  loading: boolean;
+  orderStatus: OrderStatus | null;
+  statusMsg: { text: string; color: string } | null;
+}) {
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionLabel}>
+        {mode.includes("strk") ? "STRK order ID" : "wBTC order ID"}
+      </div>
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <input
+          value={orderId}
+          onChange={(e) => onOrderIdChange(e.target.value)}
+          placeholder="0x…"
+          style={{ ...inputStyle, flex: 1 }}
+        />
+        <button
+          onClick={onLookup}
+          disabled={loading || !orderId.trim()}
+          style={{
+            ...btnPrimary(!!(orderId.trim() && !loading)),
+            width: "auto",
+            padding: "0.6rem 1rem",
+            flexShrink: 0,
+          }}
+        >
+          {loading ? (
+            <FaSpinner
+              size={11}
+              style={{ animation: "spin 1s linear infinite" }}
+            />
+          ) : (
+            "Check"
+          )}
+        </button>
+      </div>
+
+      {orderStatus && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.4rem",
+            background: "#0a0a0f",
+            borderRadius: 8,
+            padding: "0.85rem",
+          }}
+        >
+          <StatusRow
+            label="Withdrawn"
+            value={orderStatus.isWithdrawn ? "Yes" : "No"}
+            bad={orderStatus.isWithdrawn}
+          />
+          <StatusRow
+            label="Refunded"
+            value={orderStatus.isRefunded ? "Yes" : "No"}
+            bad={orderStatus.isRefunded}
+          />
+          {orderStatus.expiry && (
+            <StatusRow
+              label="Expiry"
+              value={new Date(orderStatus.expiry * 1000).toLocaleString()}
+              bad={orderStatus.isExpired}
+            />
+          )}
+          {mode === "withdraw_wbtc" && (
+            <StatusRow
+              label="Secret revealed"
+              value={orderStatus.secretRevealed ? "Yes ✓" : "Not yet"}
+              good={orderStatus.secretRevealed}
+            />
+          )}
+          {orderStatus.strkAmount && (
+            <StatusRow
+              label="STRK amount"
+              value={
+                (Number(orderStatus.strkAmount) / 1e18).toLocaleString(
+                  undefined,
+                  { maximumFractionDigits: 8 },
+                ) + " STRK"
+              }
+            />
+          )}
+          {orderStatus.wbtcAmount && (
+            <StatusRow
+              label="wBTC amount"
+              value={orderStatus.wbtcAmount + " sat"}
+            />
+          )}
+        </div>
+      )}
+
+      {statusMsg && (
+        <div
+          style={{
+            color: statusMsg.color,
+            fontSize: "0.68rem",
+            padding: "0.6rem",
+            background: statusMsg.color + "10",
+            borderRadius: 6,
+            lineHeight: 1.6,
+          }}
+        >
+          {statusMsg.text}
+        </div>
       )}
     </div>
   );
 }
 
-// ── Hint box ──────────────────────────────────────────────────────────────────
+function SecretInput({
+  secret,
+  onSecretChange,
+  onFileLoad,
+}: {
+  secret: string;
+  onSecretChange: (v: string) => void;
+  onFileLoad: (f: File) => void;
+}) {
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionLabel}>Your swap secret</div>
+      <input
+        value={secret}
+        onChange={(e) => onSecretChange(e.target.value)}
+        placeholder="0x… (your secret from umbra-swap-secret.json)"
+        style={inputStyle}
+      />
+      <label
+        htmlFor="secret-file"
+        style={styles.uploadLabel}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#555")}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#1e1e2e")}
+      >
+        <FaUpload size={10} /> Upload umbra-swap-secret.json
+        <input
+          id="secret-file"
+          type="file"
+          accept=".json"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFileLoad(f);
+          }}
+        />
+      </label>
+      {secret && (
+        <p
+          style={{
+            color: "#3a3a4a",
+            fontSize: "0.62rem",
+            margin: 0,
+            wordBreak: "break-all",
+          }}
+        >
+          Secret: {secret.slice(0, 22)}…
+        </p>
+      )}
+    </div>
+  );
+}
 
 function HintBox({ mode }: { mode: ActionMode }) {
   const hints: Record<ActionMode, { title: string; body: string }> = {
@@ -1026,15 +676,15 @@ function HintBox({ mode }: { mode: ActionMode }) {
     },
     withdraw_wbtc: {
       title: "Bob claims wBTC",
-      body: "Your ready-to-claim orders appear above — these are orders where Alice has already revealed her secret. Select one and claim. No secret input needed, the contract reads it from the order.",
+      body: "Your ready-to-claim orders appear above — these are orders where Alice has already revealed her secret. Select one and claim. No secret input needed.",
     },
     refund_wbtc: {
-      title: "Alice refunds her wBTC",
-      body: "If the order expired and was never filled, Alice can reclaim her wBTC. Cannot be used if Bob already locked his STRK.",
+      title: "Alice refunds wBTC",
+      body: "Your expired unfilled orders appear above. Select one and refund. Only works if the order was never filled — if Bob locked STRK, he must refund his side first.",
     },
     refund_strk: {
-      title: "Bob refunds his STRK",
-      body: "If Alice never revealed the secret before Bob's expiry, Bob can reclaim his STRK. Bob's expiry is always shorter than Alice's by design.",
+      title: "Bob refunds STRK",
+      body: "Your expired STRK orders appear above — these are orders where Alice never revealed the secret. Select one and reclaim your STRK.",
     },
   };
   const h = hints[mode];
@@ -1090,32 +740,526 @@ function StatusRow({
   );
 }
 
-const section: React.CSSProperties = {
-  background: "#111118",
-  border: "1px solid #1e1e2e",
-  borderRadius: 10,
-  padding: "1.1rem 1.2rem",
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.65rem",
-};
-const sectionLabel: React.CSSProperties = {
-  color: "#3a3a4a",
-  fontSize: "0.6rem",
-  letterSpacing: "0.15em",
-  textTransform: "uppercase",
-};
-const uploadLabel: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "0.5rem",
-  padding: "0.65rem",
-  border: "1px dashed #1e1e2e",
-  borderRadius: 8,
-  color: "#3a3a4a",
-  fontSize: "0.68rem",
-  cursor: "pointer",
-  letterSpacing: "0.08em",
-  transition: "border-color 0.2s",
+// ── Main panel ────────────────────────────────────────────────────────────────
+
+export default function ManageOrdersPanel() {
+  const { account } = useAccount();
+  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
+
+  const [mode, setMode] = useState<ActionMode>("withdraw_strk");
+  const [orderId, setOrderId] = useState("");
+  const [secret, setSecret] = useState("");
+  const [orderStatus, setOrderStatus] = useState<OrderStatus | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const claimStrk = useClaimableStrkOrders();
+  const claimWbtc = useClaimableWbtcOrders();
+  const refundWbtc = useRefundableWbtcOrders();
+  const refundStrk = useRefundableStrkOrders();
+
+  // Trigger scan whenever the active tab changes
+  useEffect(() => {
+    if (mode === "withdraw_strk") claimStrk.scan();
+    if (mode === "withdraw_wbtc") claimWbtc.scan();
+    if (mode === "refund_wbtc") refundWbtc.scan();
+    if (mode === "refund_strk") refundStrk.scan();
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lookupOrder = async (overrideId?: string) => {
+    const id = overrideId ?? orderId;
+    if (!contract || !id.trim()) return;
+    setLookupLoading(true);
+    setOrderStatus(null);
+    try {
+      const idU256 = uint256.bnToUint256(BigInt(id.trim()));
+      const now = Math.floor(Date.now() / 1000);
+      if (mode === "withdraw_strk" || mode === "refund_strk") {
+        const o = (await contract.call("get_strk_order", [idU256])) as any;
+        setOrderStatus({
+          isWithdrawn: Boolean(o.is_withdrawn),
+          isRefunded: Boolean(o.is_refunded),
+          isFilled: false,
+          isExpired: now >= Number(o.expiry),
+          swapInitiated: false,
+          secretRevealed: false,
+          strkAmount: o.strk_amount?.toString(),
+          expiry: Number(o.expiry),
+          hashlock: toHex(o.hashlock),
+        });
+      } else {
+        const o = (await contract.call("get_wbtc_order", [idU256])) as any;
+        setOrderStatus({
+          isWithdrawn: Boolean(o.is_withdrawn),
+          isRefunded: Boolean(o.is_refunded),
+          isFilled: Boolean(o.is_filled),
+          isExpired: now >= Number(o.expiry),
+          swapInitiated: Boolean(o.swap_initiated),
+          secretRevealed: BigInt(o.secret ?? 0) !== 0n,
+          wbtcAmount: o.wbtc_amount?.toString(),
+          expiry: Number(o.expiry),
+          hashlock: toHex(o.hashlock),
+        });
+      }
+    } catch (err: any) {
+      toast.error("Lookup failed: " + err?.message);
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const selectOrder = (id: string) => {
+    setOrderId(id);
+    lookupOrder(id);
+  };
+
+  const loadSecretFromFile = (file: File) => {
+    const r = new FileReader();
+    r.onload = (ev) => {
+      try {
+        const d = JSON.parse(ev.target?.result as string);
+        if (d.swapSecret) setSecret(d.swapSecret);
+      } catch {
+        toast.error("Invalid secret file.");
+      }
+    };
+    r.readAsText(file);
+  };
+
+  // ── Tx handlers ─────────────────────────────────────────────────────────────
+  const exec = async (
+    populate: any,
+    onSuccess: () => void,
+    successMsg: string,
+  ) => {
+    if (!account || !contract) return;
+    setActionLoading(true);
+    try {
+      const tx = await account.execute([populate], {
+        maxFee: U128_MAX,
+        version: "0x3",
+      } as any);
+      await account.waitForTransaction(tx.transaction_hash);
+      toast.success(successMsg);
+      setOrderStatus((p) =>
+        p
+          ? {
+              ...p,
+              isWithdrawn: mode.startsWith("withdraw"),
+              isRefunded: mode.startsWith("refund"),
+            }
+          : null,
+      );
+      onSuccess();
+    } catch (err: any) {
+      toast.error(err?.message ?? String(err));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleWithdrawStrk = () =>
+    exec(
+      contract!.populate("withdraw_strk", [
+        uint256.bnToUint256(BigInt(orderId.trim())),
+        secret,
+      ]),
+      () => claimStrk.remove(orderId),
+      "STRK claimed! Your secret is now public — Bob can claim wBTC.",
+    );
+
+  const handleWithdrawWbtc = () =>
+    exec(
+      contract!.populate("withdraw_wbtc", [
+        uint256.bnToUint256(BigInt(orderId.trim())),
+      ]),
+      () => claimWbtc.remove(orderId),
+      "wBTC claimed! Swap complete.",
+    );
+
+  const handleRefundWbtc = () =>
+    exec(
+      contract!.populate("refund_wbtc", [
+        uint256.bnToUint256(BigInt(orderId.trim())),
+      ]),
+      () => refundWbtc.remove(orderId),
+      "wBTC refunded back to you.",
+    );
+
+  const handleRefundStrk = () =>
+    exec(
+      contract!.populate("refund_strk", [
+        uint256.bnToUint256(BigInt(orderId.trim())),
+      ]),
+      () => refundStrk.remove(orderId),
+      "STRK refunded back to you.",
+    );
+
+  // ── Derived state ────────────────────────────────────────────────────────────
+  const MODES: {
+    key: ActionMode;
+    label: string;
+    sublabel: string;
+    icon: React.ReactNode;
+  }[] = [
+    {
+      key: "withdraw_strk",
+      label: "Claim STRK",
+      sublabel: "Alice reveals secret",
+      icon: <RiMoneyDollarCircleLine size={13} />,
+    },
+    {
+      key: "withdraw_wbtc",
+      label: "Claim wBTC",
+      sublabel: "Bob uses revealed secret",
+      icon: <RiArrowRightLine size={13} />,
+    },
+    {
+      key: "refund_wbtc",
+      label: "Refund wBTC",
+      sublabel: "Alice, if order expired",
+      icon: <RiRefund2Line size={13} />,
+    },
+    {
+      key: "refund_strk",
+      label: "Refund STRK",
+      sublabel: "Bob, if Alice vanished",
+      icon: <RiRefund2Line size={13} />,
+    },
+  ];
+
+  const canAct = () => {
+    if (!orderStatus || orderStatus.isWithdrawn || orderStatus.isRefunded)
+      return false;
+    if (mode === "withdraw_strk") return !orderStatus.isExpired && !!secret;
+    if (mode === "withdraw_wbtc") return orderStatus.secretRevealed;
+    if (mode === "refund_wbtc")
+      return (
+        orderStatus.isExpired &&
+        !orderStatus.swapInitiated &&
+        !orderStatus.isFilled
+      );
+    if (mode === "refund_strk") return orderStatus.isExpired;
+    return false;
+  };
+
+  const statusMsg = (() => {
+    if (!orderStatus) return null;
+    if (orderStatus.isWithdrawn)
+      return { text: "Already claimed.", color: "#22c55e" };
+    if (orderStatus.isRefunded)
+      return { text: "Already refunded.", color: "#22c55e" };
+    if (mode === "withdraw_strk" && orderStatus.isExpired)
+      return {
+        text: "STRK order expired — use Refund STRK instead.",
+        color: "#f87171",
+      };
+    if (mode === "withdraw_wbtc" && !orderStatus.secretRevealed)
+      return {
+        text: "Secret not yet revealed. Wait for Alice to call withdraw_strk first.",
+        color: "#f59e0b",
+      };
+    if (mode === "withdraw_wbtc" && orderStatus.secretRevealed)
+      return {
+        text: "Secret is on-chain! You can claim your wBTC.",
+        color: "#22c55e",
+      };
+    if (mode === "refund_wbtc" && orderStatus.isFilled)
+      return {
+        text: "Order is filled — cannot refund while Bob's STRK is locked.",
+        color: "#f87171",
+      };
+    if (mode === "refund_wbtc" && !orderStatus.isExpired)
+      return { text: "Order hasn't expired yet.", color: "#f59e0b" };
+    if (mode === "refund_strk" && !orderStatus.isExpired)
+      return { text: "Order hasn't expired yet.", color: "#f59e0b" };
+    return null;
+  })();
+
+  const executeAction = () => {
+    if (mode === "withdraw_strk") handleWithdrawStrk();
+    else if (mode === "withdraw_wbtc") handleWithdrawWbtc();
+    else if (mode === "refund_wbtc") handleRefundWbtc();
+    else handleRefundStrk();
+  };
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // ── Render ───────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      {/* Mode tabs */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "0.5rem",
+        }}
+      >
+        {MODES.map(({ key, label, sublabel, icon }) => (
+          <button
+            key={key}
+            onClick={() => {
+              setMode(key);
+              setOrderStatus(null);
+              setOrderId("");
+            }}
+            style={{
+              background: mode === key ? "rgba(255,200,0,0.08)" : "#111118",
+              border: `1px solid ${mode === key ? "rgba(255,200,0,0.35)" : "#1e1e2e"}`,
+              borderRadius: 8,
+              padding: "0.8rem",
+              cursor: "pointer",
+              transition: "all 0.15s",
+              textAlign: "left",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.4rem",
+                color: mode === key ? "#ffc800" : "#555",
+                fontSize: "0.72rem",
+                fontWeight: 700,
+                marginBottom: "0.2rem",
+              }}
+            >
+              {icon} {label}
+            </div>
+            <div
+              style={{
+                color: "#2a2a3a",
+                fontSize: "0.58rem",
+                letterSpacing: "0.08em",
+              }}
+            >
+              {sublabel}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <HintBox mode={mode} />
+
+      {/* Claimable STRK */}
+      {mode === "withdraw_strk" && (
+        <OrderListSection
+          title="Your claimable STRK orders"
+          scanning={claimStrk.scanning}
+          onRefresh={claimStrk.scan}
+          connected={!!account}
+          emptyText="No claimable orders found for your address"
+        >
+          {claimStrk.orders.map((o) => {
+            const minsLeft = Math.floor((o.expiry - now) / 60);
+            return (
+              <OrderCard
+                key={o.strkOrderId}
+                id={o.strkOrderId}
+                primaryValue={`${(Number(o.strkAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 6 })} STRK`}
+                badgeLabel={
+                  minsLeft < 60
+                    ? `⚠ ${minsLeft}m left`
+                    : `${Math.floor(minsLeft / 60)}h left`
+                }
+                badgeColor={minsLeft < 60 ? "#f87171" : "#555"}
+                subLabel={
+                  orderId === o.strkOrderId ? "✓ selected" : "click to select"
+                }
+                selected={orderId === o.strkOrderId}
+                onClick={() => selectOrder(o.strkOrderId)}
+              />
+            );
+          })}
+        </OrderListSection>
+      )}
+
+      {/* Claimable wBTC */}
+      {mode === "withdraw_wbtc" && (
+        <OrderListSection
+          title="Your claimable wBTC orders"
+          scanning={claimWbtc.scanning}
+          onRefresh={claimWbtc.scan}
+          connected={!!account}
+          emptyText="No claimable wBTC orders — Alice may not have revealed her secret yet"
+        >
+          {claimWbtc.orders.map((o) => (
+            <OrderCard
+              key={o.wbtcOrderId}
+              id={o.wbtcOrderId}
+              primaryValue={`${Number(o.wbtcAmount).toLocaleString()} sat wBTC`}
+              badgeLabel="✓ secret revealed"
+              badgeColor="#22c55e"
+              subLabel={
+                now >= o.expiry
+                  ? "expired (swap_initiated)"
+                  : `expires ${new Date(o.expiry * 1000).toLocaleTimeString()}`
+              }
+              selected={orderId === o.wbtcOrderId}
+              onClick={() => selectOrder(o.wbtcOrderId)}
+            />
+          ))}
+        </OrderListSection>
+      )}
+
+      {/* Refundable wBTC */}
+      {mode === "refund_wbtc" && (
+        <OrderListSection
+          title="Your expired wBTC orders"
+          scanning={refundWbtc.scanning}
+          onRefresh={refundWbtc.scan}
+          connected={!!account}
+          emptyText="No refundable wBTC orders found"
+        >
+          {refundWbtc.orders.map((o) => {
+            const agoMins = Math.floor((now - o.expiry) / 60);
+            const agoLabel =
+              agoMins < 60
+                ? `${agoMins}m ago`
+                : `${Math.floor(agoMins / 60)}h ago`;
+            return (
+              <OrderCard
+                key={o.wbtcOrderId}
+                id={o.wbtcOrderId}
+                primaryValue={`${Number(o.wbtcAmount).toLocaleString()} sat wBTC`}
+                badgeLabel="✓ eligible for refund"
+                badgeColor="#22c55e"
+                subLabel={`expired ${agoLabel}`}
+                selected={orderId === o.wbtcOrderId}
+                onClick={() => selectOrder(o.wbtcOrderId)}
+              />
+            );
+          })}
+        </OrderListSection>
+      )}
+
+      {/* Refundable STRK */}
+      {mode === "refund_strk" && (
+        <OrderListSection
+          title="Your expired STRK orders"
+          scanning={refundStrk.scanning}
+          onRefresh={refundStrk.scan}
+          connected={!!account}
+          emptyText="No refundable STRK orders found"
+        >
+          {refundStrk.orders.map((o) => {
+            const agoMins = Math.floor((now - o.expiry) / 60);
+            const agoLabel =
+              agoMins < 60
+                ? `${agoMins}m ago`
+                : `${Math.floor(agoMins / 60)}h ago`;
+            return (
+              <OrderCard
+                key={o.strkOrderId}
+                id={o.strkOrderId}
+                primaryValue={`${(Number(o.strkAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 6 })} STRK`}
+                badgeLabel="✓ eligible for refund"
+                badgeColor="#22c55e"
+                subLabel={`expired ${agoLabel}`}
+                selected={orderId === o.strkOrderId}
+                onClick={() => selectOrder(o.strkOrderId)}
+              />
+            );
+          })}
+        </OrderListSection>
+      )}
+
+      <OrderLookup
+        mode={mode}
+        orderId={orderId}
+        onOrderIdChange={setOrderId}
+        onLookup={lookupOrder}
+        loading={lookupLoading}
+        orderStatus={orderStatus}
+        statusMsg={statusMsg}
+      />
+
+      {mode === "withdraw_strk" && (
+        <SecretInput
+          secret={secret}
+          onSecretChange={setSecret}
+          onFileLoad={loadSecretFromFile}
+        />
+      )}
+
+      <button
+        onClick={executeAction}
+        disabled={!canAct() || actionLoading || !account}
+        style={btnPrimary(!!(canAct() && !actionLoading && account))}
+      >
+        {actionLoading ? (
+          <>
+            <FaSpinner
+              size={13}
+              style={{ animation: "spin 1s linear infinite" }}
+            />{" "}
+            Processing…
+          </>
+        ) : (
+          <>
+            {MODES.find((m) => m.key === mode)?.icon}{" "}
+            {MODES.find((m) => m.key === mode)?.label}
+          </>
+        )}
+      </button>
+
+      {!account && (
+        <p
+          style={{
+            color: "#f59e0b",
+            fontSize: "0.65rem",
+            textAlign: "center",
+            margin: 0,
+          }}
+        >
+          Connect your wallet to act on orders
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const styles = {
+  section: {
+    background: "#111118",
+    border: "1px solid #1e1e2e",
+    borderRadius: 10,
+    padding: "1.1rem 1.2rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.65rem",
+  } as React.CSSProperties,
+
+  sectionLabel: {
+    color: "#3a3a4a",
+    fontSize: "0.6rem",
+    letterSpacing: "0.15em",
+    textTransform: "uppercase",
+  } as React.CSSProperties,
+
+  emptyState: {
+    color: "#2a2a3a",
+    fontSize: "0.68rem",
+    textAlign: "center",
+    padding: "1rem 0",
+    letterSpacing: "0.06em",
+  } as React.CSSProperties,
+
+  uploadLabel: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "0.5rem",
+    padding: "0.65rem",
+    border: "1px dashed #1e1e2e",
+    borderRadius: 8,
+    color: "#3a3a4a",
+    fontSize: "0.68rem",
+    cursor: "pointer",
+    letterSpacing: "0.08em",
+    transition: "border-color 0.2s",
+  } as React.CSSProperties,
 };
