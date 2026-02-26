@@ -142,4 +142,9 @@ docker compose up -d
       - POSTGRES_PASSWORD=default_password
       - POSTGRES_DB=checkpoint
     volumes:
-      - postgres_data:/var/lib/postgresql/data -->
+      - postgres_data:/var/lib/postgresql/data
+
+
+
+      DATABASE_URL=postgres://user:default_password@localhost:5555/checkpoint
+ -->
