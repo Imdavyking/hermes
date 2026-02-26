@@ -143,7 +143,7 @@ Used in local tests and development. 8 decimals. Minted by an authorised minter 
 
 ## Indexer (Checkpoint)
 
-The frontend uses a [Checkpoint](https://checkpoint.fyi) indexer to query on-chain state without scanning raw RPC events at runtime.
+The frontend uses a [Checkpoint](https://www.npmjs.com/package/@snapshot-labs/checkpoint) indexer to query on-chain state without scanning raw RPC events at runtime.
 
 ### What it indexes
 
