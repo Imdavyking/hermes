@@ -188,7 +188,7 @@ type StrkOrder     { id, strk_seller, strk_buyer, strk_amount, hashlock,
 type OwnershipTransfer { id, previous_owner, new_owner, block_number, tx_hash }
 ```
 
-See `indexer/schema.gql` for the full schema.
+See `indexer/src/schema.gql` for the full schema.
 
 ---
 
