@@ -85,6 +85,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
         .join("");
     const s = randHex();
     const hl = hash.computePedersenHash("0x0", s);
+
     setSwapSecret(s);
     setSwapHashlock(hl);
     setSecretReady(true);
