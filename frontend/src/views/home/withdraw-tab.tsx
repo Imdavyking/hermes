@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { toast } from "react-toastify";
-import { useAccount, useContract, useProvider } from "@starknet-react/core";
+import {
+  useAccount,
+  useContract,
+  useProvider,
+  useReadContract,
+} from "@starknet-react/core";
 import { hash } from "starknet";
 import { FaSpinner, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill } from "react-icons/ri";
@@ -25,6 +30,17 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
   const [recipient, setRecipient] = useState("");
   const [withdrawLoading, setWithdrawLoading] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
+
+  const { data: wbtcDenom } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "wBTC_denomination",
+    args: [],
+  });
+
+  const denomDisplay = wbtcDenom
+    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })}wBTC`
+    : "—";
 
   const handleWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -288,7 +304,7 @@ export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
           <div
             style={{ color: "#ffc800", fontSize: "1.15rem", fontWeight: 900 }}
           >
-            {payoutDisplay}
+            {denomDisplay}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>

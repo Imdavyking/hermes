@@ -78,7 +78,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
   });
 
   const denomDisplay = wbtcDenom
-    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })} sat wBTC`
+    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })}wBTC`
     : "—";
 
   const generateSwapSecret = useCallback(() => {
