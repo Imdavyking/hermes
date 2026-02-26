@@ -8,35 +8,6 @@ Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices 
 
 ---
 
-## Getting Real wBTC on Sepolia
-
-There are two WBTC contracts on Ethereum Sepolia — only one is compatible with StarkGate:
-
-| Contract                  | Ethereum Sepolia Address                     | Notes                           |
-| ------------------------- | -------------------------------------------- | ------------------------------- |
-| Uniswap Sepolia WBTC      | `0x52eeA312378ef46140EBE67dE8a143BA2304FD7C` | ❌ Not bridgeable via StarkGate |
-| StarkGate-compatible WBTC | `0x92f3B59a79bFf5dc60c0d59eA13a44D082B2bdFC` | ✅ Use this one                 |
-
-Once bridged, the corresponding Starknet Sepolia wBTC address is:
-
-```
-0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
-```
-
-**Option A — Bridge via StarkGate:**
-
-1. Get Sepolia ETH from a faucet (Alchemy, Google Cloud, or Chainlink)
-2. Swap for the correct WBTC on Uniswap Sepolia: [`0x92f3...`](https://app.uniswap.org/explore/tokens/ethereum_sepolia/0x92f3b59a79bff5dc60c0d59ea13a44d082b2bdfc)
-3. Bridge to Starknet Sepolia via [StarkGate](https://starkgate.starknet.io)
-
-**Option B — Aave faucet (easier):**
-
-1. Go to [app.aave.com/faucet](https://app.aave.com/faucet/)
-2. Switch to Sepolia network
-3. Mint WBTC testnet tokens directly — no swap needed
-
----
-
 ## How It Works
 
 ### Deposit
@@ -52,7 +23,7 @@ Each deposit is a fixed lot of **1,000 satoshis (0.00001 BTC)** — the value of
 ### ZK Withdraw (direct)
 
 1. Load your saved note
-2. Frontend fetches all deposit events and reconstructs the Merkle tree
+2. Frontend fetches all deposit commitments from the indexer and reconstructs the Merkle tree
 3. Noir circuit generates a ZK proof of Merkle membership without revealing your leaf
 4. Call `zk_withdraw_wbtc(proof, recipient)` — contract verifies the proof, checks the nullifier, transfers wBTC to `recipient`
 
@@ -71,7 +42,7 @@ Alice wants STRK. Bob wants wBTC. Neither needs to trust the other.
 
 **Bob (buyer):**
 
-1. Browse open `WbtcOrderPosted` events or receive Alice's `wbtc_order_id` directly
+1. Browse open orders from the indexer or receive Alice's `wbtc_order_id` directly
 2. Approve STRK, call `fill_wbtc_order(wbtc_order_id, bob_expiry)` — locks STRK at the live oracle rate, becomes the wBTC buyer
 3. The `strk_order_id` is `pedersen(hashlock, 'fill')` — Bob can derive it from the fill event
 4. Watch for Alice's `withdraw_strk` — the secret is then stored on the wBTC order
@@ -100,21 +71,29 @@ contracts/
 noir/
 └── src/
     └── main.nr                    # ZK circuit: proves Merkle membership without revealing leaf
+
+indexer/
+├── config.ts                      # Checkpoint config: contract address, event handlers
+├── schema.gql                     # GraphQL schema (Deposit, WbtcOrder, StrkOrder, …)
+└── src/
+    ├── index.ts                   # Writer registration
+    └── writers.ts                 # Event handlers that persist indexed data
 ```
 
 ### Key Design Decisions
 
-| Decision                                   | Reason                                                                |
-| ------------------------------------------ | --------------------------------------------------------------------- |
-| Poseidon2 over BN254 (not Stark field)     | Matches Noir's native hash — proofs are compatible                    |
-| Incremental Merkle tree depth 10           | Supports ~1,024 deposits (testnet scope)                              |
-| Root history (last 30 roots)               | Users can withdraw even if new deposits happened after theirs         |
-| Nullifier hash as order ID                 | Guaranteed unique; already recorded on-chain when the order is posted |
-| HTLC with `hashlock = pedersen(0, secret)` | Trustless atomic swap — no escrow, no counterparty risk               |
-| Slippage tolerance per order               | Alice controls her price risk; Bob fills at live rate                 |
-| Rate expiry (1h)                           | Prevents filling stale orders after large price moves                 |
-| `MIN_STRK_AMOUNT = 1 STRK`                 | Guards against degenerate oracle responses producing dust fills       |
-| Real STRK as swap currency                 | No mock token needed — uses native Starknet STRK                      |
+| Decision                                   | Reason                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| Poseidon2 over BN254 (not Stark field)     | Matches Noir's native hash — proofs are compatible                              |
+| Incremental Merkle tree depth 10           | Supports ~1,024 deposits (testnet scope)                                        |
+| Root history (last 30 roots)               | Users can withdraw even if new deposits happened after theirs                   |
+| Nullifier hash as order ID                 | Guaranteed unique; already recorded on-chain when the order is posted           |
+| HTLC with `hashlock = pedersen(0, secret)` | Trustless atomic swap — no escrow, no counterparty risk                         |
+| Slippage tolerance per order               | Alice controls her price risk; Bob fills at live rate                           |
+| Rate expiry (1h)                           | Prevents filling stale orders after large price moves                           |
+| `MIN_STRK_AMOUNT = 1 STRK`                 | Guards against degenerate oracle responses producing dust fills                 |
+| Real STRK as swap currency                 | No mock token needed — uses native Starknet STRK                                |
+| Checkpoint indexer                         | Replaces per-event RPC loops with a single GraphQL query; scales as chain grows |
 
 ---
 
@@ -141,10 +120,10 @@ STRK (Starknet Sepolia): 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab0720185
 | `refund_strk(strk_order_id)`                                        | Bob reclaims STRK after his expiry, if Alice never revealed the secret           |
 | `get_wbtc_order(order_id)`                                          | Read a `WbtcOrder` by ID                                                         |
 | `get_strk_order(order_id)`                                          | Read a `StrkOrder` by ID                                                         |
-| `get_btc_strk_rate()`                                               | Live BTC/STRK rate (STRK units per whole BTC) from Chainlink cross rate             |
+| `get_btc_strk_rate()`                                               | Live BTC/STRK rate (STRK units per whole BTC) from Chainlink cross rate          |
 | `get_quoted_strk_amount()`                                          | STRK owed for one `BTC_DENOMINATION` lot at the current price                    |
-| `get_btc_usd_price()`                                               | Raw BTC/USD price and decimals from Chainlink                                       |
-| `get_strk_usd_price()`                                              | Raw STRK/USD price and decimals from Chainlink                                      |
+| `get_btc_usd_price()`                                               | Raw BTC/USD price and decimals from Chainlink                                    |
+| `get_strk_usd_price()`                                              | Raw STRK/USD price and decimals from Chainlink                                   |
 | `current_root()`                                                    | Latest Merkle root                                                               |
 | `next_leaf_index()`                                                 | Number of deposits so far                                                        |
 | `is_known_root(root)`                                               | Check whether a root is in the last 30 roots                                     |
@@ -159,6 +138,57 @@ STRK (Starknet Sepolia): 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab0720185
 ### Mock wBTC
 
 Used in local tests and development. 8 decimals. Minted by an authorised minter address set at deploy time.
+
+---
+
+## Indexer (Checkpoint)
+
+The frontend uses a [Checkpoint](https://checkpoint.fyi) indexer to query on-chain state without scanning raw RPC events at runtime.
+
+### What it indexes
+
+| Event                  | Stored as                 | Used for                                     |
+| ---------------------- | ------------------------- | -------------------------------------------- |
+| `Deposit`              | `Deposit`                 | Reconstructing the Merkle tree for ZK proofs |
+| `WbtcOrderPosted`      | `WbtcOrder`               | Browsing open orders (Fill Order panel)      |
+| `WbtcOrderFilled`      | `WbtcOrder` + `StrkOrder` | Tracking filled orders, claimable STRK       |
+| `WbtcWithdrawn`        | `WbtcOrder`               | Marking orders as claimed                    |
+| `StrkWithdrawn`        | `StrkOrder`               | Marking STRK orders as claimed               |
+| `WbtcRefunded`         | `WbtcOrder`               | Marking orders as refunded                   |
+| `StrkRefunded`         | `StrkOrder`               | Marking STRK orders as refunded              |
+| `OwnershipTransferred` | `OwnershipTransfer`       | Audit trail                                  |
+
+### Why not just use `provider.getEvents`?
+
+`provider.getEvents` makes one RPC call per page of events, then a separate contract call for each result to fetch current state — O(n) RPC calls that get slower as the chain grows. The indexer pre-processes all events into a Postgres database, so the frontend gets everything in a single GraphQL query.
+
+One exception: checking whether Alice has revealed her secret (`secret` field on a `WbtcOrder`) still requires a direct contract call, because the secret is not included in any event log and therefore cannot be indexed.
+
+### Running the indexer locally
+
+```bash
+cd indexer
+cp .env.example .env
+# Set STARKNET_RPC, CONTRACT_ADDRESS, START_BLOCK
+
+yarn install
+yarn checkpoint
+```
+
+The GraphQL playground will be available at `http://localhost:3000/graphql`.
+
+### Schema overview
+
+```graphql
+type Deposit       { id, commitment, leaf_index, timestamp, block_number, tx_hash }
+type WbtcOrder     { id, wbtc_seller, wbtc_amount, quoted_strk_amount, hashlock,
+                     expiry, is_filled, is_withdrawn, is_refunded, … }
+type StrkOrder     { id, strk_seller, strk_buyer, strk_amount, hashlock,
+                     expiry, is_withdrawn, is_refunded, … }
+type OwnershipTransfer { id, previous_owner, new_owner, block_number, tx_hash }
+```
+
+See `indexer/schema.gql` for the full schema.
 
 ---
 
@@ -206,7 +236,7 @@ fn compute_merkle_root(
 }
 ```
 
-Public outputs (read by the contract from the verified proof): `root`, `nullifier_hash`
+Public outputs (read by the contract from the verified proof): `root`, `nullifier_hash`  
 Private inputs: `nullifier`, `secret`, `merkle_proof`, `is_even`
 
 The circuit proves:
@@ -225,10 +255,10 @@ The `recipient` parameter in `zk_withdraw_wbtc` and `post_wbtc_order` is **not**
 - Scarb 2.14.0
 - Cairo 2.14.0
 - snforge 0.53.0
-- Node.js + Yarn (for deploy scripts)
+- Node.js + Yarn (for deploy scripts and indexer)
 - Noir + Barretenberg (for proof generation)
 
-### Build
+### Build contracts
 
 ```bash
 cd contracts
@@ -259,15 +289,53 @@ The deploy script:
 
 To use real wBTC on Sepolia, skip steps 3–4. The contract defaults to the real address automatically.
 
+### Run the indexer
+
+```bash
+cd indexer
+cp .env.example .env
+# fill in STARKNET_RPC, CONTRACT_ADDRESS, START_BLOCK
+
+yarn install
+yarn checkpoint
+```
+
+The indexer must be running before the frontend will display orders or deposits. Keep it running alongside the frontend in development.
+
+### Run the frontend
+
+```bash
+cd frontend
+yarn install
+yarn dev
+```
+
 ---
 
 ## Environment Variables
+
+**contracts / deploy:**
 
 ```env
 RPC_ENDPOINT=https://starknet-sepolia.infura.io/v3/YOUR_KEY
 DEPLOYER_ADDRESS=0x...
 DEPLOYER_PRIVATE_KEY=0x...
-DEPLOY_BLOCK=0  # block number of your deployment, used by the frontend to scan events efficiently
+```
+
+**indexer:**
+
+```env
+STARKNET_RPC=https://starknet-sepolia.infura.io/v3/YOUR_KEY
+CONTRACT_ADDRESS=0x...
+START_BLOCK=0          # block number of your deployment
+```
+
+**frontend:**
+
+```env
+VITE_CONTRACT_ADDRESS=0x...
+VITE_DEPLOY_BLOCK=0
+VITE_GRAPH_QL_ENDPOINT=http://localhost:3000/graphql
 ```
 
 ---
