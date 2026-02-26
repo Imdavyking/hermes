@@ -50,7 +50,7 @@ export default function FillOrderPanel() {
   } = useQuery(GET_OPEN_WBTC_ORDERS, { fetchPolicy: "network-only" });
 
   // Filter client-side: remove expired orders
-  const orders: OpenOrder[] = (data?.wbtcOrders ?? [])
+  const orders: OpenOrder[] = (data?.wbtcorders ?? [])
     .filter((o: any) => Number(o.expiry) > now)
     .map((o: any) => ({
       orderId: o.id,
@@ -62,6 +62,8 @@ export default function FillOrderPanel() {
       expiry: Number(o.expiry),
       rateExpiry: Number(o.rate_expiry),
     }));
+
+  console.log({ orders });
 
   // ── Manual order lookup still uses contract directly ─────────────────────────
   const lookupOrder = async () => {

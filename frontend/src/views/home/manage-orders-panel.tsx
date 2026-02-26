@@ -88,7 +88,7 @@ function useClaimableStrkOrders(active: boolean) {
     fetchPolicy: "network-only",
   });
 
-  const orders: ClaimableStrkOrder[] = (data?.strkOrders ?? []).map(
+  const orders: ClaimableStrkOrder[] = (data?.strkorders ?? []).map(
     (o: any) => ({
       strkOrderId: o.id,
       wbtcOrderId: o.wbtc_order_id ?? "",
@@ -133,7 +133,7 @@ function useClaimableWbtcOrders(active: boolean) {
     wbtcOrderId: string;
     wbtcAmount: string;
     expiry: number;
-  }[] = (data?.wbtcOrders ?? []).map((o: any) => ({
+  }[] = (data?.wbtcorders ?? []).map((o: any) => ({
     wbtcOrderId: o.id,
     wbtcAmount: o.wbtc_amount,
     expiry: Number(o.expiry),
@@ -206,7 +206,7 @@ function useRefundableWbtcOrders(active: boolean) {
     fetchPolicy: "network-only",
   });
 
-  const orders: RefundableWbtcOrder[] = (data?.wbtcOrders ?? []).map(
+  const orders: RefundableWbtcOrder[] = (data?.wbtcorders ?? []).map(
     (o: any) => ({
       wbtcOrderId: o.id,
       wbtcAmount: o.wbtc_amount,
@@ -236,7 +236,7 @@ function useRefundableStrkOrders(active: boolean) {
     fetchPolicy: "network-only",
   });
 
-  const orders: RefundableStrkOrder[] = (data?.strkOrders ?? []).map(
+  const orders: RefundableStrkOrder[] = (data?.strkorders ?? []).map(
     (o: any) => ({
       strkOrderId: o.id,
       strkAmount: o.strk_amount,
