@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
-import { useAccount, useContract } from "@starknet-react/core";
+import { useAccount, useContract, useReadContract } from "@starknet-react/core";
 import { CallData, uint256, type Uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
@@ -31,6 +31,17 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   const [approveLoading, setApproveLoading] = useState(false);
   const [depositLoading, setDepositLoading] = useState(false);
   const [BTCDenomination, setBTCDenomination] = useState(0);
+
+  const { data: wbtcDenom } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "wBTC_denomination",
+    args: [],
+  });
+
+  const denomDisplay = wbtcDenom
+    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })} wBTC`
+    : "—";
 
   const generateNote = useCallback(() => {
     const randHex = () =>
@@ -344,7 +355,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
                 You send
               </div>
               <div style={{ color: "#fff", fontSize: "1rem", fontWeight: 700 }}>
-                1.00 wBTC
+                {denomDisplay} wBTC
               </div>
             </div>
             <div style={{ textAlign: "right" }}>

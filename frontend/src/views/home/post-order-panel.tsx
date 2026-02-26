@@ -1,6 +1,11 @@
 import React, { useState, useCallback } from "react";
 import { toast } from "react-toastify";
-import { useAccount, useContract, useReadContract } from "@starknet-react/core";
+import {
+  useAccount,
+  useContract,
+  useReadContract,
+  useProvider,
+} from "@starknet-react/core";
 import { hash, num } from "starknet";
 import { FaSpinner, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiTimeLine, RiPercentLine } from "react-icons/ri";
@@ -39,7 +44,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
   const { generateProof } = useZkVerifier();
-  const { provider } = (useAccount() as any) ?? {};
+  const { provider } = useProvider();
 
   const [noteJson, setNoteJson] = useState("");
   const [strkDestination, setStrkDestination] = useState("");
@@ -120,7 +125,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       const note: CommitmentData = JSON.parse(noteJson);
       const DEPOSIT_SELECTOR = hash.getSelectorFromName("Deposit");
 
-      const depositEvents = await (contract as any).provider.getEvents({
+      const depositEvents = await provider.getEvents({
         address: CONTRACT_ADDRESS,
         keys: [[DEPOSIT_SELECTOR]],
         from_block: { block_number: 0 },
