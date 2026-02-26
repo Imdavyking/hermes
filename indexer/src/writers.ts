@@ -317,58 +317,6 @@ export function createWriters(ctx: Context) {
   };
 
   // -------------------------------------------------------
-  // STRK ORDER POSTED (direct off-chain order)
-  // rawEvent.data: [order_id, strk_seller, strk_buyer,
-  //                 strk_amount.low, strk_amount.high, hashlock, expiry]
-  // -------------------------------------------------------
-  const handleStrkOrderPosted: starknet.Writer = async ({
-    event,
-    rawEvent,
-    block,
-    txId,
-  }) => {
-    if (!block) return;
-
-    let id: string;
-    let strkSeller: string;
-    let strkBuyer: string;
-    let strkAmount: string;
-    let hashlock: string;
-    let expiry: number;
-
-    if (event) {
-      id = toHexAddress(event.order_id);
-      strkSeller = toHexAddress(event.strk_seller);
-      strkBuyer = toHexAddress(event.strk_buyer);
-      strkAmount = readU256(event.strk_amount, "0");
-      hashlock = toHexAddress(event.hashlock);
-      expiry = Number(event.expiry);
-    } else if (rawEvent) {
-      const d = rawEvent.data;
-      id = toHexAddress(d[0]);
-      strkSeller = toHexAddress(d[1]);
-      strkBuyer = toHexAddress(d[2]);
-      strkAmount = readU256(d[3], d[4]);
-      hashlock = toHexAddress(d[5]);
-      expiry = Number(d[6]);
-    } else return;
-
-    const order = new StrkOrder(id, ctx.indexerName);
-    order.strk_seller = strkSeller;
-    order.strk_buyer = strkBuyer;
-    order.strk_amount = strkAmount;
-    order.hashlock = hashlock;
-    order.expiry = expiry;
-    order.wbtc_order_id = null;
-    order.is_withdrawn = false;
-    order.is_refunded = false;
-    order.posted_at_block = block.block_number;
-    order.posted_tx_hash = txId;
-
-    await order.save();
-  };
-
-  // -------------------------------------------------------
   // OWNERSHIP TRANSFERRED
   // rawEvent.data: [previous_owner, new_owner]
   // -------------------------------------------------------
@@ -405,7 +353,6 @@ export function createWriters(ctx: Context) {
     handleStrkWithdrawn,
     handleWbtcRefunded,
     handleStrkRefunded,
-    handleStrkOrderPosted,
     handleOwnershipTransferred,
   };
 }

@@ -29,7 +29,6 @@ export const config: CheckpointConfig = {
         { name: "StrkWithdrawn", fn: "handleStrkWithdrawn" },
         { name: "WbtcRefunded", fn: "handleWbtcRefunded" },
         { name: "StrkRefunded", fn: "handleStrkRefunded" },
-        { name: "StrkOrderPosted", fn: "handleStrkOrderPosted" },
         { name: "OwnershipTransferred", fn: "handleOwnershipTransferred" },
       ],
     },

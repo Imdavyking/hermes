@@ -36,7 +36,6 @@ const sepoliaIndexer = new starknet.StarknetIndexer(
 checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
 async function run() {
-  // Uncomment to wipe and re-index from scratch:
   await checkpoint.reset();
   await checkpoint.start();
 }
