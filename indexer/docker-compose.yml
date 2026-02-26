@@ -33,8 +33,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      restart: always
 
 volumes:
   postgres_data:
     driver: local
+
+networks:
+  app-network:
+    driver: bridge
