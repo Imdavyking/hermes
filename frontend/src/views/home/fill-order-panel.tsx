@@ -5,12 +5,7 @@ import { CallData, hash, uint256 } from "starknet";
 import { FaSpinner, FaSearch, FaSync } from "react-icons/fa";
 import { RiTimeLine, RiExchangeLine } from "react-icons/ri";
 import abi from "../../assets/json/abi";
-import {
-  CONTRACT_ADDRESS,
-  DEPLOY_BLOCK,
-  U128_MAX,
-  U64_MAX,
-} from "../../utils/constants";
+import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
 
 interface OpenOrder {

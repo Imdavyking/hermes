@@ -6,7 +6,7 @@ import { FaSpinner, FaBitcoin, FaDownload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, U128_MAX, U64_MAX } from "../../utils/constants";
+import { CONTRACT_ADDRESS } from "../../utils/constants";
 import {
   type DepositStep,
   NotePreview,
@@ -135,7 +135,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     try {
       const commitData = uint256.bnToUint256(BigInt(commitment));
       const callData = CallData.compile([commitData]);
-      const gas = await account.estimateInvokeFee({
+      await account.estimateInvokeFee({
         contractAddress: CONTRACT_ADDRESS,
         entrypoint: "deposit",
         calldata: callData,
