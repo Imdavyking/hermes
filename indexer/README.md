@@ -7,35 +7,38 @@ Checkpoint indexer for the PrivateSwap contract on Starknet Sepolia.
 
 ## Indexed Events
 
-| Event | Entity |
-|---|---|
-| `Deposit` | `Deposit` |
-| `Withdrawal` | `Withdrawal` |
-| `WbtcOrderPosted` | `WbtcOrder` |
-| `WbtcOrderFilled` | Updates `WbtcOrder` + creates `StrkOrder` |
-| `WbtcWithdrawn` | Updates `WbtcOrder.is_withdrawn` |
-| `StrkWithdrawn` | Updates `StrkOrder.is_withdrawn` |
-| `WbtcRefunded` | Updates `WbtcOrder.is_refunded` |
-| `StrkRefunded` | Updates `StrkOrder.is_refunded` |
-| `StrkOrderPosted` | `StrkOrder` |
-| `OwnershipTransferred` | `OwnershipTransfer` |
+| Event                  | Entity                                    |
+| ---------------------- | ----------------------------------------- |
+| `Deposit`              | `Deposit`                                 |
+| `Withdrawal`           | `Withdrawal`                              |
+| `WbtcOrderPosted`      | `WbtcOrder`                               |
+| `WbtcOrderFilled`      | Updates `WbtcOrder` + creates `StrkOrder` |
+| `WbtcWithdrawn`        | Updates `WbtcOrder.is_withdrawn`          |
+| `StrkWithdrawn`        | Updates `StrkOrder.is_withdrawn`          |
+| `WbtcRefunded`         | Updates `WbtcOrder.is_refunded`           |
+| `StrkRefunded`         | Updates `StrkOrder.is_refunded`           |
+| `StrkOrderPosted`      | `StrkOrder`                               |
+| `OwnershipTransferred` | `OwnershipTransfer`                       |
 
 ---
 
 ## Local Setup
 
 ### 1. Install dependencies
+
 ```bash
 npm install
 ```
 
 ### 2. Set up environment
+
 ```bash
 cp .env.example .env
 # Edit .env with your DATABASE_URL and RPC_URL
 ```
 
 ### 3. Start a local Postgres (if you don't have one)
+
 ```bash
 docker run --name checkpoint-postgres \
   -p 5432:5432 \
@@ -45,6 +48,7 @@ docker run --name checkpoint-postgres \
 ```
 
 ### 4. Generate models & start indexer
+
 ```bash
 npm run dev
 ```
@@ -70,6 +74,7 @@ Your GraphQL endpoint will be: `https://your-app.railway.app/graphql`
 ## Example GraphQL Queries
 
 ### Get all open WbtcOrders
+
 ```graphql
 {
   wbtcOrders(where: { is_filled: false, is_refunded: false }) {
@@ -83,6 +88,7 @@ Your GraphQL endpoint will be: `https://your-app.railway.app/graphql`
 ```
 
 ### Get all deposits
+
 ```graphql
 {
   deposits(orderBy: "block_number", orderDirection: "desc") {
@@ -96,6 +102,7 @@ Your GraphQL endpoint will be: `https://your-app.railway.app/graphql`
 ```
 
 ### Get a specific order and its paired STRK order
+
 ```graphql
 {
   wbtcOrder(id: "0x...") {
@@ -111,6 +118,7 @@ Your GraphQL endpoint will be: `https://your-app.railway.app/graphql`
 ```
 
 ### Track latest indexed block
+
 ```graphql
 {
   _metadata(id: "last_indexed_block") {
@@ -118,3 +126,20 @@ Your GraphQL endpoint will be: `https://your-app.railway.app/graphql`
   }
 }
 ```
+
+- Node.js 18+
+- Postgres 15+
+
+docker compose up -d
+
+<!-- services:
+  postgres:
+    image: postgres:15
+    ports:
+      - '5555:5432'
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=default_password
+      - POSTGRES_DB=checkpoint
+    volumes:
+      - postgres_data:/var/lib/postgresql/data -->
