@@ -5,7 +5,12 @@ import { CallData, hash, uint256 } from "starknet";
 import { FaSpinner, FaSearch, FaSync } from "react-icons/fa";
 import { RiTimeLine, RiExchangeLine } from "react-icons/ri";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, U128_MAX, U64_MAX } from "../../utils/constants";
+import {
+  CONTRACT_ADDRESS,
+  DEPLOY_BLOCK,
+  U128_MAX,
+  U64_MAX,
+} from "../../utils/constants";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
 
 interface OpenOrder {
@@ -50,7 +55,7 @@ export default function FillOrderPanel() {
       const events = await provider.getEvents({
         address: CONTRACT_ADDRESS,
         keys: [[SELECTOR]],
-        from_block: { block_number: 0 },
+        from_block: { block_number: +DEPLOY_BLOCK },
         to_block: "latest",
         chunk_size: 100,
       });
@@ -147,7 +152,10 @@ export default function FillOrderPanel() {
         low: allowanceResult[0],
         high: allowanceResult[1],
       });
-      const required = BigInt(selectedOrder.quotedStrkAmount);
+
+      let required = BigInt(selectedOrder.quotedStrkAmount);
+
+      required = required + required * BigInt(10 ** 16);
 
       if (currentAllowance >= required) {
         toast.info("Allowance already sufficient.");
