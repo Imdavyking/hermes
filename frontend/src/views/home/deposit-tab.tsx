@@ -40,7 +40,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   });
 
   const denomDisplay = wbtcDenom
-    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })} wBTC`
+    ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })}`
     : "—";
 
   const generateNote = useCallback(() => {
