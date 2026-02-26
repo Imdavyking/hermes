@@ -131,7 +131,7 @@ export default function UmbraHome() {
     refetchInterval: 30000,
   });
   const payoutDisplay = quotedStrkRaw
-    ? `${BigInt(((quotedStrkRaw as bigint) / 10n ** 18n).toString())} STRK`
+    ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 8 })} STRK`
     : "—";
   const wBTCDisplay =
     wBTCBalance != null ? `${Number(wBTCBalance).toFixed(8)}` : "—";
