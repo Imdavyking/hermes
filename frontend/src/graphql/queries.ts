@@ -21,7 +21,7 @@ export const GET_ALL_DEPOSITS = gql`
 
 export const GET_OPEN_WBTC_ORDERS = gql`
   query GetOpenWbtcOrders {
-    wbtcOrders(
+    wbtcorders(
       where: { is_filled: false, is_refunded: false, is_withdrawn: false }
     ) {
       id
@@ -41,7 +41,7 @@ export const GET_OPEN_WBTC_ORDERS = gql`
 
 export const GET_CLAIMABLE_STRK_ORDERS = gql`
   query GetClaimableStrkOrders($buyer: String!, $now: Int!) {
-    strkOrders(
+    strkorders(
       where: {
         strk_buyer: $buyer
         is_withdrawn: false
@@ -66,7 +66,7 @@ export const GET_CLAIMABLE_STRK_ORDERS = gql`
 
 export const GET_FILLED_WBTC_ORDERS_FOR_BUYER = gql`
   query GetFilledWbtcOrdersForBuyer($buyer: String!) {
-    wbtcOrders(
+    wbtcorders(
       where: {
         wbtc_buyer: $buyer
         is_filled: true
@@ -86,7 +86,7 @@ export const GET_FILLED_WBTC_ORDERS_FOR_BUYER = gql`
 
 export const GET_REFUNDABLE_WBTC_ORDERS = gql`
   query GetRefundableWbtcOrders($seller: String!, $now: Int!) {
-    wbtcOrders(
+    wbtcorders(
       where: {
         wbtc_seller: $seller
         is_filled: false
@@ -106,7 +106,7 @@ export const GET_REFUNDABLE_WBTC_ORDERS = gql`
 
 export const GET_REFUNDABLE_STRK_ORDERS = gql`
   query GetRefundableStrkOrders($seller: String!, $now: Int!) {
-    strkOrders(
+    strkorders(
       where: {
         strk_seller: $seller
         is_withdrawn: false
