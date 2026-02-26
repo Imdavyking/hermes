@@ -140,6 +140,7 @@ export default function FillOrderPanel() {
     if (!account || !selectedOrder) return;
     setApproveLoading(true);
     try {
+      console.log("Checking STRK allowance...");
       const strkAddress = (await contract!.call("strk_address")) as any;
       const hexAddr = "0x" + BigInt(strkAddress.toString()).toString(16);
 
@@ -148,6 +149,7 @@ export default function FillOrderPanel() {
         entrypoint: "allowance",
         calldata: CallData.compile([address, CONTRACT_ADDRESS]),
       });
+
       const currentAllowance = uint256.uint256ToBN({
         low: allowanceResult[0],
         high: allowanceResult[1],
@@ -167,7 +169,7 @@ export default function FillOrderPanel() {
         {
           contractAddress: strkAddress.toString(),
           entrypoint: "approve",
-          calldata: [CONTRACT_ADDRESS, required, "0"],
+          calldata: [CONTRACT_ADDRESS, required.toString(), "0"],
         },
       ]);
       await account.waitForTransaction(tx.transaction_hash);
