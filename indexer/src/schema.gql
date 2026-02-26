@@ -1,0 +1,70 @@
+scalar BigDecimalU256
+
+type Deposit {
+  id: ID! # commitment (u256)
+  commitment: BigDecimalU256!
+  leaf_index: Int! # u32
+  timestamp: Int! # u64
+  block_number: Int!
+  tx_hash: String!
+}
+
+type Withdrawal {
+  id: ID! # nullifier_hash (u256)
+  recipient: String! # ContractAddress
+  nullifier_hash: BigDecimalU256!
+  block_number: Int!
+  tx_hash: String!
+}
+
+type WbtcOrder {
+  id: ID! # order_id (u256)
+  wbtc_seller: String! # ContractAddress
+  alice_strk_destination: String! # ContractAddress
+  wbtc_amount: BigDecimalU256! # u256
+  quoted_strk_amount: BigDecimalU256! # u256
+  hashlock: String! # felt252
+  expiry: Int! # u64
+  rate_expiry: Int! # u64
+  # Set when filled
+  wbtc_buyer: String # ContractAddress
+  strk_order_id: String # paired StrkOrder id
+  strk_amount_locked: BigDecimalU256 # u256
+  bob_expiry: Int # u64
+  # Status
+  is_filled: Boolean!
+  is_withdrawn: Boolean!
+  is_refunded: Boolean!
+  # Metadata
+  posted_at_block: Int!
+  posted_tx_hash: String!
+  filled_at_block: Int
+  withdrawn_at_block: Int
+  refunded_at_block: Int
+}
+
+type StrkOrder {
+  id: ID! # strk_order_id (u256)
+  strk_seller: String! # ContractAddress
+  strk_buyer: String! # ContractAddress
+  strk_amount: BigDecimalU256! # u256
+  hashlock: String! # felt252
+  expiry: Int! # u64
+  wbtc_order_id: String # paired WbtcOrder id (null for direct orders)
+  # Status
+  is_withdrawn: Boolean!
+  is_refunded: Boolean!
+  # Metadata
+  posted_at_block: Int!
+  posted_tx_hash: String!
+  withdrawn_at_block: Int
+  refunded_at_block: Int
+}
+
+type OwnershipTransfer {
+  id: ID! # tx_hash
+  previous_owner: String! # ContractAddress
+  new_owner: String! # ContractAddress
+  block_number: Int!
+  tx_hash: String!
+}

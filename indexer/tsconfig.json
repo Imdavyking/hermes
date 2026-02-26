@@ -4,13 +4,12 @@
     "module": "commonjs",
     "lib": ["ES2020"],
     "outDir": "./dist",
-    "rootDir": "./",
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "src/.checkpoint/**/*"],
   "exclude": ["node_modules", "dist"]
 }

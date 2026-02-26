@@ -7,6 +7,7 @@ import Checkpoint, { starknet, LogLevel } from "@snapshot-labs/checkpoint";
 import { RpcProvider } from "starknet";
 import { config } from "./config";
 import { createWriters } from "./writers";
+import overrides from "./overrides.json";
 
 export type Context = {
   indexerName: string;
@@ -21,10 +22,10 @@ const checkpoint = new Checkpoint(schema, {
   logLevel: LogLevel.Info,
   prettifyLogs: true,
   dbConnection: process.env.DATABASE_URL,
+  overridesConfig: overrides,
 });
 
 // Register the Sepolia indexer
-
 const sepoliaContext: Context = {
   indexerName: "sepolia",
   provider: new RpcProvider({ nodeUrl: config.network_node_url }),
@@ -36,7 +37,7 @@ checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
 async function run() {
   // Uncomment to wipe and re-index from scratch:
-  // await checkpoint.reset();
+  await checkpoint.reset();
   await checkpoint.start();
 }
 run();

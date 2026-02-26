@@ -4,9 +4,11 @@
   "description": "Checkpoint indexer for PrivateSwap on Starknet Sepolia",
   "main": "dist/src/index.js",
   "scripts": {
+    "codegen": "checkpoint generate",
     "build": "tsc",
     "start": "node dist/src/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "predev": "yarn codegen"
   },
   "dependencies": {
     "@ethersproject/address": "^5.6.0",

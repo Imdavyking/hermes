@@ -23,7 +23,7 @@ export function createWriters(ctx: Context) {
     const deposit = new Deposit(id, ctx.indexerName);
     deposit.commitment = id;
     deposit.leaf_index = Number(event.leaf_index);
-    deposit.timestamp = BigInt(event.timestamp);
+    deposit.timestamp = Number(event.timestamp);
     deposit.block_number = block.block_number;
     deposit.tx_hash = tx.transaction_hash;
 
@@ -64,8 +64,8 @@ export function createWriters(ctx: Context) {
     order.wbtc_amount = u256ToString(event.wbtc_amount);
     order.quoted_strk_amount = u256ToString(event.quoted_strk_amount);
     order.hashlock = toHexAddress(event.hashlock);
-    order.expiry = BigInt(event.expiry);
-    order.rate_expiry = BigInt(event.rate_expiry);
+    order.expiry = Number(event.expiry);
+    order.rate_expiry = Number(event.rate_expiry);
     order.is_filled = false;
     order.is_withdrawn = false;
     order.is_refunded = false;
@@ -89,7 +89,7 @@ export function createWriters(ctx: Context) {
     const strkOrderId = toHexAddress(event.strk_order_id);
     const bob = toHexAddress(event.bob);
     const strkAmount = u256ToString(event.strk_amount_locked);
-    const bobExpiry = BigInt(event.bob_expiry);
+    const bobExpiry = Number(event.bob_expiry);
 
     // Update the WbtcOrder
     const order = await WbtcOrder.loadEntity(wbtcOrderId, ctx.indexerName);
@@ -200,7 +200,7 @@ export function createWriters(ctx: Context) {
     order.strk_buyer = toHexAddress(event.strk_buyer);
     order.strk_amount = u256ToString(event.strk_amount);
     order.hashlock = toHexAddress(event.hashlock);
-    order.expiry = BigInt(event.expiry);
+    order.expiry = Number(event.expiry);
     order.wbtc_order_id = null;
     order.is_withdrawn = false;
     order.is_refunded = false;

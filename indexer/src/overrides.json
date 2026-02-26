@@ -1,0 +1,8 @@
+{
+  "decimal_types": {
+    "BigDecimalU256": {
+      "p": 78,
+      "d": 0
+    }
+  }
+}
