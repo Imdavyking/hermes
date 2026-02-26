@@ -23,11 +23,3 @@ fn main(
     let computed_root = merkle_tree::compute_merkle_root(commitment, merkle_proof, is_even);
     assert(computed_root == root, "Computed root does not match the provided root");
 }
-
-// #[test]
-// fn test_main() {
-//     main(1, 2);
-
-//     // Uncomment to make test fail
-//     // main(1, 1);
-// }
