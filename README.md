@@ -335,7 +335,7 @@ START_BLOCK=0          # block number of your deployment
 ```env
 VITE_CONTRACT_ADDRESS=0x...
 VITE_DEPLOY_BLOCK=0
-VITE_GRAPH_QL_ENDPOINT=http://localhost:3000/graphql
+VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
 ```
 
 ---
