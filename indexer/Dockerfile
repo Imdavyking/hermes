@@ -8,6 +8,7 @@ COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
 COPY . .
+RUN yarn codegen
 RUN yarn build
 
 EXPOSE 5100
