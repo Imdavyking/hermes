@@ -155,7 +155,7 @@ export default function FillOrderPanel() {
 
       let required = BigInt(selectedOrder.quotedStrkAmount);
 
-      required = required + required * BigInt(10 ** 16);
+      required = required + required * BigInt(10 ** 16); // account for inflation
 
       if (currentAllowance >= required) {
         toast.info("Allowance already sufficient.");
