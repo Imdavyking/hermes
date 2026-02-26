@@ -339,7 +339,7 @@ export default function UmbraHome() {
 
         {/* Tab content */}
         {tab === "deposit" && <DepositTab payoutDisplay={payoutDisplay} />}
-        {tab === "withdraw" && <WithdrawTab payoutDisplay={payoutDisplay} />}
+        {tab === "withdraw" && <WithdrawTab />}
         {tab === "swap" && <SwapTab />}
 
         {/* Footer */}

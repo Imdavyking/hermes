@@ -16,11 +16,8 @@ import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
 import { type CommitmentData, btnPrimary, inputStyle } from "./shared";
 
-interface WithdrawTabProps {
-  payoutDisplay: string;
-}
 
-export default function WithdrawTab({ payoutDisplay }: WithdrawTabProps) {
+export default function WithdrawTab() {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
   const { provider } = useProvider();
