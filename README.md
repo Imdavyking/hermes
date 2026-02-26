@@ -175,7 +175,7 @@ yarn install
 yarn checkpoint
 ```
 
-The GraphQL playground will be available at `http://localhost:3000/graphql`.
+The GraphQL playground will be available at `http://localhost:5100/graphql`.
 
 ### Schema overview
 
