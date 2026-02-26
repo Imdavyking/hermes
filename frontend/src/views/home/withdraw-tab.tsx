@@ -9,7 +9,12 @@ import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
 import { useIndexerDeposits } from "../../helpers/use_indexer_deposits";
-import { type CommitmentData, btnPrimary, inputStyle } from "./shared";
+import {
+  type CommitmentData,
+  btnPrimary,
+  btnGhost,
+  inputStyle,
+} from "./shared";
 
 export default function WithdrawTab() {
   const { address, account } = useAccount();
@@ -242,6 +247,15 @@ export default function WithdrawTab() {
             e.target.style.boxShadow = "none";
           }}
         />
+        {address && !recipient && (
+          <button
+            type="button"
+            onClick={() => setRecipient(address)}
+            style={{ ...btnGhost, marginTop: 0 }}
+          >
+            Use connected wallet
+          </button>
+        )}
         <p
           style={{
             color: "#2a2a3a",
