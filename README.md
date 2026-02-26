@@ -1,10 +1,39 @@
 # Umbra — Private BTC Swap on Starknet
 
-> Deposit Bitcoin anonymously. Withdraw Starknet tokens. No one knows who you are.
+> Deposit Bitcoin anonymously. Swap privately for STRK. No on-chain link between buyer and seller.
 
-Umbra is a privacy-preserving BTC swap protocol built on Starknet. Users deposit wBTC into a shielded pool backed by a ZK-verified incremental Merkle tree, then withdraw an equivalent value in pSTRK — with zero on-chain link between depositor and withdrawer.
+Umbra is a privacy-preserving BTC↔STRK atomic swap protocol built on Starknet. Users deposit wBTC into a shielded pool backed by a ZK-verified incremental Merkle tree, then either withdraw wBTC directly to a fresh address or post an open order for Bob to fill with STRK — with zero on-chain link between depositor and withdrawer.
 
-Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices are sourced from the **Pragma oracle** (BTC/USD and STRK/USD cross rate). The Merkle tree uses **Poseidon2 over BN254** to stay compatible with Noir's native hash.
+Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices are sourced from the **Chainlink oracle** (BTC/USD and STRK/USD cross rate). The Merkle tree uses **Poseidon2 over BN254** to stay compatible with Noir's native hash. Swaps are settled via **Hash Time-Lock Contracts (HTLCs)** — trustless and atomic.
+
+---
+
+## Getting Real wBTC on Sepolia
+
+There are two WBTC contracts on Ethereum Sepolia — only one is compatible with StarkGate:
+
+| Contract                  | Ethereum Sepolia Address                     | Notes                           |
+| ------------------------- | -------------------------------------------- | ------------------------------- |
+| Uniswap Sepolia WBTC      | `0x52eeA312378ef46140EBE67dE8a143BA2304FD7C` | ❌ Not bridgeable via StarkGate |
+| StarkGate-compatible WBTC | `0x92f3B59a79bFf5dc60c0d59eA13a44D082B2bdFC` | ✅ Use this one                 |
+
+Once bridged, the corresponding Starknet Sepolia wBTC address is:
+
+```
+0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
+```
+
+**Option A — Bridge via StarkGate:**
+
+1. Get Sepolia ETH from a faucet (Alchemy, Google Cloud, or Chainlink)
+2. Swap for the correct WBTC on Uniswap Sepolia: [`0x92f3...`](https://app.uniswap.org/explore/tokens/ethereum_sepolia/0x92f3b59a79bff5dc60c0d59ea13a44d082b2bdfc)
+3. Bridge to Starknet Sepolia via [StarkGate](https://starkgate.starknet.io)
+
+**Option B — Aave faucet (easier):**
+
+1. Go to [app.aave.com/faucet](https://app.aave.com/faucet/)
+2. Switch to Sepolia network
+3. Mint WBTC testnet tokens directly — no swap needed
 
 ---
 
@@ -12,20 +41,48 @@ Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices 
 
 ### Deposit
 
-1. Call `mock_btc_mint` to receive test wBTC (demo only)
-2. Approve PrivateSwap to spend `100,000,000` (1 wBTC, 8 decimals)
-3. Generate a random `nullifier` and `secret` offchain
-4. Compute `commitment = Poseidon2(nullifier, secret)`
-5. Save your note — `{ nullifier, secret }` — you will need it to withdraw
-6. Call `deposit(commitment)` — your commitment is inserted into the Merkle tree
+Each deposit is a fixed lot of **1,000 satoshis (0.00001 BTC)** — the value of `BTC_DENOMINATION` in the contract.
 
-### Withdraw
+1. Approve PrivateSwap to spend `1,000` wBTC base units (satoshis)
+2. Generate a random `nullifier` and `secret` offchain
+3. Compute `commitment = Poseidon2(nullifier, secret)`
+4. Save your note `{ nullifier, secret, commitment }` — you need this to withdraw
+5. Call `deposit(commitment)` — your commitment is inserted into the Merkle tree
 
-1. Load your saved `nullifier` and `secret`
-2. Frontend fetches the current Merkle root and computes your inclusion proof
-3. Noir circuit generates a ZK proof that you know a valid `(nullifier, secret)` for a commitment in the tree — without revealing which one
-4. Call `withdraw(proof, root, nullifier_hash, recipient)`
-5. Contract verifies the proof, checks the root, marks the nullifier spent, and mints pSTRK to your recipient address at the live BTC/STRK market rate
+### ZK Withdraw (direct)
+
+1. Load your saved note
+2. Frontend fetches all deposit events and reconstructs the Merkle tree
+3. Noir circuit generates a ZK proof of Merkle membership without revealing your leaf
+4. Call `zk_withdraw_wbtc(proof, recipient)` — contract verifies the proof, checks the nullifier, transfers wBTC to `recipient`
+
+> Note: `recipient` is a plain function parameter — it is not bound to or verified by the proof. Anyone who obtains a valid proof can specify any recipient address.
+
+### Private HTLC Swap (wBTC → STRK)
+
+Alice wants STRK. Bob wants wBTC. Neither needs to trust the other.
+
+**Alice (seller):**
+
+1. Generate a `secret` and compute `hashlock = pedersen(0, secret)`
+2. Call `post_wbtc_order(proof, alice_strk_destination, hashlock, expiry, slippage_bps)` — proves Merkle membership, locks wBTC, quotes live BTC/STRK rate
+3. The `wbtc_order_id` is Alice's nullifier hash (guaranteed unique, already stored on-chain)
+4. Once Bob fills, call `withdraw_strk(strk_order_id, secret)` — claims STRK, publishes secret on-chain
+
+**Bob (buyer):**
+
+1. Browse open `WbtcOrderPosted` events or receive Alice's `wbtc_order_id` directly
+2. Approve STRK, call `fill_wbtc_order(wbtc_order_id, bob_expiry)` — locks STRK at the live oracle rate, becomes the wBTC buyer
+3. The `strk_order_id` is `pedersen(hashlock, 'fill')` — Bob can derive it from the fill event
+4. Watch for Alice's `withdraw_strk` — the secret is then stored on the wBTC order
+5. Call `withdraw_wbtc(wbtc_order_id)` — contract reads the revealed secret and transfers wBTC
+
+**Safety guarantees:**
+
+- Bob's expiry must be strictly less than Alice's — he can always refund STRK before Alice's window opens
+- Alice cannot refund wBTC after she has already revealed the secret (`swap_initiated` guard prevents double-spend)
+- A quoted rate older than 1 hour blocks fills — prevents filling a stale order after a large price move
+- Slippage tolerance (0.1%–10%) is set per order by Alice; fills are rejected if the live rate falls below her floor
 
 ---
 
@@ -37,10 +94,8 @@ contracts/
 ├── field.cairo                    # BN254 field arithmetic
 ├── poseidon2.cairo                # Poseidon2 permutation (BN254)
 ├── poseidon2lib.cairo             # Public Poseidon2 API
-├── incremental_merkle_tree.cairo  # On-chain IMT component (depth 20)
-├── pragma_oracle.cairo            # Manual Pragma ABI (no lib dependency)
-├── wBTC.cairo                     # Mock wrapped Bitcoin (8 decimals)
-└── pSTRK.cairo                    # Mock Starknet token (18 decimals, minted on withdraw)
+├── incremental_merkle_tree.cairo  # On-chain IMT component (depth 10)
+└── wBTC.cairo                     # Mock wBTC for local testing (8 decimals)
 
 noir/
 └── src/
@@ -49,14 +104,17 @@ noir/
 
 ### Key Design Decisions
 
-| Decision                               | Reason                                                        |
-| -------------------------------------- | ------------------------------------------------------------- |
-| Poseidon2 over BN254 (not Stark field) | Matches Noir's native hash — proofs are compatible            |
-| Incremental Merkle tree depth 20       | Supports ~1M deposits                                         |
-| Root history of 30                     | Users can withdraw even if new deposits happened after theirs |
-| Nullifier hash on-chain                | Prevents double withdrawal without revealing the note         |
-| pSTRK minted on withdraw               | No pre-funded liquidity needed for demo                       |
-| BTC/STRK cross rate via Pragma         | Real on-chain price feed — BTC/USD ÷ STRK/USD                 |
+| Decision                                   | Reason                                                                |
+| ------------------------------------------ | --------------------------------------------------------------------- |
+| Poseidon2 over BN254 (not Stark field)     | Matches Noir's native hash — proofs are compatible                    |
+| Incremental Merkle tree depth 10           | Supports ~1,024 deposits (testnet scope)                              |
+| Root history (last 30 roots)               | Users can withdraw even if new deposits happened after theirs         |
+| Nullifier hash as order ID                 | Guaranteed unique; already recorded on-chain when the order is posted |
+| HTLC with `hashlock = pedersen(0, secret)` | Trustless atomic swap — no escrow, no counterparty risk               |
+| Slippage tolerance per order               | Alice controls her price risk; Bob fills at live rate                 |
+| Rate expiry (1h)                           | Prevents filling stale orders after large price moves                 |
+| `MIN_STRK_AMOUNT = 1 STRK`                 | Guards against degenerate oracle responses producing dust fills       |
+| Real STRK as swap currency                 | No mock token needed — uses native Starknet STRK                      |
 
 ---
 
@@ -64,49 +122,64 @@ noir/
 
 ### PrivateSwap
 
-The main contract. Deploys wBTC, pSTRK, and the Garaga verifier internally from their class hashes.
+The main contract. Deploys the Garaga verifier internally from its class hash. Defaults to real wBTC and real STRK on Sepolia — no mock tokens required.
 
-| Function                                           | Description                                 |
-| -------------------------------------------------- | ------------------------------------------- |
-| `mock_btc_mint(recipient, amount)`                 | Mint test wBTC for demo purposes            |
-| `deposit(commitment)`                              | Deposit 1 wBTC, insert commitment into tree |
-| `withdraw(proof, root, nullifier_hash, recipient)` | Verify ZK proof, mint pSTRK at market rate  |
-| `current_root()`                                   | Latest Merkle root                          |
-| `next_leaf_index()`                                | Number of deposits so far                   |
-| `is_known_root(root)`                              | Check if root is in last 30 roots           |
-| `wBTC_address()`                                   | Deployed wBTC contract address              |
-| `pstrk_address()`                                  | Deployed pSTRK contract address             |
-| `get_btc_usd_price()`                              | Live BTC/USD from Pragma                    |
-| `get_strk_usd_price()`                             | Live STRK/USD from Pragma                   |
-| `get_btc_strk_rate()`                              | Computed pSTRK payout for 1 wBTC            |
+```
+wBTC (Starknet Sepolia): 0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
+STRK (Starknet Sepolia): 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
+```
 
-### wBTC (Private Bitcoin)
+| Function                                                            | Description                                                                      |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `deposit(commitment)`                                               | Lock `BTC_DENOMINATION` (1,000 sat) wBTC, insert commitment into Merkle tree     |
+| `zk_withdraw_wbtc(proof, recipient)`                                | Verify ZK proof and withdraw wBTC directly to any address                        |
+| `post_wbtc_order(proof, strk_dest, hashlock, expiry, slippage_bps)` | Post an open HTLC swap order using a ZK proof                                    |
+| `fill_wbtc_order(wbtc_order_id, bob_expiry)`                        | Bob locks STRK at live rate and becomes the wBTC buyer                           |
+| `withdraw_strk(strk_order_id, secret)`                              | Alice reveals secret to claim STRK; secret is published on the paired wBTC order |
+| `withdraw_wbtc(wbtc_order_id)`                                      | Bob claims wBTC after Alice has revealed the secret on-chain                     |
+| `refund_wbtc(wbtc_order_id)`                                        | Alice reclaims wBTC after expiry, provided she never revealed the secret         |
+| `refund_strk(strk_order_id)`                                        | Bob reclaims STRK after his expiry, if Alice never revealed the secret           |
+| `get_wbtc_order(order_id)`                                          | Read a `WbtcOrder` by ID                                                         |
+| `get_strk_order(order_id)`                                          | Read a `StrkOrder` by ID                                                         |
+| `get_btc_strk_rate()`                                               | Live BTC/STRK rate (STRK units per whole BTC) from Chainlink cross rate             |
+| `get_quoted_strk_amount()`                                          | STRK owed for one `BTC_DENOMINATION` lot at the current price                    |
+| `get_btc_usd_price()`                                               | Raw BTC/USD price and decimals from Chainlink                                       |
+| `get_strk_usd_price()`                                              | Raw STRK/USD price and decimals from Chainlink                                      |
+| `current_root()`                                                    | Latest Merkle root                                                               |
+| `next_leaf_index()`                                                 | Number of deposits so far                                                        |
+| `is_known_root(root)`                                               | Check whether a root is in the last 30 roots                                     |
+| `wBTC_address()`                                                    | Active wBTC contract address                                                     |
+| `strk_address()`                                                    | Active STRK contract address                                                     |
+| `wBTC_denomination()`                                               | The fixed lot size in wBTC base units (1,000)                                    |
+| `owner()`                                                           | Current contract owner                                                           |
+| `set_mock_wbtc(addr)`                                               | Owner-only: replace wBTC address for local testing                               |
+| `reset_wbtc_real()`                                                 | Owner-only: restore wBTC address to the canonical Starknet value                 |
+| `transfer_ownership(new_owner)`                                     | Owner-only: transfer contract ownership                                          |
 
-Mock ERC20 with 8 decimals. Freely mintable via PrivateSwap's `mock_btc_mint` for testing.
+### Mock wBTC
 
-### pSTRK (Private Starknet)
-
-Mock ERC20 with 18 decimals. Only PrivateSwap can mint — minted on each valid withdrawal.
+Used in local tests and development. 8 decimals. Minted by an authorised minter address set at deploy time.
 
 ---
 
 ## Oracle Integration
 
-Prices are fetched from the **Pragma oracle** on Starknet Sepolia:
+Prices are fetched directly from individual Chainlink feed contracts on Starknet Sepolia:
 
 ```
-Oracle address: 0x036031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a
-BTC/USD key:  18669995996566340
-STRK/USD key: 6004514686061859652
+BTC/USD feed: 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a
+STRK/USD feed: 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937
+Max oracle age: 6 hours (relaxed for Sepolia; tighten for mainnet)
 ```
 
 The BTC/STRK rate is computed as a cross rate:
 
 ```
-pSTRK amount = (1 wBTC × BTC/USD price) / STRK/USD price
-```
+rate (STRK per BTC) = (btc_usd × 10^strk_decimals × STRK_PRECISION)
+                      / (strk_usd × 10^btc_decimals)
 
-Both prices are returned with 8 decimals from Pragma, which are normalised before the division.
+quoted_strk_amount  = rate × BTC_DENOMINATION / WBTC_PRECISION
+```
 
 ---
 
@@ -115,13 +188,13 @@ Both prices are returned with 8 decimals from Pragma, which are normalised befor
 ```noir
 use dep::poseidon::poseidon2;
 
-pub fn compute_merkle_root(
+fn compute_merkle_root(
     leaf: Field,
-    merkle_proof: [Field; 20],
-    is_even: [bool; 20]
+    merkle_proof: [Field; 10],
+    is_even: [bool; 10]
 ) -> Field {
     let mut hash = leaf;
-    for i in 0..20 {
+    for i in 0..10 {
         let (left, right) = if is_even[i] {
             (hash, merkle_proof[i])
         } else {
@@ -133,14 +206,15 @@ pub fn compute_merkle_root(
 }
 ```
 
-Public inputs: `root`, `nullifier_hash`, `recipient`  
+Public outputs (read by the contract from the verified proof): `root`, `nullifier_hash`
 Private inputs: `nullifier`, `secret`, `merkle_proof`, `is_even`
 
 The circuit proves:
 
-- `commitment = Poseidon2(nullifier, secret)` exists in the tree
-- `nullifier_hash = hash(nullifier)` (prevents double spend without revealing nullifier)
-- The claimed `root` is the correct root for the given proof path
+- `commitment = Poseidon2(nullifier, secret)` exists in the tree at the claimed `root`
+- `nullifier_hash = Poseidon2(nullifier)` — prevents double withdrawal without revealing the nullifier
+
+The `recipient` parameter in `zk_withdraw_wbtc` and `post_wbtc_order` is **not** part of the proof — it is a plain calldata argument.
 
 ---
 
@@ -170,7 +244,6 @@ snforge test
 ### Deploy
 
 ```bash
-# set up .env
 cp .env.example .env
 # fill in RPC_ENDPOINT, DEPLOYER_ADDRESS, DEPLOYER_PRIVATE_KEY
 
@@ -180,9 +253,11 @@ yarn deploy
 The deploy script:
 
 1. Declares the Garaga verifier class
-2. Declares wBTC class
-3. Declares pSTRK class
-4. Deploys PrivateSwap with all three class hashes — wBTC, pSTRK, and verifier are deployed internally
+2. Deploys PrivateSwap (verifier deployed internally; wBTC and STRK default to real Sepolia addresses)
+3. Optionally deploys MockWBTC with the deployer as minter
+4. Calls `set_mock_wbtc` to register the mock for local testing
+
+To use real wBTC on Sepolia, skip steps 3–4. The contract defaults to the real address automatically.
 
 ---
 
@@ -192,44 +267,26 @@ The deploy script:
 RPC_ENDPOINT=https://starknet-sepolia.infura.io/v3/YOUR_KEY
 DEPLOYER_ADDRESS=0x...
 DEPLOYER_PRIVATE_KEY=0x...
+DEPLOY_BLOCK=0  # block number of your deployment, used by the frontend to scan events efficiently
 ```
-
----
-
-## Bitcoin Track
-
-Umbra qualifies for the **Bitcoin track** through:
-
-- **BTC wrapper** — wBTC mirrors real wBTC (8 decimals, same denomination)
-- **BTCFi** — BTC is the deposit asset; the entire protocol is priced in BTC terms
-- **Live BTC price feed** — Pragma BTC/USD oracle drives every withdrawal payout
-- **Mainnet ready** — swap `wBTC_class_hash` for real wBTC (`0x03fe2b97c1fd336e750087d68b9b867997fd64a2661ff3ca5a7c771641e8e7ac`) to go live
 
 ---
 
 ## Security Notes
 
-- Nullifiers are marked spent **before** external mint calls (reentrancy guard)
+- Nullifiers are marked spent **before** token transfers (reentrancy guard)
 - Root history of 30 prevents griefing via fast root rotation
-- `mock_btc_mint` is open to anyone — **remove or restrict before mainnet**
+- `set_mock_wbtc`, `reset_wbtc_real`, and `transfer_ownership` are owner-only — guarded by `assert_only_owner()`
+- Bob's HTLC expiry is enforced to be strictly less than Alice's — Bob can always refund STRK before Alice's window opens
+- Alice cannot refund wBTC after she has revealed the secret (`!swap_initiated` guard prevents double-spend)
+- The 1-hour rate expiry (`RATE_VALID_FOR_SECS`) prevents fills against stale price quotes
+- Fills are rejected if the live STRK amount falls below `1 STRK` (`MIN_STRK_AMOUNT`), guarding against degenerate oracle responses
 - Proof verification is handled by Garaga's `verify_ultra_keccak_zk_honk_proof`
-- This is an unaudited demo — do not use with real funds
+- The `recipient` in `zk_withdraw_wbtc` is not bound to the proof — a leaked proof could be front-run with a different recipient
+- **This is an unaudited testnet demo — do not use with real funds**
 
 ---
 
 ## License
 
 MIT
-
-Hey!  those are two different WBTC contracts on Sepolia:
-
-0x52eeA312378ef46140EBE67dE8a143BA2304FD7C - WBTC on Uniswap Sepolia, but not compatible with StarkGate.
-
-0x92f3B59a79bFf5dc60c0d59eA13a44D082B2bdFC - The official WBTC that StarkGate uses for bridging to Starknet Sepolia
-
-- Get Sepolia ETH from a faucet (Alchemy, Google Cloud, Chainlink)
-- Swap it for WBTC on Uniswap Sepolia:
-  https://app.uniswap.org/explore/tokens/ethereum_sepolia/0x52eea312378ef46140ebe67de8a143ba2304fd7c
-- Then bridge WBTC to Starknet Sepolia via StarkGate
-
-Alternative: Aave's testnet faucet (https://app.aave.com/faucet/) switch to Sepolia network and you should be able to mint WBTC testnet tokens directly.
