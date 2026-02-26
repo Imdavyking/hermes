@@ -19,6 +19,7 @@ export const config: CheckpointConfig = {
     {
       contract: process.env.CONTRACT_ADDRESS,
       start: Number(process.env.START_BLOCK),
+      abi: "PrivateSwapAbi",
       events: [
         { name: "Deposit", fn: "handleDeposit" },
         { name: "Withdrawal", fn: "handleWithdrawal" },
@@ -33,5 +34,5 @@ export const config: CheckpointConfig = {
       ],
     },
   ],
-  abis: PrivateSwapAbi,
+  abis: { PrivateSwapAbi },
 };
