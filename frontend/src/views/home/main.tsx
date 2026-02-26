@@ -121,8 +121,17 @@ export default function UmbraHome() {
   const btcPriceDisplay = btcPrice
     ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })}`
     : "—";
-  const payoutDisplay = btcRate
-    ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString())} STRK`
+
+  const { data: quotedStrkRaw } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "get_quoted_strk_amount",
+    args: [],
+    watch: true,
+    refetchInterval: 30000,
+  });
+  const payoutDisplay = quotedStrkRaw
+    ? `${BigInt(((quotedStrkRaw as bigint) / 10n ** 18n).toString())} STRK`
     : "—";
   const wBTCDisplay =
     wBTCBalance != null ? `${Number(wBTCBalance).toFixed(8)}` : "—";
