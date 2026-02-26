@@ -237,7 +237,7 @@ export default function UmbraHome() {
               lineHeight: 1.7,
             }}
           >
-            ZK proof on Starknet · Poseidon2 Merkle tree · Pragma oracle rate
+            ZK proof on Starknet · Poseidon2 Merkle tree · Chainlink oracle rate
           </p>
           {address && (
             <div
@@ -353,7 +353,7 @@ export default function UmbraHome() {
             textTransform: "uppercase",
           }}
         >
-          Umbra · Starknet Sepolia · Powered by Garaga + Pragma + Noir
+          Umbra · Starknet Sepolia · Powered by Garaga + Chainlink + Noir
         </footer>
       </div>
 
