@@ -89,7 +89,7 @@ export default function WithdrawTab() {
       ]);
 
       await account.waitForTransaction(tx.transaction_hash);
-      toast.success("Withdrawn! pSTRK minted to your wallet 🎉");
+      toast.success("Withdrawn! STRK sent to your wallet 🎉");
       setWithdrawNote("");
       setRecipient("");
     } catch (err: any) {
