@@ -15,5 +15,5 @@ services:
       - VITE_GRAPH_QL_ENDPOINT=http://localhost:5100
     restart: always
     depends_on:
-      backend:
+      indexer:
         condition: service_healthy

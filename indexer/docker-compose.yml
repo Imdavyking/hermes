@@ -9,6 +9,20 @@ services:
       - POSTGRES_DB=checkpoint
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+  indexer:
+    build:
+      context: .
+    ports:
+      - 5100:5100
+    networks:
+      - app-network
+    env_file:
+      - .env
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
 volumes:
   postgres_data:
     driver: local
