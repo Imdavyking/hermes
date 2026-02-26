@@ -12,7 +12,7 @@ services:
     env_file:
       - ./frontend/.env
     environment:
-      - VITE_GRAPH_QL_ENDPOINT=http://localhost:5100
+      - VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
     restart: always
     depends_on:
       indexer:

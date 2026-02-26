@@ -45,7 +45,7 @@ docker compose up -d
 npm run dev
 ```
 
-GraphQL is now available at: **http://localhost:3000/graphql**
+GraphQL is now available at: **http://localhost:5100/graphql**
 
 ---
 
