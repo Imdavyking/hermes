@@ -1,19 +1,15 @@
 import React, { useState, useCallback } from "react";
 import { toast } from "react-toastify";
-import {
-  useAccount,
-  useContract,
-  useReadContract,
-  useProvider,
-} from "@starknet-react/core";
+import { useAccount, useContract, useReadContract } from "@starknet-react/core";
 import { hash } from "starknet";
 import { FaSpinner, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiTimeLine } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
+import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
+import { useIndexerDeposits } from "../../helpers/use_indexer_deposits";
 import {
   btnPrimary,
   btnGhost,
@@ -44,7 +40,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
   const { generateProof } = useZkVerifier();
-  const { provider } = useProvider();
+  const { fetchAllCommitments } = useIndexerDeposits(); // ← replaces provider.getEvents
 
   const [noteJson, setNoteJson] = useState("");
   const [strkDestination, setStrkDestination] = useState("");
@@ -88,7 +84,6 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
     const s = randHex();
-    // hashlock = pedersen(0, secret)
     const hl = hash.computePedersenHash("0x0", s);
     setSwapSecret(s);
     setSwapHashlock(hl);
@@ -123,21 +118,10 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
     setLoading(true);
     try {
       const note: CommitmentData = JSON.parse(noteJson);
-      const DEPOSIT_SELECTOR = hash.getSelectorFromName("Deposit");
 
-      const depositEvents = await provider.getEvents({
-        address: CONTRACT_ADDRESS,
-        keys: [[DEPOSIT_SELECTOR]],
-        from_block: { block_number: +DEPLOY_BLOCK },
-        to_block: "latest",
-        chunk_size: 100,
-      });
-
-      const commitments = depositEvents.events.map((e: any) => {
-        const low = BigInt(e.keys[1]);
-        const high = BigInt(e.keys[2]);
-        return ((high << 128n) | low).toString();
-      });
+      // ── Indexer replaces provider.getEvents for Deposit ──────────────────
+      const commitments = await fetchAllCommitments();
+      // ─────────────────────────────────────────────────────────────────────
 
       const noteCommitment = BigInt(note.commitment).toString();
       const tree = await merkleTree(commitments);
@@ -526,7 +510,6 @@ const chipStyle = (active: boolean): React.CSSProperties => ({
   cursor: "pointer",
   transition: "all 0.15s",
 });
-
 const infoBox: React.CSSProperties = {
   display: "flex",
   alignItems: "flex-start",
@@ -536,7 +519,6 @@ const infoBox: React.CSSProperties = {
   borderRadius: 10,
   padding: "1rem",
 };
-
 const rateBox: React.CSSProperties = {
   background: "#111118",
   border: "1px solid #1e1e2e",
@@ -546,7 +528,6 @@ const rateBox: React.CSSProperties = {
   justifyContent: "space-between",
   alignItems: "center",
 };
-
 const secretBox: React.CSSProperties = {
   background: "#0a0a0f",
   border: "1px solid #1e1e2e",
@@ -556,7 +537,6 @@ const secretBox: React.CSSProperties = {
   flexDirection: "column",
   gap: "0.35rem",
 };
-
 const labelStyle: React.CSSProperties = {
   color: "#3a3a4a",
   fontSize: "0.6rem",
@@ -564,7 +544,6 @@ const labelStyle: React.CSSProperties = {
   textTransform: "uppercase",
   marginBottom: "0.25rem",
 };
-
 const uploadLabel: React.CSSProperties = {
   display: "flex",
   alignItems: "center",

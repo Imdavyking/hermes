@@ -1,27 +1,21 @@
 import React, { useState } from "react";
 import { toast } from "react-toastify";
-import {
-  useAccount,
-  useContract,
-  useProvider,
-  useReadContract,
-} from "@starknet-react/core";
-import { hash } from "starknet";
+import { useAccount, useContract, useReadContract } from "@starknet-react/core";
 import { FaSpinner, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
+import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
+import { useIndexerDeposits } from "../../helpers/use_indexer_deposits";
 import { type CommitmentData, btnPrimary, inputStyle } from "./shared";
-
 
 export default function WithdrawTab() {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
-  const { provider } = useProvider();
   const { generateProof } = useZkVerifier();
+  const { fetchAllCommitments } = useIndexerDeposits(); // ← replaces provider.getEvents
 
   const [withdrawNote, setWithdrawNote] = useState("");
   const [recipient, setRecipient] = useState("");
@@ -52,21 +46,10 @@ export default function WithdrawTab() {
 
     try {
       const note: CommitmentData = JSON.parse(withdrawNote);
-      const DEPOSIT_SELECTOR = hash.getSelectorFromName("Deposit");
 
-      const depositEvents = await provider.getEvents({
-        address: CONTRACT_ADDRESS,
-        keys: [[DEPOSIT_SELECTOR]],
-        from_block: { block_number: +DEPLOY_BLOCK },
-        to_block: "latest",
-        chunk_size: 100,
-      });
-
-      const commitments = depositEvents.events.map((e) => {
-        const low = BigInt(e.keys[1]);
-        const high = BigInt(e.keys[2]);
-        return ((high << 128n) | low).toString();
-      });
+      // ── Indexer replaces provider.getEvents for Deposit ──────────────────
+      const commitments = await fetchAllCommitments();
+      // ─────────────────────────────────────────────────────────────────────
 
       const noteCommitment = BigInt(note.commitment).toString();
       const tree = await merkleTree(commitments);
@@ -79,22 +62,19 @@ export default function WithdrawTab() {
         "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
 
       const noirInput = {
-        // public inputs
         root: merkleProof.root.toString(),
         nullfier_hash: nullifierHash,
         recipient,
-        // private inputs
         nullifier: note.nullifier,
         secret: note.secret,
         merkle_proof: merkleProof.pathElements.map((el) => el.toString()),
         is_even: merkleProof.pathIndices.map((el) => el % 2 === 0),
       };
-      const toastId = toast.loading("Generating ZK proof…");
 
+      const toastId = toast.loading("Generating ZK proof…");
       const { callData } = await generateProof(noirInput, (message) => {
         toast.update(toastId, { render: message });
       });
-
       toast.update(toastId, {
         render: "Proof generated, submitting transaction...",
       });

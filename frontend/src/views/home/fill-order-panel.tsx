@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState } from "react";
 import { toast } from "react-toastify";
-import { useAccount, useContract, useProvider } from "@starknet-react/core";
-import { CallData, hash, uint256 } from "starknet";
+import { useAccount, useContract } from "@starknet-react/core";
+import { CallData, uint256 } from "starknet";
 import { FaSpinner, FaSearch, FaSync } from "react-icons/fa";
 import { RiTimeLine, RiExchangeLine } from "react-icons/ri";
+import { useQuery } from "@apollo/client";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
+import { CONTRACT_ADDRESS } from "../../utils/constants";
+import { GET_OPEN_WBTC_ORDERS } from "../../graphql/queries";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
 
 interface OpenOrder {
@@ -29,10 +31,6 @@ const EXPIRY_PRESETS = [
 export default function FillOrderPanel() {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
-  const { provider } = useProvider();
-
-  const [orders, setOrders] = useState<OpenOrder[]>([]);
-  const [loadingOrders, setLoadingOrders] = useState(false);
   const [manualOrderId, setManualOrderId] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OpenOrder | null>(null);
   const [bobExpirySeconds, setBobExpirySeconds] = useState(3600);
@@ -42,76 +40,38 @@ export default function FillOrderPanel() {
     "idle" | "approve" | "fill" | "done"
   >("idle");
 
-  const fetchOrders = useCallback(async () => {
-    if (!provider || !contract) return;
-    setLoadingOrders(true);
-    try {
-      const SELECTOR = hash.getSelectorFromName("WbtcOrderPosted");
-      const events = await provider.getEvents({
-        address: CONTRACT_ADDRESS,
-        keys: [[SELECTOR]],
-        from_block: { block_number: +DEPLOY_BLOCK },
-        to_block: "latest",
-        chunk_size: 100,
-      });
+  const now = Math.floor(Date.now() / 1000);
 
-      const now = Math.floor(Date.now() / 1000);
-      const parsed: OpenOrder[] = [];
+  // ── Indexer query replaces provider.getEvents + contract.call loop ──────────
+  const {
+    data,
+    loading: loadingOrders,
+    refetch,
+  } = useQuery(GET_OPEN_WBTC_ORDERS, { fetchPolicy: "network-only" });
 
-      for (const e of events.events) {
-        try {
-          const orderIdLow = e.keys[1];
-          const orderIdHigh = e.keys[2];
-          const orderId =
-            "0x" +
-            ((BigInt(orderIdHigh) << 128n) | BigInt(orderIdLow)).toString(16);
+  // Filter client-side: remove expired orders
+  const orders: OpenOrder[] = (data?.wbtcOrders ?? [])
+    .filter((o: any) => Number(o.expiry) > now)
+    .map((o: any) => ({
+      orderId: o.id,
+      wbtcSeller: o.wbtc_seller,
+      aliceStrkDest: o.alice_strk_destination,
+      wbtcAmount: o.wbtc_amount,
+      quotedStrkAmount: o.quoted_strk_amount,
+      hashlock: o.hashlock,
+      expiry: Number(o.expiry),
+      rateExpiry: Number(o.rate_expiry),
+    }));
 
-          const orderData = (await contract.call("get_wbtc_order", [
-            uint256.bnToUint256(BigInt(orderId)),
-          ])) as any;
-
-          if (
-            orderData.is_filled === false &&
-            orderData.is_refunded === false &&
-            orderData.is_withdrawn === false &&
-            Number(orderData.expiry) > now
-          ) {
-            parsed.push({
-              orderId,
-              wbtcSeller: "0x" + BigInt(orderData.wbtc_seller).toString(16),
-              aliceStrkDest:
-                "0x" + BigInt(orderData.alice_strk_destination).toString(16),
-              wbtcAmount: orderData.wbtc_amount.toString(),
-              quotedStrkAmount: orderData.quoted_strk_amount.toString(),
-              hashlock: "0x" + BigInt(orderData.hashlock).toString(16),
-              expiry: Number(orderData.expiry),
-              rateExpiry: Number(orderData.rate_expiry),
-            });
-          }
-        } catch {
-          // skip malformed events
-        }
-      }
-      setOrders(parsed);
-    } catch (err: any) {
-      toast.error("Failed to load orders: " + err?.message);
-    } finally {
-      setLoadingOrders(false);
-    }
-  }, [provider, contract]);
-
-  useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
-
+  // ── Manual order lookup still uses contract directly ─────────────────────────
   const lookupOrder = async () => {
     if (!contract || !manualOrderId.trim()) return;
     try {
       const orderData = (await contract.call("get_wbtc_order", [
         uint256.bnToUint256(BigInt(manualOrderId.trim())),
       ])) as any;
-      const now = Math.floor(Date.now() / 1000);
-      if (Number(orderData.expiry) < now)
+      const nowTs = Math.floor(Date.now() / 1000);
+      if (Number(orderData.expiry) < nowTs)
         return toast.error("Order has expired.");
       if (orderData.is_filled) return toast.error("Order already filled.");
 
@@ -126,6 +86,7 @@ export default function FillOrderPanel() {
         expiry: Number(orderData.expiry),
         rateExpiry: Number(orderData.rate_expiry),
       });
+      setFillStep("approve");
     } catch (err: any) {
       toast.error("Order not found: " + err?.message);
     }
@@ -135,7 +96,6 @@ export default function FillOrderPanel() {
     if (!account || !selectedOrder) return;
     setApproveLoading(true);
     try {
-      console.log("Checking STRK allowance...");
       const strkAddress = (await contract!.call("strk_address")) as any;
       const hexAddr = "0x" + BigInt(strkAddress.toString()).toString(16);
 
@@ -150,7 +110,6 @@ export default function FillOrderPanel() {
         high: allowanceResult[1],
       });
 
-      // Add 1% buffer on top of the quoted amount to absorb any live-price drift
       const quoted = BigInt(selectedOrder.quotedStrkAmount);
       const required = quoted + quoted / 100n;
 
@@ -181,27 +140,26 @@ export default function FillOrderPanel() {
     if (!account || !contract || !selectedOrder) return;
     setFillLoading(true);
     try {
-      const now = Math.floor(Date.now() / 1000);
-      const bobExpiry = now + bobExpirySeconds;
+      const nowTs = Math.floor(Date.now() / 1000);
+      const bobExpiry = nowTs + bobExpirySeconds;
       const orderIdU256 = uint256.bnToUint256(BigInt(selectedOrder.orderId));
 
       const tx = await account.execute([
         contract.populate("fill_wbtc_order", [orderIdU256, bobExpiry]),
       ]);
-
       await account.waitForTransaction(tx.transaction_hash);
       toast.success(
         "Order filled! Alice will reveal the secret — then claim your wBTC.",
       );
       setFillStep("done");
+      // Invalidate the indexer cache so list refreshes
+      refetch();
     } catch (err: any) {
       toast.error("Fill failed: " + err?.message);
     } finally {
       setFillLoading(false);
     }
   };
-
-  const now = Math.floor(Date.now() / 1000);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -230,7 +188,7 @@ export default function FillOrderPanel() {
         >
           <div style={sectionLabel}>Open orders</div>
           <button
-            onClick={fetchOrders}
+            onClick={() => refetch()}
             disabled={loadingOrders}
             style={{
               ...btnGhost,
@@ -269,7 +227,7 @@ export default function FillOrderPanel() {
                 margin: "0 auto 0.5rem",
               }}
             />
-            Scanning on-chain events…
+            Loading from indexer…
           </div>
         ) : orders.length === 0 ? (
           <div
@@ -310,7 +268,7 @@ export default function FillOrderPanel() {
           <input
             value={manualOrderId}
             onChange={(e) => setManualOrderId(e.target.value)}
-            placeholder="0x… order ID / nullifier hash"
+            placeholder="0x… order ID"
             style={{ ...inputStyle, flex: 1 }}
           />
           <button
@@ -383,7 +341,6 @@ export default function FillOrderPanel() {
             time, refund it.
           </p>
 
-          {/* Step buttons */}
           <div
             style={{
               display: "grid",
@@ -457,6 +414,8 @@ export default function FillOrderPanel() {
     </div>
   );
 }
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function OrderCard({
   order,
@@ -543,6 +502,8 @@ function Detail({
     </div>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const section: React.CSSProperties = {
   background: "#111118",

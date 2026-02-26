@@ -1,19 +1,22 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "react-toastify";
-import { useAccount, useContract, useProvider } from "@starknet-react/core";
-import { hash, uint256 } from "starknet";
+import { useAccount, useContract } from "@starknet-react/core";
+import { uint256 } from "starknet";
 import { FaSpinner, FaUpload, FaSync } from "react-icons/fa";
 import {
   RiArrowRightLine,
   RiRefund2Line,
   RiMoneyDollarCircleLine,
 } from "react-icons/ri";
+import { useQuery } from "@apollo/client";
 import abi from "../../assets/json/abi";
+import { CONTRACT_ADDRESS, U128_MAX } from "../../utils/constants";
 import {
-  CONTRACT_ADDRESS,
-  DEPLOY_BLOCK,
-  U128_MAX,
-} from "../../utils/constants";
+  GET_CLAIMABLE_STRK_ORDERS,
+  GET_FILLED_WBTC_ORDERS_FOR_BUYER,
+  GET_REFUNDABLE_WBTC_ORDERS,
+  GET_REFUNDABLE_STRK_ORDERS,
+} from "../../graphql/queries";
 import { btnPrimary, inputStyle, btnGhost } from "./shared";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -48,7 +51,6 @@ interface ClaimableStrkOrder {
 interface ClaimableWbtcOrder {
   wbtcOrderId: string;
   wbtcAmount: string;
-  swapInitiated: boolean;
   expiry: number;
 }
 
@@ -64,275 +66,189 @@ interface RefundableStrkOrder {
   expiry: number;
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────────────
-
-async function paginateEvents(
-  provider: any,
-  selector: string,
-  fromBlock: number,
-  onPage: (events: any[]) => Promise<void>,
-) {
-  let continuationToken: string | undefined;
-  do {
-    const page = await provider.getEvents({
-      address: CONTRACT_ADDRESS,
-      keys: [[selector]],
-      from_block: { block_number: fromBlock },
-      to_block: "latest",
-      chunk_size: 200,
-      ...(continuationToken ? { continuation_token: continuationToken } : {}),
-    });
-    await onPage(page.events);
-    continuationToken = (page as any).continuation_token ?? undefined;
-  } while (continuationToken);
-}
-
 function toHex(raw: bigint | string) {
   return "0x" + BigInt(raw).toString(16);
 }
 
-function decodeU256Key(low: string, high: string) {
-  return toHex((BigInt(high) << 128n) | BigInt(low));
+// ── Custom hooks (Apollo-backed) ──────────────────────────────────────────────
+
+function useClaimableStrkOrders(active: boolean) {
+  const { account } = useAccount();
+  const now = Math.floor(Date.now() / 1000);
+
+  const myAddr = account?.address ? toHex(account.address) : "";
+
+  const {
+    data,
+    loading: scanning,
+    refetch,
+  } = useQuery(GET_CLAIMABLE_STRK_ORDERS, {
+    variables: { buyer: myAddr, now },
+    skip: !myAddr || !active,
+    fetchPolicy: "network-only",
+  });
+
+  const orders: ClaimableStrkOrder[] = (data?.strkOrders ?? []).map(
+    (o: any) => ({
+      strkOrderId: o.id,
+      wbtcOrderId: o.wbtc_order_id ?? "",
+      strkAmount: o.strk_amount,
+      expiry: Number(o.expiry),
+      hashlock: o.hashlock,
+    }),
+  );
+
+  // Optimistic remove after action
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const remove = (id: string) => setHidden((prev) => new Set([...prev, id]));
+  const visibleOrders = orders.filter((o) => !hidden.has(o.strkOrderId));
+
+  return { orders: visibleOrders, scanning, scan: refetch, remove };
 }
 
-// ── Custom hooks ──────────────────────────────────────────────────────────────
-
-function useClaimableStrkOrders() {
+function useClaimableWbtcOrders(active: boolean) {
   const { account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
-  const { provider } = useProvider();
-  const [orders, setOrders] = useState<ClaimableStrkOrder[]>([]);
-  const [scanning, setScanning] = useState(false);
+
+  const myAddr = account?.address ? toHex(account.address) : "";
+
+  // Fetch candidates from indexer (is_filled=true, buyer=me, not withdrawn)
+  const { data, loading, refetch } = useQuery(
+    GET_FILLED_WBTC_ORDERS_FOR_BUYER,
+    {
+      variables: { buyer: myAddr },
+      skip: !myAddr || !active,
+      fetchPolicy: "network-only",
+    },
+  );
+
+  // Secret-revealed check requires a contract call because `secret` is not
+  // indexed. We run the check lazily and cache results.
+  const [secretChecked, setSecretChecked] = useState<Map<string, boolean>>(
+    new Map(),
+  );
+  const [checking, setChecking] = useState(false);
+
+  const candidates: {
+    wbtcOrderId: string;
+    wbtcAmount: string;
+    expiry: number;
+  }[] = (data?.wbtcOrders ?? []).map((o: any) => ({
+    wbtcOrderId: o.id,
+    wbtcAmount: o.wbtc_amount,
+    expiry: Number(o.expiry),
+  }));
+
+  // Check secrets whenever candidates list changes
+  useEffect(() => {
+    if (!contract || candidates.length === 0) return;
+
+    const unchecked = candidates.filter(
+      (c) => !secretChecked.has(c.wbtcOrderId),
+    );
+    if (unchecked.length === 0) return;
+
+    setChecking(true);
+    Promise.all(
+      unchecked.map(async (c) => {
+        try {
+          const o = (await contract.call("get_wbtc_order", [
+            uint256.bnToUint256(BigInt(c.wbtcOrderId)),
+          ])) as any;
+          return { id: c.wbtcOrderId, revealed: BigInt(o.secret ?? 0) !== 0n };
+        } catch {
+          return { id: c.wbtcOrderId, revealed: false };
+        }
+      }),
+    ).then((results) => {
+      setSecretChecked((prev) => {
+        const next = new Map(prev);
+        results.forEach((r) => next.set(r.id, r.revealed));
+        return next;
+      });
+      setChecking(false);
+    });
+  }, [candidates.length, contract]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const orders: ClaimableWbtcOrder[] = candidates.filter(
+    (c) => secretChecked.get(c.wbtcOrderId) === true,
+  );
+
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const remove = (id: string) => setHidden((prev) => new Set([...prev, id]));
+  const visibleOrders = orders.filter((o) => !hidden.has(o.wbtcOrderId));
 
   const scan = useCallback(async () => {
-    if (!account?.address || !contract || !provider) return;
-    setScanning(true);
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      const myAddr = toHex(account.address);
-      const result: ClaimableStrkOrder[] = [];
+    setSecretChecked(new Map());
+    await refetch();
+  }, [refetch]);
 
-      await paginateEvents(
-        provider,
-        hash.getSelectorFromName("WbtcOrderFilled"),
-        +DEPLOY_BLOCK,
-        async (events) => {
-          for (const e of events) {
-            try {
-              const wbtcOrderId = decodeU256Key(e.keys[1], e.keys[2]);
-              const strkOrderId = decodeU256Key(e.keys[3], e.keys[4]);
-              const o = (await contract.call("get_strk_order", [
-                uint256.bnToUint256(BigInt(strkOrderId)),
-              ])) as any;
-              if (
-                toHex(o.strk_buyer) === myAddr &&
-                !o.is_withdrawn &&
-                !o.is_refunded &&
-                Number(o.expiry) > now
-              ) {
-                result.push({
-                  strkOrderId,
-                  wbtcOrderId,
-                  strkAmount: o.strk_amount?.toString() ?? "0",
-                  expiry: Number(o.expiry),
-                  hashlock: toHex(o.hashlock),
-                });
-              }
-            } catch {
-              /* skip malformed */
-            }
-          }
-        },
-      );
-
-      setOrders(result);
-    } catch (err: any) {
-      toast.error("Failed to scan STRK orders: " + err?.message);
-    } finally {
-      setScanning(false);
-    }
-  }, [account?.address, contract, provider]);
-
-  const remove = (id: string) =>
-    setOrders((p) => p.filter((o) => o.strkOrderId !== id));
-  return { orders, scanning, scan, remove };
+  return {
+    orders: visibleOrders,
+    scanning: loading || checking,
+    scan,
+    remove,
+  };
 }
 
-function useClaimableWbtcOrders() {
+function useRefundableWbtcOrders(active: boolean) {
   const { account } = useAccount();
-  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
-  const { provider } = useProvider();
-  const [orders, setOrders] = useState<ClaimableWbtcOrder[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const now = Math.floor(Date.now() / 1000);
+  const myAddr = account?.address ? toHex(account.address) : "";
 
-  const scan = useCallback(async () => {
-    if (!account?.address || !contract || !provider) return;
-    setScanning(true);
-    try {
-      const myAddr = toHex(account.address);
-      const result: ClaimableWbtcOrder[] = [];
+  const {
+    data,
+    loading: scanning,
+    refetch,
+  } = useQuery(GET_REFUNDABLE_WBTC_ORDERS, {
+    variables: { seller: myAddr, now },
+    skip: !myAddr || !active,
+    fetchPolicy: "network-only",
+  });
 
-      await paginateEvents(
-        provider,
-        hash.getSelectorFromName("WbtcOrderFilled"),
-        +DEPLOY_BLOCK,
-        async (events) => {
-          for (const e of events) {
-            try {
-              const wbtcOrderId = decodeU256Key(e.keys[1], e.keys[2]);
-              const o = (await contract.call("get_wbtc_order", [
-                uint256.bnToUint256(BigInt(wbtcOrderId)),
-              ])) as any;
-              const secretRevealed = BigInt(o.secret ?? 0) !== 0n;
-              if (
-                toHex(o.wbtc_buyer) === myAddr &&
-                secretRevealed &&
-                !o.is_withdrawn &&
-                !o.is_refunded
-              ) {
-                result.push({
-                  wbtcOrderId,
-                  wbtcAmount: o.wbtc_amount?.toString() ?? "0",
-                  swapInitiated: Boolean(o.swap_initiated),
-                  expiry: Number(o.expiry),
-                });
-              }
-            } catch {
-              /* skip malformed */
-            }
-          }
-        },
-      );
+  const orders: RefundableWbtcOrder[] = (data?.wbtcOrders ?? []).map(
+    (o: any) => ({
+      wbtcOrderId: o.id,
+      wbtcAmount: o.wbtc_amount,
+      expiry: Number(o.expiry),
+    }),
+  );
 
-      setOrders(result);
-    } catch (err: any) {
-      toast.error("Failed to scan wBTC orders: " + err?.message);
-    } finally {
-      setScanning(false);
-    }
-  }, [account?.address, contract, provider]);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const remove = (id: string) => setHidden((prev) => new Set([...prev, id]));
+  const visibleOrders = orders.filter((o) => !hidden.has(o.wbtcOrderId));
 
-  const remove = (id: string) =>
-    setOrders((p) => p.filter((o) => o.wbtcOrderId !== id));
-  return { orders, scanning, scan, remove };
+  return { orders: visibleOrders, scanning, scan: refetch, remove };
 }
 
-function useRefundableWbtcOrders() {
+function useRefundableStrkOrders(active: boolean) {
   const { account } = useAccount();
-  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
-  const { provider } = useProvider();
-  const [orders, setOrders] = useState<RefundableWbtcOrder[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const now = Math.floor(Date.now() / 1000);
+  const myAddr = account?.address ? toHex(account.address) : "";
 
-  const scan = useCallback(async () => {
-    if (!account?.address || !contract || !provider) return;
-    setScanning(true);
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      const myAddr = toHex(account.address);
-      const result: RefundableWbtcOrder[] = [];
+  const {
+    data,
+    loading: scanning,
+    refetch,
+  } = useQuery(GET_REFUNDABLE_STRK_ORDERS, {
+    variables: { seller: myAddr, now },
+    skip: !myAddr || !active,
+    fetchPolicy: "network-only",
+  });
 
-      await paginateEvents(
-        provider,
-        hash.getSelectorFromName("WbtcOrderPosted"),
-        +DEPLOY_BLOCK,
-        async (events) => {
-          for (const e of events) {
-            try {
-              const wbtcOrderId = decodeU256Key(e.keys[1], e.keys[2]);
-              const o = (await contract.call("get_wbtc_order", [
-                uint256.bnToUint256(BigInt(wbtcOrderId)),
-              ])) as any;
-              if (
-                toHex(o.wbtc_seller) === myAddr &&
-                now >= Number(o.expiry) &&
-                !o.is_filled &&
-                !o.is_withdrawn &&
-                !o.is_refunded &&
-                !o.swap_initiated
-              ) {
-                result.push({
-                  wbtcOrderId,
-                  wbtcAmount: o.wbtc_amount?.toString() ?? "0",
-                  expiry: Number(o.expiry),
-                });
-              }
-            } catch {
-              /* skip malformed */
-            }
-          }
-        },
-      );
+  const orders: RefundableStrkOrder[] = (data?.strkOrders ?? []).map(
+    (o: any) => ({
+      strkOrderId: o.id,
+      strkAmount: o.strk_amount,
+      expiry: Number(o.expiry),
+    }),
+  );
 
-      setOrders(result);
-    } catch (err: any) {
-      toast.error("Failed to scan refundable wBTC orders: " + err?.message);
-    } finally {
-      setScanning(false);
-    }
-  }, [account?.address, contract, provider]);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const remove = (id: string) => setHidden((prev) => new Set([...prev, id]));
+  const visibleOrders = orders.filter((o) => !hidden.has(o.strkOrderId));
 
-  const remove = (id: string) =>
-    setOrders((p) => p.filter((o) => o.wbtcOrderId !== id));
-  return { orders, scanning, scan, remove };
-}
-
-function useRefundableStrkOrders() {
-  const { account } = useAccount();
-  const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
-  const { provider } = useProvider();
-  const [orders, setOrders] = useState<RefundableStrkOrder[]>([]);
-  const [scanning, setScanning] = useState(false);
-
-  const scan = useCallback(async () => {
-    if (!account?.address || !contract || !provider) return;
-    setScanning(true);
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      const myAddr = toHex(account.address);
-      const result: RefundableStrkOrder[] = [];
-
-      await paginateEvents(
-        provider,
-        hash.getSelectorFromName("WbtcOrderFilled"),
-        +DEPLOY_BLOCK,
-        async (events) => {
-          for (const e of events) {
-            try {
-              const strkOrderId = decodeU256Key(e.keys[3], e.keys[4]);
-              const o = (await contract.call("get_strk_order", [
-                uint256.bnToUint256(BigInt(strkOrderId)),
-              ])) as any;
-              if (
-                toHex(o.strk_seller) === myAddr &&
-                now >= Number(o.expiry) &&
-                !o.is_withdrawn &&
-                !o.is_refunded
-              ) {
-                result.push({
-                  strkOrderId,
-                  strkAmount: o.strk_amount?.toString() ?? "0",
-                  expiry: Number(o.expiry),
-                });
-              }
-            } catch {
-              /* skip malformed */
-            }
-          }
-        },
-      );
-
-      setOrders(result);
-    } catch (err: any) {
-      toast.error("Failed to scan refundable STRK orders: " + err?.message);
-    } finally {
-      setScanning(false);
-    }
-  }, [account?.address, contract, provider]);
-
-  const remove = (id: string) =>
-    setOrders((p) => p.filter((o) => o.strkOrderId !== id));
-  return { orders, scanning, scan, remove };
+  return { orders: visibleOrders, scanning, scan: refetch, remove };
 }
 
 // ── Presentational components ─────────────────────────────────────────────────
@@ -404,7 +320,7 @@ function OrderListSection({
             size={11}
             style={{ animation: "spin 1s linear infinite" }}
           />{" "}
-          Scanning on-chain events…
+          Loading from indexer…
         </div>
       )}
 
@@ -753,18 +669,11 @@ export default function ManageOrdersPanel() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const claimStrk = useClaimableStrkOrders();
-  const claimWbtc = useClaimableWbtcOrders();
-  const refundWbtc = useRefundableWbtcOrders();
-  const refundStrk = useRefundableStrkOrders();
-
-  // Trigger scan whenever the active tab changes
-  useEffect(() => {
-    if (mode === "withdraw_strk") claimStrk.scan();
-    if (mode === "withdraw_wbtc") claimWbtc.scan();
-    if (mode === "refund_wbtc") refundWbtc.scan();
-    if (mode === "refund_strk") refundStrk.scan();
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Each hook receives an `active` flag so Apollo skips inactive tabs
+  const claimStrk = useClaimableStrkOrders(mode === "withdraw_strk");
+  const claimWbtc = useClaimableWbtcOrders(mode === "withdraw_wbtc");
+  const refundWbtc = useRefundableWbtcOrders(mode === "refund_wbtc");
+  const refundStrk = useRefundableStrkOrders(mode === "refund_strk");
 
   const lookupOrder = async (overrideId?: string) => {
     const id = overrideId ?? orderId;
@@ -826,7 +735,7 @@ export default function ManageOrdersPanel() {
     r.readAsText(file);
   };
 
-  // ── Tx handlers ─────────────────────────────────────────────────────────────
+  // ── Tx helpers ───────────────────────────────────────────────────────────────
   const exec = async (
     populate: any,
     onSuccess: () => void,
@@ -985,7 +894,6 @@ export default function ManageOrdersPanel() {
 
   const now = Math.floor(Date.now() / 1000);
 
-  // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       {/* Mode tabs */}
@@ -1047,7 +955,7 @@ export default function ManageOrdersPanel() {
         <OrderListSection
           title="Your claimable STRK orders"
           scanning={claimStrk.scanning}
-          onRefresh={claimStrk.scan}
+          onRefresh={() => claimStrk.scan()}
           connected={!!account}
           emptyText="No claimable orders found for your address"
         >
@@ -1080,7 +988,7 @@ export default function ManageOrdersPanel() {
         <OrderListSection
           title="Your claimable wBTC orders"
           scanning={claimWbtc.scanning}
-          onRefresh={claimWbtc.scan}
+          onRefresh={() => claimWbtc.scan()}
           connected={!!account}
           emptyText="No claimable wBTC orders — Alice may not have revealed her secret yet"
         >
@@ -1093,7 +1001,7 @@ export default function ManageOrdersPanel() {
               badgeColor="#22c55e"
               subLabel={
                 now >= o.expiry
-                  ? "expired (swap_initiated)"
+                  ? "expired"
                   : `expires ${new Date(o.expiry * 1000).toLocaleTimeString()}`
               }
               selected={orderId === o.wbtcOrderId}
@@ -1108,7 +1016,7 @@ export default function ManageOrdersPanel() {
         <OrderListSection
           title="Your expired wBTC orders"
           scanning={refundWbtc.scanning}
-          onRefresh={refundWbtc.scan}
+          onRefresh={() => refundWbtc.scan()}
           connected={!!account}
           emptyText="No refundable wBTC orders found"
         >
@@ -1139,7 +1047,7 @@ export default function ManageOrdersPanel() {
         <OrderListSection
           title="Your expired STRK orders"
           scanning={refundStrk.scanning}
-          onRefresh={refundStrk.scan}
+          onRefresh={() => refundStrk.scan()}
           connected={!!account}
           emptyText="No refundable STRK orders found"
         >
