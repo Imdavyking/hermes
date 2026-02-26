@@ -52,6 +52,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     const n = randHex();
     const s = randHex();
     const c = "0x" + poseidon2Hash([BigInt(n), BigInt(s)]).toString(16);
+
     setNullifier(n);
     setSecret(s);
     setCommitment(c);

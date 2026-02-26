@@ -11,7 +11,7 @@ import { FaSpinner, FaDownload, FaUpload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiTimeLine } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS } from "../../utils/constants";
+import { CONTRACT_ADDRESS, DEPLOY_BLOCK } from "../../utils/constants";
 import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
 import {
@@ -128,7 +128,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       const depositEvents = await provider.getEvents({
         address: CONTRACT_ADDRESS,
         keys: [[DEPOSIT_SELECTOR]],
-        from_block: { block_number: 0 },
+        from_block: { block_number: +DEPLOY_BLOCK },
         to_block: "latest",
         chunk_size: 100,
       });
