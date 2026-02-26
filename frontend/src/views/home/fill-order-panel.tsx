@@ -190,24 +190,9 @@ export default function FillOrderPanel() {
       const bobExpiry = now + bobExpirySeconds;
       const orderIdU256 = uint256.bnToUint256(BigInt(selectedOrder.orderId));
 
-      const tx = await account.execute(
-        [contract.populate("fill_wbtc_order", [orderIdU256, bobExpiry])],
-        {
-          maxFee: U128_MAX,
-          resourceBounds: {
-            l1_gas: {
-              max_amount: BigInt("0x100000"),
-              max_price_per_unit: U128_MAX,
-            },
-            l1_data_gas: {
-              max_amount: BigInt("0x100000"),
-              max_price_per_unit: U128_MAX,
-            },
-            l2_gas: { max_amount: U64_MAX, max_price_per_unit: U128_MAX },
-          },
-          version: "0x3",
-        },
-      );
+      const tx = await account.execute([
+        contract.populate("fill_wbtc_order", [orderIdU256, bobExpiry]),
+      ]);
 
       await account.waitForTransaction(tx.transaction_hash);
       toast.success(

@@ -141,21 +141,9 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         calldata: callData,
       });
 
-      const tx = await account.execute(
-        [contract.populate("deposit", [commitData])],
-        {
-          maxFee: U128_MAX,
-          resourceBounds: {
-            l1_gas: gas.resourceBounds.l1_gas,
-            l1_data_gas: gas.resourceBounds.l1_data_gas,
-            l2_gas: {
-              max_amount: U64_MAX,
-              max_price_per_unit: U128_MAX,
-            },
-          },
-          version: "0x3",
-        },
-      );
+      const tx = await account.execute([
+        contract.populate("deposit", [commitData]),
+      ]);
 
       await account.waitForTransaction(tx.transaction_hash);
       toast.success(`Deposited into Umbra pool 🛡️`);
