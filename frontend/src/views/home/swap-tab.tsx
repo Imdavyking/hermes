@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { RiExchangeLine, RiAddCircleLine, RiListCheck2, RiSettings4Line } from "react-icons/ri";
+import { RiExchangeLine, RiAddCircleLine, RiSettings4Line } from "react-icons/ri";
 import PostOrderPanel from "./post-order-panel";
 import FillOrderPanel from "./fill-order-panel";
 import ManageOrdersPanel from "./manage-orders-panel";

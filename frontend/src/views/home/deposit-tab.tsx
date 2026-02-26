@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract, useReadContract } from "@starknet-react/core";
-import { CallData, uint256, type Uint256 } from "starknet";
+import { CallData, uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";

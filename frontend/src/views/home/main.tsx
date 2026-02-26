@@ -3,7 +3,7 @@ import { useAccount, useReadContract, useContract } from "@starknet-react/core";
 import { RiShieldKeyholeFill, RiExchangeLine } from "react-icons/ri";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import abi from "../../assets/json/abi";
-import { type Tab, StatCard, hexRoot, shortenAddress } from "./shared";
+import { StatCard, hexRoot, shortenAddress } from "./shared";
 import DepositTab from "./deposit-tab";
 import WithdrawTab from "./withdraw-tab";
 import SwapTab from "./swap-tab";

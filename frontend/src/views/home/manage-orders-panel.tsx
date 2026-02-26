@@ -9,7 +9,7 @@ import {
   RiMoneyDollarCircleLine,
 } from "react-icons/ri";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, U128_MAX, U64_MAX } from "../../utils/constants";
+import { CONTRACT_ADDRESS, U128_MAX } from "../../utils/constants";
 import { btnPrimary, inputStyle } from "./shared";
 
 type ActionMode =

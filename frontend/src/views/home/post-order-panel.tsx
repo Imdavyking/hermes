@@ -6,12 +6,12 @@ import {
   useReadContract,
   useProvider,
 } from "@starknet-react/core";
-import { hash, num } from "starknet";
+import { hash } from "starknet";
 import { FaSpinner, FaDownload, FaUpload } from "react-icons/fa";
-import { RiShieldKeyholeFill, RiTimeLine, RiPercentLine } from "react-icons/ri";
+import { RiShieldKeyholeFill, RiTimeLine } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
-import { CONTRACT_ADDRESS, U128_MAX, U64_MAX } from "../../utils/constants";
+import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
 import {
