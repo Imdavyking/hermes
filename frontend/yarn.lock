@@ -3266,6 +3266,11 @@ graphql-tag@^2.12.6:
   dependencies:
     tslib "^2.1.0"
 
+graphql@^16.10.0:
+  version "16.13.0"
+  resolved "https://registry.npmjs.org/graphql/-/graphql-16.13.0.tgz#726857e897e87d54412d62356ec0b6b76bfab409"
+  integrity sha512-uSisMYERbaB9bkA9M4/4dnqyktaEkf1kMHNKq/7DHyxVeWqHQ2mBmVqm5u6/FVHwF3iCNalKcg82Zfl+tffWoA==
+
 h3@^1.15.4:
   version "1.15.4"
   resolved "https://registry.npmjs.org/h3/-/h3-1.15.4.tgz"

@@ -5,8 +5,8 @@ import { gql } from "@apollo/client";
 export const GET_ALL_DEPOSITS = gql`
   query GetAllDeposits($first: Int!, $skip: Int!) {
     deposits(
-      orderBy: "leaf_index"
-      orderDirection: "asc"
+      orderBy: leaf_index
+      orderDirection: asc
       first: $first
       skip: $skip
     ) {
