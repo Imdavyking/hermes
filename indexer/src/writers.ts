@@ -14,10 +14,17 @@ import { Context } from "./index";
 // -------------------------------------------------------
 
 // u256 is encoded as two consecutive felts: [low, high]
+// Returns a DECIMAL string suitable for BigDecimalU256 / numeric columns.
 function readU256(low: string, high: string): string {
   const lo = BigInt(low || "0");
   const hi = BigInt(high || "0");
-  return ((hi << 128n) | lo).toString();
+  return ((hi << 128n) | lo).toString(); // decimal string ✓
+}
+
+// When the ABI decoder gives us a single already-combined u256 value,
+// convert it to decimal (it may arrive as a hex string or bigint).
+function toDecimal(value: string | bigint | number): string {
+  return BigInt(value).toString();
 }
 
 // -------------------------------------------------------
@@ -27,7 +34,6 @@ export function createWriters(ctx: Context) {
   // -------------------------------------------------------
   // DEPOSIT
   // rawEvent.data: [commitment.low, commitment.high, leaf_index, timestamp]
-  // event (if ABI):  { commitment, leaf_index, timestamp }
   // -------------------------------------------------------
   const handleDeposit: starknet.Writer = async ({
     event,
@@ -42,13 +48,11 @@ export function createWriters(ctx: Context) {
     let timestamp: number;
 
     if (event) {
-      // ABI-decoded path
-      commitment = toHexAddress(event.commitment);
+      commitment = toDecimal(event.commitment); // was toHexAddress — FIXED
       leafIndex = Number(event.leaf_index);
       timestamp = Number(event.timestamp);
     } else if (rawEvent) {
-      // Raw fallback
-      commitment = toHexAddress(readU256(rawEvent.data[0], rawEvent.data[1]));
+      commitment = readU256(rawEvent.data[0], rawEvent.data[1]);
       leafIndex = Number(rawEvent.data[2]);
       timestamp = Number(rawEvent.data[3]);
     } else return;
@@ -66,7 +70,6 @@ export function createWriters(ctx: Context) {
   // -------------------------------------------------------
   // WITHDRAWAL
   // rawEvent.data: [recipient, nullifier_hash.low, nullifier_hash.high]
-  // event (if ABI):  { recipient, nullifier_hash }
   // -------------------------------------------------------
   const handleWithdrawal: starknet.Writer = async ({
     event,
@@ -81,12 +84,10 @@ export function createWriters(ctx: Context) {
 
     if (event) {
       recipient = toHexAddress(event.recipient);
-      nullifierHash = toHexAddress(event.nullifier_hash);
+      nullifierHash = toDecimal(event.nullifier_hash); // was toHexAddress — FIXED
     } else if (rawEvent) {
       recipient = toHexAddress(rawEvent.data[0]);
-      nullifierHash = toHexAddress(
-        readU256(rawEvent.data[1], rawEvent.data[2]),
-      );
+      nullifierHash = readU256(rawEvent.data[1], rawEvent.data[2]);
     } else return;
 
     const withdrawal = new Withdrawal(nullifierHash, ctx.indexerName);
@@ -123,17 +124,18 @@ export function createWriters(ctx: Context) {
     let rateExpiry: number;
 
     if (event) {
-      id = toHexAddress(event.order_id);
+      id = toDecimal(event.order_id); // was toHexAddress — FIXED
       wbtcSeller = toHexAddress(event.wbtc_seller);
       aliceStrkDest = toHexAddress(event.alice_strk_destination);
-      wbtcAmount = readU256(event.wbtc_amount, "0");
-      quotedStrkAmount = readU256(event.quoted_strk_amount, "0");
+      // ABI gives combined u256 — convert directly to decimal
+      wbtcAmount = toDecimal(event.wbtc_amount); // was readU256(val, "0") — FIXED
+      quotedStrkAmount = toDecimal(event.quoted_strk_amount); // same — FIXED
       hashlock = toHexAddress(event.hashlock);
       expiry = Number(event.expiry);
       rateExpiry = Number(event.rate_expiry);
     } else if (rawEvent) {
       const d = rawEvent.data;
-      id = toHexAddress(readU256(d[0], d[1]));
+      id = readU256(d[0], d[1]);
       wbtcSeller = toHexAddress(d[2]);
       aliceStrkDest = toHexAddress(d[3]);
       wbtcAmount = readU256(d[4], d[5]);
@@ -182,21 +184,20 @@ export function createWriters(ctx: Context) {
     let bobExpiry: number;
 
     if (event) {
-      wbtcOrderId = toHexAddress(event.wbtc_order_id);
-      strkOrderId = toHexAddress(event.strk_order_id);
+      wbtcOrderId = toDecimal(event.wbtc_order_id); // was toHexAddress — FIXED
+      strkOrderId = toDecimal(event.strk_order_id); // was toHexAddress — FIXED
       bob = toHexAddress(event.bob);
-      strkAmount = readU256(event.strk_amount_locked, "0");
+      strkAmount = toDecimal(event.strk_amount_locked); // was readU256(val, "0") — FIXED
       bobExpiry = Number(event.bob_expiry);
     } else if (rawEvent) {
       const d = rawEvent.data;
-      wbtcOrderId = toHexAddress(readU256(d[0], d[1]));
-      strkOrderId = toHexAddress(readU256(d[2], d[3]));
+      wbtcOrderId = readU256(d[0], d[1]);
+      strkOrderId = readU256(d[2], d[3]);
       bob = toHexAddress(d[4]);
       strkAmount = readU256(d[5], d[6]);
       bobExpiry = Number(d[7]);
     } else return;
 
-    // Update the WbtcOrder
     const order = await WbtcOrder.loadEntity(wbtcOrderId, ctx.indexerName);
     if (order) {
       order.wbtc_buyer = bob;
@@ -208,7 +209,6 @@ export function createWriters(ctx: Context) {
       await order.save();
     }
 
-    // Create the paired StrkOrder
     const strkOrder = new StrkOrder(strkOrderId, ctx.indexerName);
     strkOrder.strk_seller = bob;
     strkOrder.strk_buyer = order?.alice_strk_destination ?? "0x0";
@@ -236,8 +236,8 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toHexAddress(event.order_id)
-      : toHexAddress(readU256(rawEvent.data[0], rawEvent.data[1]));
+      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await WbtcOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
@@ -259,8 +259,8 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toHexAddress(event.order_id)
-      : toHexAddress(readU256(rawEvent.data[0], rawEvent.data[1]));
+      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await StrkOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
@@ -282,8 +282,8 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toHexAddress(event.order_id)
-      : toHexAddress(readU256(rawEvent.data[0], rawEvent.data[1]));
+      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await WbtcOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
@@ -305,8 +305,8 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toHexAddress(event.order_id)
-      : toHexAddress(readU256(rawEvent.data[0], rawEvent.data[1]));
+      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await StrkOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
