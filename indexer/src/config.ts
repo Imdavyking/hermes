@@ -1,4 +1,5 @@
 import { CheckpointConfig } from "@snapshot-labs/checkpoint";
+import PrivateSwapAbi from "./abis/private_swap.abi.json";
 
 if (!process.env.RPC_URL) {
   throw new Error("RPC_URL environment variable is not set");
@@ -32,4 +33,5 @@ export const config: CheckpointConfig = {
       ],
     },
   ],
+  abis: PrivateSwapAbi,
 };
