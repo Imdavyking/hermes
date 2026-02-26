@@ -1,12 +1,23 @@
 import { CheckpointConfig } from "@snapshot-labs/checkpoint";
 
+if (!process.env.RPC_URL) {
+  throw new Error("RPC_URL environment variable is not set");
+}
+
+if (!process.env.CONTRACT_ADDRESS) {
+  throw new Error("CONTRACT_ADDRESS environment variable is not set");
+}
+
+if (!process.env.START_BLOCK) {
+  throw new Error("START_BLOCK environment variable is not set");
+}
+
 export const config: CheckpointConfig = {
-  network: process.env.RPC_URL || "https://starknet-sepolia.public.blastapi.io",
+  network_node_url: process.env.RPC_URL,
   sources: [
     {
-      contract: process.env.CONTRACT_ADDRESS!,
-      start: Number(process.env.START_BLOCK) || 0,
-      deploy_fn: "handleDeploy",
+      contract: process.env.CONTRACT_ADDRESS,
+      start: Number(process.env.START_BLOCK),
       events: [
         { name: "Deposit", fn: "handleDeposit" },
         { name: "Withdrawal", fn: "handleWithdrawal" },

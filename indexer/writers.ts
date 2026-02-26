@@ -1,249 +1,246 @@
-import { CheckpointWriters } from "@snapshot-labs/checkpoint";
+import { starknet } from "@snapshot-labs/checkpoint";
+import {
+  Deposit,
+  Withdrawal,
+  WbtcOrder,
+  StrkOrder,
+  OwnershipTransfer,
+} from "../.checkpoint/models";
+import { toHexAddress, u256ToString } from "./shared";
+import { Context } from "./index";
 
 // -------------------------------------------------------
-// Helpers
+// Factory — same pattern as the reference example
 // -------------------------------------------------------
-
-function toHex(value: string): string {
-  if (!value) return "0x0";
-  return "0x" + BigInt(value).toString(16);
-}
-
-// Starknet encodes u256 as [low, high] — two consecutive 128-bit felts.
-function readU256(low: string, high: string): string {
-  const lo = BigInt(low || "0");
-  const hi = BigInt(high || "0");
-  return ((hi << 128n) | lo).toString();
-}
-
-// -------------------------------------------------------
-// Writers
-// -------------------------------------------------------
-
-export const writers: CheckpointWriters = {
-  handleDeploy: async () => {
-    // Nothing to do on deploy
-  },
-
+export function createWriters(ctx: Context) {
   // -------------------------------------------------------
   // DEPOSIT
-  // events: [commitment.low, commitment.high, leaf_index, timestamp]
+  // event fields: commitment (u256), leaf_index (u32), timestamp (u64)
   // -------------------------------------------------------
-  handleDeposit: async ({ receipt, mysql }) => {
-    const events = receipt.events;
-    const commitment = toHex(readU256(events[0], events[1]));
-    const leafIndex = Number(events[2]);
-    const timestamp = events[3];
-    const blockNumber = receipt.transaction_hash
-      ? ((receipt as any).block_number ?? 0)
-      : 0;
+  const handleDeposit: starknet.Writer = async ({ event, block, tx }) => {
+    const id = toHexAddress(event.commitment);
 
-    await mysql.queryAsync(`INSERT IGNORE INTO deposits SET ?`, [
-      {
-        id: commitment,
-        commitment: commitment,
-        leaf_index: leafIndex,
-        timestamp: timestamp,
-        block_number: (receipt as any).block_number ?? 0,
-        tx_hash: receipt.transaction_hash,
-      },
-    ]);
-  },
+    const deposit = new Deposit(id, ctx.indexerName);
+    deposit.commitment = id;
+    deposit.leaf_index = Number(event.leaf_index);
+    deposit.timestamp = BigInt(event.timestamp);
+    deposit.block_number = block.block_number;
+    deposit.tx_hash = tx.transaction_hash;
+
+    await deposit.save();
+  };
 
   // -------------------------------------------------------
   // WITHDRAWAL (ZK direct withdrawal)
-  // events: [recipient, nullifier_hash.low, nullifier_hash.high]
+  // event fields: recipient (ContractAddress), nullifier_hash (u256)
   // -------------------------------------------------------
-  handleWithdrawal: async ({ receipt, mysql }) => {
-    const events = receipt.events;
-    const nullifierHash = toHex(readU256(events[1], events[2]));
+  const handleWithdrawal: starknet.Writer = async ({ event, block, tx }) => {
+    const id = toHexAddress(event.nullifier_hash);
 
-    await mysql.queryAsync(`INSERT IGNORE INTO withdrawals SET ?`, [
-      {
-        id: nullifierHash,
-        recipient: toHex(events[0]),
-        nullifier_hash: nullifierHash,
-        block_number: (receipt as any).block_number ?? 0,
-        tx_hash: receipt.transaction_hash,
-      },
-    ]);
-  },
+    const withdrawal = new Withdrawal(id, ctx.indexerName);
+    withdrawal.recipient = toHexAddress(event.recipient);
+    withdrawal.nullifier_hash = id;
+    withdrawal.block_number = block.block_number;
+    withdrawal.tx_hash = tx.transaction_hash;
+
+    await withdrawal.save();
+  };
 
   // -------------------------------------------------------
   // WBTC ORDER POSTED
-  // events: [order_id.low, order_id.high, wbtc_seller,
-  //          alice_strk_destination, wbtc_amount.low, wbtc_amount.high,
-  //          quoted_strk_amount.low, quoted_strk_amount.high,
-  //          hashlock, expiry, rate_expiry]
+  // event fields: order_id, wbtc_seller, alice_strk_destination,
+  //               wbtc_amount, quoted_strk_amount, hashlock, expiry, rate_expiry
   // -------------------------------------------------------
-  handleWbtcOrderPosted: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const orderId = toHex(readU256(e[0], e[1]));
+  const handleWbtcOrderPosted: starknet.Writer = async ({
+    event,
+    block,
+    tx,
+  }) => {
+    const id = toHexAddress(event.order_id);
 
-    await mysql.queryAsync(`INSERT IGNORE INTO wbtc_orders SET ?`, [
-      {
-        id: orderId,
-        wbtc_seller: toHex(e[2]),
-        alice_strk_destination: toHex(e[3]),
-        wbtc_amount: readU256(e[4], e[5]),
-        quoted_strk_amount: readU256(e[6], e[7]),
-        hashlock: toHex(e[8]),
-        expiry: e[9],
-        rate_expiry: e[10],
-        is_filled: 0,
-        is_withdrawn: 0,
-        is_refunded: 0,
-        posted_at_block: (receipt as any).block_number ?? 0,
-        posted_tx_hash: receipt.transaction_hash,
-      },
-    ]);
-  },
+    const order = new WbtcOrder(id, ctx.indexerName);
+    order.wbtc_seller = toHexAddress(event.wbtc_seller);
+    order.alice_strk_destination = toHexAddress(event.alice_strk_destination);
+    order.wbtc_amount = u256ToString(event.wbtc_amount);
+    order.quoted_strk_amount = u256ToString(event.quoted_strk_amount);
+    order.hashlock = toHexAddress(event.hashlock);
+    order.expiry = BigInt(event.expiry);
+    order.rate_expiry = BigInt(event.rate_expiry);
+    order.is_filled = false;
+    order.is_withdrawn = false;
+    order.is_refunded = false;
+    order.posted_at_block = block.block_number;
+    order.posted_tx_hash = tx.transaction_hash;
+
+    await order.save();
+  };
 
   // -------------------------------------------------------
   // WBTC ORDER FILLED
-  // events: [wbtc_order_id.low, wbtc_order_id.high,
-  //          strk_order_id.low, strk_order_id.high,
-  //          bob, strk_amount_locked.low, strk_amount_locked.high,
-  //          bob_expiry]
+  // event fields: wbtc_order_id, strk_order_id, bob,
+  //               strk_amount_locked, bob_expiry
   // -------------------------------------------------------
-  handleWbtcOrderFilled: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const wbtcOrderId = toHex(readU256(e[0], e[1]));
-    const strkOrderId = toHex(readU256(e[2], e[3]));
-    const bob = toHex(e[4]);
-    const strkAmountLocked = readU256(e[5], e[6]);
-    const bobExpiry = e[7];
-    const blockNumber = (receipt as any).block_number ?? 0;
+  const handleWbtcOrderFilled: starknet.Writer = async ({
+    event,
+    block,
+    tx,
+  }) => {
+    const wbtcOrderId = toHexAddress(event.wbtc_order_id);
+    const strkOrderId = toHexAddress(event.strk_order_id);
+    const bob = toHexAddress(event.bob);
+    const strkAmount = u256ToString(event.strk_amount_locked);
+    const bobExpiry = BigInt(event.bob_expiry);
 
     // Update the WbtcOrder
-    await mysql.queryAsync(
-      `UPDATE wbtc_orders
-       SET wbtc_buyer = ?, strk_order_id = ?, strk_amount_locked = ?,
-           bob_expiry = ?, is_filled = 1, filled_at_block = ?
-       WHERE id = ?`,
-      [bob, strkOrderId, strkAmountLocked, bobExpiry, blockNumber, wbtcOrderId],
-    );
+    const order = await WbtcOrder.loadEntity(wbtcOrderId, ctx.indexerName);
+    if (order) {
+      order.wbtc_buyer = bob;
+      order.strk_order_id = strkOrderId;
+      order.strk_amount_locked = strkAmount;
+      order.bob_expiry = bobExpiry;
+      order.is_filled = true;
+      order.filled_at_block = block.block_number;
+      await order.save();
+    }
 
-    // Fetch alice_strk_destination and hashlock from the WbtcOrder
-    const [wbtcOrder] = await mysql.queryAsync(
-      `SELECT alice_strk_destination, hashlock FROM wbtc_orders WHERE id = ?`,
-      [wbtcOrderId],
-    );
+    // Create the paired StrkOrder
+    const strkOrder = new StrkOrder(strkOrderId, ctx.indexerName);
+    strkOrder.strk_seller = bob;
+    strkOrder.strk_buyer = order?.alice_strk_destination ?? "0x0";
+    strkOrder.strk_amount = strkAmount;
+    strkOrder.hashlock = order?.hashlock ?? "0x0";
+    strkOrder.expiry = bobExpiry;
+    strkOrder.wbtc_order_id = wbtcOrderId;
+    strkOrder.is_withdrawn = false;
+    strkOrder.is_refunded = false;
+    strkOrder.posted_at_block = block.block_number;
+    strkOrder.posted_tx_hash = tx.transaction_hash;
 
-    await mysql.queryAsync(`INSERT IGNORE INTO strk_orders SET ?`, [
-      {
-        id: strkOrderId,
-        strk_seller: bob,
-        strk_buyer: wbtcOrder?.alice_strk_destination ?? "0x0",
-        strk_amount: strkAmountLocked,
-        hashlock: wbtcOrder?.hashlock ?? "0x0",
-        expiry: bobExpiry,
-        wbtc_order_id: wbtcOrderId,
-        is_withdrawn: 0,
-        is_refunded: 0,
-        posted_at_block: blockNumber,
-        posted_tx_hash: receipt.transaction_hash,
-      },
-    ]);
-  },
+    await strkOrder.save();
+  };
 
   // -------------------------------------------------------
   // WBTC WITHDRAWN (Bob claims wBTC after secret is revealed)
-  // events: [order_id.low, order_id.high, wbtc_buyer]
+  // event fields: order_id, wbtc_buyer
   // -------------------------------------------------------
-  handleWbtcWithdrawn: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const orderId = toHex(readU256(e[0], e[1]));
-
-    await mysql.queryAsync(
-      `UPDATE wbtc_orders SET is_withdrawn = 1, withdrawn_at_block = ? WHERE id = ?`,
-      [(receipt as any).block_number ?? 0, orderId],
+  const handleWbtcWithdrawn: starknet.Writer = async ({ event, block }) => {
+    const order = await WbtcOrder.loadEntity(
+      toHexAddress(event.order_id),
+      ctx.indexerName,
     );
-  },
+    if (order) {
+      order.is_withdrawn = true;
+      order.withdrawn_at_block = block.block_number;
+      await order.save();
+    }
+  };
 
   // -------------------------------------------------------
   // STRK WITHDRAWN (Alice claims STRK by revealing secret)
-  // events: [order_id.low, order_id.high, strk_buyer]
+  // event fields: order_id, strk_buyer
   // -------------------------------------------------------
-  handleStrkWithdrawn: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const orderId = toHex(readU256(e[0], e[1]));
-
-    await mysql.queryAsync(
-      `UPDATE strk_orders SET is_withdrawn = 1, withdrawn_at_block = ? WHERE id = ?`,
-      [(receipt as any).block_number ?? 0, orderId],
+  const handleStrkWithdrawn: starknet.Writer = async ({ event, block }) => {
+    const order = await StrkOrder.loadEntity(
+      toHexAddress(event.order_id),
+      ctx.indexerName,
     );
-  },
+    if (order) {
+      order.is_withdrawn = true;
+      order.withdrawn_at_block = block.block_number;
+      await order.save();
+    }
+  };
 
   // -------------------------------------------------------
   // WBTC REFUNDED (Alice reclaims wBTC after expiry)
-  // events: [order_id.low, order_id.high, wbtc_seller]
+  // event fields: order_id, wbtc_seller
   // -------------------------------------------------------
-  handleWbtcRefunded: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const orderId = toHex(readU256(e[0], e[1]));
-
-    await mysql.queryAsync(
-      `UPDATE wbtc_orders SET is_refunded = 1, refunded_at_block = ? WHERE id = ?`,
-      [(receipt as any).block_number ?? 0, orderId],
+  const handleWbtcRefunded: starknet.Writer = async ({ event, block }) => {
+    const order = await WbtcOrder.loadEntity(
+      toHexAddress(event.order_id),
+      ctx.indexerName,
     );
-  },
+    if (order) {
+      order.is_refunded = true;
+      order.refunded_at_block = block.block_number;
+      await order.save();
+    }
+  };
 
   // -------------------------------------------------------
   // STRK REFUNDED (Bob reclaims STRK after expiry)
-  // events: [order_id.low, order_id.high, strk_seller]
+  // event fields: order_id, strk_seller
   // -------------------------------------------------------
-  handleStrkRefunded: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const orderId = toHex(readU256(e[0], e[1]));
-
-    await mysql.queryAsync(
-      `UPDATE strk_orders SET is_refunded = 1, refunded_at_block = ? WHERE id = ?`,
-      [(receipt as any).block_number ?? 0, orderId],
+  const handleStrkRefunded: starknet.Writer = async ({ event, block }) => {
+    const order = await StrkOrder.loadEntity(
+      toHexAddress(event.order_id),
+      ctx.indexerName,
     );
-  },
+    if (order) {
+      order.is_refunded = true;
+      order.refunded_at_block = block.block_number;
+      await order.save();
+    }
+  };
 
   // -------------------------------------------------------
-  // STRK ORDER POSTED (direct/off-chain coordinated order)
-  // events: [order_id (felt252), strk_seller, strk_buyer,
-  //          strk_amount.low, strk_amount.high, hashlock, expiry]
+  // STRK ORDER POSTED (direct off-chain coordinated order)
+  // event fields: order_id, strk_seller, strk_buyer,
+  //               strk_amount, hashlock, expiry
   // -------------------------------------------------------
-  handleStrkOrderPosted: async ({ receipt, mysql }) => {
-    const e = receipt.events;
-    const orderId = toHex(e[0]);
+  const handleStrkOrderPosted: starknet.Writer = async ({
+    event,
+    block,
+    tx,
+  }) => {
+    const id = toHexAddress(event.order_id);
 
-    await mysql.queryAsync(`INSERT IGNORE INTO strk_orders SET ?`, [
-      {
-        id: orderId,
-        strk_seller: toHex(e[1]),
-        strk_buyer: toHex(e[2]),
-        strk_amount: readU256(e[3], e[4]),
-        hashlock: toHex(e[5]),
-        expiry: e[6],
-        wbtc_order_id: null,
-        is_withdrawn: 0,
-        is_refunded: 0,
-        posted_at_block: (receipt as any).block_number ?? 0,
-        posted_tx_hash: receipt.transaction_hash,
-      },
-    ]);
-  },
+    const order = new StrkOrder(id, ctx.indexerName);
+    order.strk_seller = toHexAddress(event.strk_seller);
+    order.strk_buyer = toHexAddress(event.strk_buyer);
+    order.strk_amount = u256ToString(event.strk_amount);
+    order.hashlock = toHexAddress(event.hashlock);
+    order.expiry = BigInt(event.expiry);
+    order.wbtc_order_id = null;
+    order.is_withdrawn = false;
+    order.is_refunded = false;
+    order.posted_at_block = block.block_number;
+    order.posted_tx_hash = tx.transaction_hash;
+
+    await order.save();
+  };
 
   // -------------------------------------------------------
   // OWNERSHIP TRANSFERRED
-  // events: [previous_owner, new_owner]
+  // event fields: previous_owner, new_owner
   // -------------------------------------------------------
-  handleOwnershipTransferred: async ({ receipt, mysql }) => {
-    const e = receipt.events;
+  const handleOwnershipTransferred: starknet.Writer = async ({
+    event,
+    block,
+    tx,
+  }) => {
+    const transfer = new OwnershipTransfer(
+      tx.transaction_hash,
+      ctx.indexerName,
+    );
+    transfer.previous_owner = toHexAddress(event.previous_owner);
+    transfer.new_owner = toHexAddress(event.new_owner);
+    transfer.block_number = block.block_number;
+    transfer.tx_hash = tx.transaction_hash;
 
-    await mysql.queryAsync(`INSERT IGNORE INTO ownership_transfers SET ?`, [
-      {
-        id: receipt.transaction_hash,
-        previous_owner: toHex(e[0]),
-        new_owner: toHex(e[1]),
-        block_number: (receipt as any).block_number ?? 0,
-        tx_hash: receipt.transaction_hash,
-      },
-    ]);
-  },
-};
+    await transfer.save();
+  };
+
+  return {
+    handleDeposit,
+    handleWithdrawal,
+    handleWbtcOrderPosted,
+    handleWbtcOrderFilled,
+    handleWbtcWithdrawn,
+    handleStrkWithdrawn,
+    handleWbtcRefunded,
+    handleStrkRefunded,
+    handleStrkOrderPosted,
+    handleOwnershipTransferred,
+  };
+}

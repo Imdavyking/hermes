@@ -3,43 +3,48 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import fs from "fs";
-import Checkpoint, { LogLevel } from "@snapshot-labs/checkpoint";
+import Checkpoint, { starknet, LogLevel } from "@snapshot-labs/checkpoint";
+import { RpcProvider } from "starknet";
 import { config } from "./config";
-import { writers } from "./writers";
+import { createWriters } from "./writers";
+
+export type Context = {
+  indexerName: string;
+  provider: RpcProvider;
+};
 
 const dir = __dirname.endsWith("dist/src") ? "../" : "";
 const schemaFile = path.join(__dirname, `${dir}../src/schema.gql`);
 const schema = fs.readFileSync(schemaFile, "utf8");
 
-const checkpointOptions = {
+const checkpoint = new Checkpoint(schema, {
   logLevel: LogLevel.Info,
-  // prettifyLogs: true, // uncomment for local dev
+  prettifyLogs: true,
+  dbConnection: process.env.DATABASE_URL,
+});
+
+// Register the Sepolia indexer
+
+const sepoliaContext: Context = {
+  indexerName: "sepolia",
+  provider: new RpcProvider({ nodeUrl: config.network_node_url }),
 };
+const sepoliaIndexer = new starknet.StarknetIndexer(
+  createWriters(sepoliaContext),
+);
+checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
-// Initialize checkpoint
-const checkpoint = new Checkpoint(config, writers, schema, checkpointOptions);
-
-// Reset entities, seed checkpoints, then start indexing
-checkpoint
-  .reset()
-  .then(() =>
-    checkpoint.seedCheckpoints([
-      {
-        contract: config.sources[0].contract,
-        blocks: [config.sources[0].start],
-      },
-    ]),
-  )
-  .then(() => {
-    checkpoint.start();
-  });
+async function run() {
+  // Uncomment to wipe and re-index from scratch:
+  // await checkpoint.reset();
+  await checkpoint.start();
+}
+run();
 
 const app = express();
 app.use(express.json({ limit: "4mb" }));
 app.use(express.urlencoded({ limit: "4mb", extended: false }));
 app.use(cors({ maxAge: 86400 }));
-
-// Mount Checkpoint's GraphQL API on /
 app.use("/", checkpoint.graphql);
 
 const PORT = process.env.PORT || 3000;
