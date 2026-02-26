@@ -153,9 +153,9 @@ export default function FillOrderPanel() {
         high: allowanceResult[1],
       });
 
-      let required = BigInt(selectedOrder.quotedStrkAmount);
-
-      required = required + required * BigInt(10 ** 16); // account for inflation
+      // Add 1% buffer on top of the quoted amount to absorb any live-price drift
+      const quoted = BigInt(selectedOrder.quotedStrkAmount);
+      const required = quoted + quoted / 100n;
 
       if (currentAllowance >= required) {
         toast.info("Allowance already sufficient.");
@@ -167,7 +167,7 @@ export default function FillOrderPanel() {
         {
           contractAddress: strkAddress.toString(),
           entrypoint: "approve",
-          calldata: [CONTRACT_ADDRESS, selectedOrder.quotedStrkAmount, "0"],
+          calldata: [CONTRACT_ADDRESS, required, "0"],
         },
       ]);
       await account.waitForTransaction(tx.transaction_hash);
