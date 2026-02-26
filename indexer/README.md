@@ -2,9 +2,6 @@
 
 Checkpoint indexer for the PrivateSwap contract on Starknet Sepolia.
 
-**Contract:** `0x6672ba9611e8c31ad69f54cb5a8ec0eccdead4bf330b06ab0db585b4a0be1dc`  
-**Start block:** `6917720`
-
 ## Indexed Events
 
 | Event                  | Entity                                    |
@@ -17,7 +14,6 @@ Checkpoint indexer for the PrivateSwap contract on Starknet Sepolia.
 | `StrkWithdrawn`        | Updates `StrkOrder.is_withdrawn`          |
 | `WbtcRefunded`         | Updates `WbtcOrder.is_refunded`           |
 | `StrkRefunded`         | Updates `StrkOrder.is_refunded`           |
-| `StrkOrderPosted`      | `StrkOrder`                               |
 | `OwnershipTransferred` | `OwnershipTransfer`                       |
 
 ---
@@ -40,11 +36,7 @@ cp .env.example .env
 ### 3. Start a local Postgres (if you don't have one)
 
 ```bash
-docker run --name checkpoint-postgres \
-  -p 5432:5432 \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=private_swap \
-  -d postgres
+docker compose up -d
 ```
 
 ### 4. Generate models & start indexer
@@ -129,22 +121,3 @@ Your GraphQL endpoint will be: `https://your-app.railway.app/graphql`
 
 - Node.js 18+
 - Postgres 15+
-
-docker compose up -d
-
-<!-- services:
-  postgres:
-    image: postgres:15
-    ports:
-      - '5555:5432'
-    environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=default_password
-      - POSTGRES_DB=checkpoint
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-
-
-      DATABASE_URL=postgres://user:default_password@localhost:5555/checkpoint
- -->

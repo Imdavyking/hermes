@@ -298,7 +298,6 @@ mod PrivateSwap {
         StrkWithdrawn: StrkWithdrawn,
         WbtcRefunded: WbtcRefunded,
         StrkRefunded: StrkRefunded,
-        StrkOrderPosted: StrkOrderPosted,
         OwnershipTransferred: OwnershipTransferred,
     }
 
@@ -370,16 +369,6 @@ mod PrivateSwap {
         strk_seller: ContractAddress,
     }
 
-    #[derive(Drop, starknet::Event)]
-    struct StrkOrderPosted {
-        #[key]
-        order_id: felt252,
-        strk_seller: ContractAddress,
-        strk_buyer: ContractAddress,
-        strk_amount: u256,
-        hashlock: felt252,
-        expiry: u64,
-    }
 
     #[derive(Drop, starknet::Event)]
     struct OwnershipTransferred {
