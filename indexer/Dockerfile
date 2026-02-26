@@ -2,15 +2,14 @@ ARG NODE_VERSION=22.8.0
 
 FROM node:${NODE_VERSION}-alpine
 
-
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
 
 COPY . .
-RUN npm run build
+RUN yarn build
 
 EXPOSE 5100
 
-CMD ["npm", "start"]
+CMD ["yarn", "start"]
