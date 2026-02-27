@@ -134,11 +134,14 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       const merkleProof = tree.proof(leafIndex);
       const nullifierHash =
         "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
+      const recipientHash =
+        "0x" + poseidon2Hash([BigInt(strkDestination)]).toString(16);
 
       const noirInput = {
         root: merkleProof.root.toString(),
         nullfier_hash: nullifierHash,
         recipient: strkDestination,
+        recipient_hash: recipientHash,
         nullifier: note.nullifier,
         secret: note.secret,
         merkle_proof: merkleProof.pathElements.map((el: any) => el.toString()),

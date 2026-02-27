@@ -5,8 +5,9 @@ fn main(
     // public inputs
     root: pub Field,
     nullfier_hash: pub Field,
-    recipient: pub Field,
+    recipient_hash: pub Field,
     // private inputs
+    recipient: Field,
     secret: Field,
     nullifier: Field,
     merkle_proof: [Field; 10],
@@ -23,11 +24,10 @@ fn main(
     //check the commitment is in the merkle tree
     let computed_root = merkle_tree::compute_merkle_root(commitment, merkle_proof, is_even);
     assert(computed_root == root, "Computed root does not match the provided root");
-
-    let recipient_binding = recipient.pow_32(2); // recipient * recipient'
     // check that the recipient matches the recipient binding
+    let computed_recipient_hash = poseidon2::Poseidon2::hash([recipient], 1);
     assert(
-        recipient_binding == recipient * recipient,
-        "Recipient does not match the recipient binding",
+        computed_recipient_hash == recipient_hash,
+        "Computed recipient_hash does not match the provided recipient_hash",
     );
 }

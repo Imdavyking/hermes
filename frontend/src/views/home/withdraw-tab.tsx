@@ -67,14 +67,18 @@ export default function WithdrawTab() {
       const nullifierHash =
         "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
 
+      const recipientHash =
+        "0x" + poseidon2Hash([BigInt(recipient)]).toString(16);
+
       const noirInput = {
         root: merkleProof.root.toString(),
         nullfier_hash: nullifierHash,
-        recipient,
+        recipient: recipient,
+        recipient_hash: recipientHash,
         nullifier: note.nullifier,
         secret: note.secret,
-        merkle_proof: merkleProof.pathElements.map((el) => el.toString()),
-        is_even: merkleProof.pathIndices.map((el) => el % 2 === 0),
+        merkle_proof: merkleProof.pathElements.map((el: any) => el.toString()),
+        is_even: merkleProof.pathIndices.map((el: any) => el % 2 === 0),
       };
 
       const toastId = toast.loading("Generating ZK proof…");
