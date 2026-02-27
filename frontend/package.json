@@ -11,10 +11,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@apollo/client": "^3.12.8",
     "@argent/x-sessions": "9.0.0",
     "@aztec/bb.js": "3.0.0-nightly.20251104",
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
     "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
+    "@layerswap/wallet-starknet": "^1.2.1",
+    "@layerswap/widget": "^1.2.2",
     "@noir-lang/noir_js": "1.0.0-beta.16",
     "@starknet-io/get-starknet-core": "4.0.8",
     "@starknet-react/chains": "^5.0.3",
@@ -28,6 +31,7 @@
     "comlink": "4.4.2",
     "framer-motion": "^12.6.3",
     "garaga": "=1.0.1",
+    "graphql": "^16.10.0",
     "html-to-image": "^1.11.13",
     "http-server": "^14.1.1",
     "lucide-react": "^0.514.0",
@@ -44,12 +48,11 @@
     "siwe": "2.3.2",
     "starknet": "^8.5.2",
     "starknetkit": "3.4.3",
-    "@apollo/client": "^3.12.8",
-    "graphql": "^16.10.0",
     "unenv": "^1.10.0",
     "vite-plugin-node-polyfills": "^0.24.0",
     "vite-plugin-serve-static": "^1.1.0",
-    "vite-plugin-wasm": "^3.4.1"
+    "vite-plugin-wasm": "^3.4.1",
+    "zustand": "4.5.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",

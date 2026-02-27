@@ -9,7 +9,7 @@ import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { GET_OPEN_WBTC_ORDERS } from "../../graphql/queries";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
-import { assertReceiptSuccess } from "@/utils/helpers";
+import { assertReceiptSuccess } from "../../utils/helpers";
 
 interface OpenOrder {
   orderId: string;

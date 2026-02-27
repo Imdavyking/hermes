@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract, useReadContract } from "@starknet-react/core";
 import { CallData, uint256 } from "starknet";
-import { FaSpinner, FaBitcoin, FaDownload } from "react-icons/fa";
+import { FaSpinner, FaBitcoin, FaDownload, FaTimes } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
+import { Swap, LayerswapProvider } from "@layerswap/widget";
+import { createStarknetProvider } from "@layerswap/wallet-starknet";
+import "@layerswap/widget/index.css";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import {
@@ -14,7 +17,7 @@ import {
   btnGhost,
   btnPrimary,
 } from "./shared";
-import { assertReceiptSuccess } from "@/utils/helpers";
+import { assertReceiptSuccess } from "../../utils/helpers";
 
 interface DepositTabProps {
   payoutDisplay: string;
@@ -32,6 +35,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   const [approveLoading, setApproveLoading] = useState(false);
   const [depositLoading, setDepositLoading] = useState(false);
   const [BTCDenomination, setBTCDenomination] = useState(0);
+  const [showLayerswap, setShowLayerswap] = useState(false);
 
   const { data: wbtcDenom } = useReadContract({
     abi,
@@ -43,6 +47,21 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   const denomDisplay = wbtcDenom
     ? `${(Number(wbtcDenom as bigint) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })}`
     : "—";
+
+  // Stable provider instance — only created once
+  const starknetProvider = useMemo(
+    () =>
+      createStarknetProvider({
+        walletConnectConfigs: {
+          projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? "",
+          name: "Umbra",
+          description: "Private BTC Swap on Starknet",
+          url: "https://umbra.xyz",
+          icons: [],
+        },
+      }),
+    [],
+  );
 
   const generateNote = useCallback(() => {
     const randHex = () =>
@@ -63,8 +82,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
 
   useEffect(() => {
     const getDenom = async () => {
-      if (!account) return;
-      if (!contract) return;
+      if (!account || !contract) return;
       const wBTCDenom = await contract.call("wBTC_denomination");
       setBTCDenomination(Number(wBTCDenom));
     };
@@ -91,7 +109,6 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     setApproveLoading(true);
     try {
       const wBTCAddress = await contract.call("wBTC_address");
-      console.log("wBTC address:", wBTCAddress);
       const hexAddr = "0x" + BigInt(wBTCAddress.toString()).toString(16);
 
       const allowanceResult = await account.callContract({
@@ -108,11 +125,11 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
       const required = BigInt(BTCDenomination);
 
       if (currentAllowance >= required) {
-        // Already approved — skip the tx and move on
         toast.info("Allowance already sufficient, skipping approve.");
         setStep(3);
         return;
       }
+
       const approveTx = await account.execute([
         {
           contractAddress: wBTCAddress.toString(),
@@ -165,298 +182,405 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      {/* Step progress */}
-      <div
-        style={{
-          background: "#111118",
-          border: "1px solid #1e1e2e",
-          borderRadius: 10,
-          padding: "1.1rem 1.25rem",
-          display: "flex",
-          flexDirection: "column",
-          gap: "0.85rem",
-        }}
-      >
-        <StepRow
-          n={1}
-          label="Generate your note (nullifier + secret)"
-          done={step > 1}
-          active={step === 1}
-        />
-        <StepRow
-          n={2}
-          label="Approve pool"
-          done={step > 2}
-          active={step === 2}
-        />
-        <StepRow
-          n={3}
-          label="Deposit into Merkle tree"
-          done={step > 3}
-          active={step === 3}
-        />
-        <StepRow
-          n={4}
-          label="Save note for withdrawal"
-          done={step === 4}
-          active={step === 4}
-        />
-      </div>
+    <>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        {/* LayerSwap banner — shown on step 1 only */}
+        {step === 1 && (
+          <div
+            style={{
+              background: "#111118",
+              border: "1px solid #1e1e2e",
+              borderRadius: 10,
+              padding: "0.85rem 1.25rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "0.75rem",
+            }}
+          >
+            <span style={{ color: "#555", fontSize: "0.7rem" }}>
+              Need wBTC on Starknet Sepolia?
+            </span>
+            <button
+              onClick={() => setShowLayerswap(true)}
+              style={{
+                background: "none",
+                border: "1px solid #ffc800",
+                borderRadius: 6,
+                color: "#ffc800",
+                fontSize: "0.7rem",
+                padding: "0.35rem 0.75rem",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}
+            >
+              Get wBTC via LayerSwap
+            </button>
+          </div>
+        )}
 
-      {/* Step 1 — Generate note */}
-      {step === 1 && (
+        {/* Step progress */}
         <div
           style={{
             background: "#111118",
             border: "1px solid #1e1e2e",
             borderRadius: 10,
-            padding: "1.25rem",
+            padding: "1.1rem 1.25rem",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.85rem",
           }}
         >
+          <StepRow
+            n={1}
+            label="Generate your note (nullifier + secret)"
+            done={step > 1}
+            active={step === 1}
+          />
+          <StepRow
+            n={2}
+            label="Approve pool"
+            done={step > 2}
+            active={step === 2}
+          />
+          <StepRow
+            n={3}
+            label="Deposit into Merkle tree"
+            done={step > 3}
+            active={step === 3}
+          />
+          <StepRow
+            n={4}
+            label="Save note for withdrawal"
+            done={step === 4}
+            active={step === 4}
+          />
+        </div>
+
+        {/* Step 1 — Generate note */}
+        {step === 1 && (
           <div
             style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "0.75rem",
-              background: "rgba(255,200,0,0.04)",
-              border: "1px solid rgba(255,200,0,0.1)",
-              borderRadius: 8,
-              padding: "0.85rem",
-              marginBottom: "1rem",
+              background: "#111118",
+              border: "1px solid #1e1e2e",
+              borderRadius: 10,
+              padding: "1.25rem",
             }}
           >
-            <RiEyeOffFill
-              size={14}
-              color="#ffc800"
-              style={{ flexShrink: 0, marginTop: 1 }}
-            />
-            <p
+            <div
               style={{
-                color: "#555",
-                fontSize: "0.68rem",
-                lineHeight: 1.75,
-                margin: 0,
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "0.75rem",
+                background: "rgba(255,200,0,0.04)",
+                border: "1px solid rgba(255,200,0,0.1)",
+                borderRadius: 8,
+                padding: "0.85rem",
+                marginBottom: "1rem",
               }}
             >
-              Your <span style={{ color: "#ffc800" }}>nullifier</span> and{" "}
-              <span style={{ color: "#ffc800" }}>secret</span> are generated
-              locally and never leave your browser. The commitment hash is what
-              goes on-chain.
-            </p>
+              <RiEyeOffFill
+                size={14}
+                color="#ffc800"
+                style={{ flexShrink: 0, marginTop: 1 }}
+              />
+              <p
+                style={{
+                  color: "#555",
+                  fontSize: "0.68rem",
+                  lineHeight: 1.75,
+                  margin: 0,
+                }}
+              >
+                Your <span style={{ color: "#ffc800" }}>nullifier</span> and{" "}
+                <span style={{ color: "#ffc800" }}>secret</span> are generated
+                locally and never leave your browser. The commitment hash is
+                what goes on-chain.
+              </p>
+            </div>
+            <button
+              onClick={generateNote}
+              disabled={!address}
+              style={btnPrimary(!!address)}
+            >
+              Generate Note
+            </button>
+            {!address && (
+              <p
+                style={{
+                  color: "#f59e0b",
+                  fontSize: "0.65rem",
+                  textAlign: "center",
+                  marginTop: "0.5rem",
+                }}
+              >
+                Connect wallet first
+              </p>
+            )}
           </div>
-          <button
-            onClick={generateNote}
-            disabled={!address}
-            style={btnPrimary(!!address)}
+        )}
+
+        {/* Step 2 — Approve */}
+        {step === 2 && noteReady && (
+          <div
+            style={{
+              background: "#111118",
+              border: "1px solid #1e1e2e",
+              borderRadius: 10,
+              padding: "1.25rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.85rem",
+            }}
           >
-            Generate Note
-          </button>
-          {!address && (
+            <NotePreview
+              nullifier={nullifier}
+              secret={secret}
+              commitment={commitment}
+            />
+            <button onClick={downloadNote} style={btnGhost}>
+              <FaDownload size={11} />
+              Save umbra-note.json — required to withdraw
+            </button>
+            <button
+              onClick={handleApprove}
+              disabled={approveLoading}
+              style={btnPrimary(!approveLoading)}
+            >
+              {approveLoading ? (
+                <>
+                  <FaSpinner
+                    size={13}
+                    style={{ animation: "spin 1s linear infinite" }}
+                  />
+                  Approving…
+                </>
+              ) : (
+                <>
+                  <FaBitcoin size={13} />
+                  Approve {BTCDenomination / 10 ** 8} wBTC
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Step 3 — Deposit */}
+        {step === 3 && (
+          <div
+            style={{
+              background: "#111118",
+              border: "1px solid #1e1e2e",
+              borderRadius: 10,
+              padding: "1.25rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.85rem",
+            }}
+          >
+            <div
+              style={{
+                background: "#0a0a0f",
+                border: "1px solid #1e1e2e",
+                borderRadius: 8,
+                padding: "0.85rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: "#2a2a3a",
+                    fontSize: "0.6rem",
+                    letterSpacing: "0.12em",
+                    textTransform: "uppercase",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  You send
+                </div>
+                <div
+                  style={{ color: "#fff", fontSize: "1rem", fontWeight: 700 }}
+                >
+                  {denomDisplay} wBTC
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div
+                  style={{
+                    color: "#2a2a3a",
+                    fontSize: "0.6rem",
+                    letterSpacing: "0.12em",
+                    textTransform: "uppercase",
+                    marginBottom: "0.25rem",
+                  }}
+                >
+                  You receive
+                </div>
+                <div
+                  style={{
+                    color: "#ffc800",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {payoutDisplay}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={handleDeposit}
+              disabled={depositLoading}
+              style={btnPrimary(!depositLoading)}
+            >
+              {depositLoading ? (
+                <>
+                  <FaSpinner
+                    size={13}
+                    style={{ animation: "spin 1s linear infinite" }}
+                  />
+                  Depositing…
+                </>
+              ) : (
+                <>
+                  <RiShieldKeyholeFill size={14} />
+                  Deposit into Pool
+                </>
+              )}
+            </button>
             <p
               style={{
-                color: "#f59e0b",
+                color: "#2a2a3a",
                 fontSize: "0.65rem",
                 textAlign: "center",
-                marginTop: "0.5rem",
+                margin: 0,
+                letterSpacing: "0.06em",
               }}
             >
-              Connect wallet first
+              Your commitment is inserted into the Merkle tree · no link to your
+              address
             </p>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Step 2 — Approve */}
-      {step === 2 && noteReady && (
-        <div
-          style={{
-            background: "#111118",
-            border: "1px solid #1e1e2e",
-            borderRadius: 10,
-            padding: "1.25rem",
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.85rem",
-          }}
-        >
-          <NotePreview
-            nullifier={nullifier}
-            secret={secret}
-            commitment={commitment}
-          />
-          <button onClick={downloadNote} style={btnGhost}>
-            <FaDownload size={11} />
-            Save umbra-note.json — required to withdraw
-          </button>
-          <button
-            onClick={handleApprove}
-            disabled={approveLoading}
-            style={btnPrimary(!approveLoading)}
-          >
-            {approveLoading ? (
-              <>
-                <FaSpinner
-                  size={13}
-                  style={{ animation: "spin 1s linear infinite" }}
-                />
-                Approving…
-              </>
-            ) : (
-              <>
-                <FaBitcoin size={13} />
-                Approve {BTCDenomination / 10 ** 8} wBTC
-              </>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Step 3 — Deposit */}
-      {step === 3 && (
-        <div
-          style={{
-            background: "#111118",
-            border: "1px solid #1e1e2e",
-            borderRadius: 10,
-            padding: "1.25rem",
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.85rem",
-          }}
-        >
+        {/* Step 4 — Done */}
+        {step === 4 && (
           <div
             style={{
-              background: "#0a0a0f",
-              border: "1px solid #1e1e2e",
-              borderRadius: 8,
-              padding: "0.85rem",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  color: "#2a2a3a",
-                  fontSize: "0.6rem",
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  marginBottom: "0.25rem",
-                }}
-              >
-                You send
-              </div>
-              <div style={{ color: "#fff", fontSize: "1rem", fontWeight: 700 }}>
-                {denomDisplay} wBTC
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div
-                style={{
-                  color: "#2a2a3a",
-                  fontSize: "0.6rem",
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  marginBottom: "0.25rem",
-                }}
-              >
-                You receive
-              </div>
-              <div
-                style={{ color: "#ffc800", fontSize: "1rem", fontWeight: 700 }}
-              >
-                {payoutDisplay}
-              </div>
-            </div>
-          </div>
-          <button
-            onClick={handleDeposit}
-            disabled={depositLoading}
-            style={btnPrimary(!depositLoading)}
-          >
-            {depositLoading ? (
-              <>
-                <FaSpinner
-                  size={13}
-                  style={{ animation: "spin 1s linear infinite" }}
-                />
-                Depositing…
-              </>
-            ) : (
-              <>
-                <RiShieldKeyholeFill size={14} />
-                Deposit into Pool
-              </>
-            )}
-          </button>
-          <p
-            style={{
-              color: "#2a2a3a",
-              fontSize: "0.65rem",
+              background: "rgba(255,200,0,0.04)",
+              border: "1px solid rgba(255,200,0,0.18)",
+              borderRadius: 10,
+              padding: "2rem 1.5rem",
               textAlign: "center",
-              margin: 0,
-              letterSpacing: "0.06em",
             }}
           >
-            Your commitment is inserted into the Merkle tree · no link to your
-            address
-          </p>
-        </div>
-      )}
+            <RiShieldKeyholeFill
+              size={30}
+              color="#ffc800"
+              style={{ marginBottom: "0.85rem" }}
+            />
+            <div
+              style={{
+                color: "#ffc800",
+                fontWeight: 900,
+                fontSize: "1rem",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Deposited into Umbra
+            </div>
+            <div
+              style={{
+                color: "#555",
+                fontSize: "0.72rem",
+                marginTop: "0.5rem",
+                lineHeight: 1.7,
+              }}
+            >
+              Your note is your key to withdraw. Use the Withdraw tab from any
+              wallet — no link will ever appear on-chain.
+            </div>
+            <button
+              onClick={downloadNote}
+              style={{
+                ...btnGhost,
+                marginTop: "1.25rem",
+                width: "auto",
+                padding: "0.6rem 1.25rem",
+              }}
+            >
+              <FaDownload size={11} />
+              Re-download note
+            </button>
+          </div>
+        )}
+      </div>
 
-      {/* Step 4 — Done */}
-      {step === 4 && (
+      {/* LayerSwap modal */}
+      {showLayerswap && (
         <div
+          onClick={() => setShowLayerswap(false)}
           style={{
-            background: "rgba(255,200,0,0.04)",
-            border: "1px solid rgba(255,200,0,0.18)",
-            borderRadius: 10,
-            padding: "2rem 1.5rem",
-            textAlign: "center",
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
           }}
         >
-          <RiShieldKeyholeFill
-            size={30}
-            color="#ffc800"
-            style={{ marginBottom: "0.85rem" }}
-          />
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
-              color: "#ffc800",
-              fontWeight: 900,
-              fontSize: "1rem",
-              letterSpacing: "0.05em",
+              position: "relative",
+              borderRadius: 12,
+              overflow: "hidden",
             }}
           >
-            Deposited into Umbra
+            {/* Close button */}
+            <button
+              onClick={() => setShowLayerswap(false)}
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                zIndex: 10,
+                background: "rgba(0,0,0,0.5)",
+                border: "none",
+                borderRadius: "50%",
+                width: 28,
+                height: 28,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: "#fff",
+              }}
+            >
+              <FaTimes size={12} />
+            </button>
+
+            <LayerswapProvider
+              config={{
+                version: "testnet",
+                initialValues: {
+                  to: "STARKNET_SEPOLIA",
+                  toAsset: "WBTC",
+                  lockTo: true,
+                  lockToAsset: true,
+                },
+              }}
+              walletProviders={[starknetProvider]}
+            >
+              <Swap />
+            </LayerswapProvider>
           </div>
-          <div
-            style={{
-              color: "#555",
-              fontSize: "0.72rem",
-              marginTop: "0.5rem",
-              lineHeight: 1.7,
-            }}
-          >
-            Your note is your key to withdraw. Use the Withdraw tab from any
-            wallet — no link will ever appear on-chain.
-          </div>
-          <button
-            onClick={downloadNote}
-            style={{
-              ...btnGhost,
-              marginTop: "1.25rem",
-              width: "auto",
-              padding: "0.6rem 1.25rem",
-            }}
-          >
-            <FaDownload size={11} />
-            Re-download note
-          </button>
         </div>
       )}
-    </div>
+    </>
   );
 }

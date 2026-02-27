@@ -16,7 +16,7 @@ import {
   inputStyle,
   type CommitmentData,
 } from "./shared";
-import { assertReceiptSuccess } from "@/utils/helpers";
+import { assertReceiptSuccess } from "../../utils/helpers";
 
 interface PostOrderPanelProps {
   onOrderPosted?: (orderId: string) => void;

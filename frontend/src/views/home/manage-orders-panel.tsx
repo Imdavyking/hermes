@@ -18,7 +18,7 @@ import {
   GET_REFUNDABLE_STRK_ORDERS,
 } from "../../graphql/queries";
 import { btnPrimary, inputStyle, btnGhost } from "./shared";
-import { assertReceiptSuccess } from "@/utils/helpers";
+import { assertReceiptSuccess } from "../../utils/helpers";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ import {
   btnGhost,
   inputStyle,
 } from "./shared";
-import { assertReceiptSuccess } from "@/utils/helpers";
+import { assertReceiptSuccess } from "../../utils/helpers";
 
 export default function WithdrawTab() {
   const { address, account } = useAccount();
