@@ -164,19 +164,6 @@ The frontend uses a [Checkpoint](https://www.npmjs.com/package/@snapshot-labs/ch
 
 One exception: checking whether Alice has revealed her secret (`secret` field on a `WbtcOrder`) still requires a direct contract call, because the secret is not included in any event log and therefore cannot be indexed.
 
-### Running the indexer locally
-
-```bash
-cd indexer
-cp .env.example .env
-# Set STARKNET_RPC, CONTRACT_ADDRESS, START_BLOCK
-
-yarn install
-yarn checkpoint
-```
-
-The GraphQL playground will be available at `http://localhost:5100/graphql`.
-
 ### Schema overview
 
 ```graphql
@@ -257,6 +244,7 @@ The `recipient` parameter in `zk_withdraw_wbtc` and `post_wbtc_order` is **not**
 - snforge 0.53.0
 - Node.js + Yarn (for deploy scripts and indexer)
 - Noir + Barretenberg (for proof generation)
+- Docker + Docker Compose (for running the full stack)
 
 ### Build contracts
 
@@ -289,23 +277,57 @@ The deploy script:
 
 To use real wBTC on Sepolia, skip steps 3–4. The contract defaults to the real address automatically.
 
-### Run the indexer
+---
+
+## Running the Stack
+
+### Run everything with Docker (recommended)
+
+The root `docker-compose.yml` includes the indexer (Postgres + indexer service) and the frontend in a single command. **Always use this from the root — do not start the indexer separately or you will get a port conflict.**
+
+```bash
+# copy and fill in env files first
+cp indexer/.env.example indexer/.env
+cp frontend/.env.example frontend/.env
+
+# start everything
+docker compose up --build
+
+# stop everything
+docker compose down
+```
+
+Services started:
+
+- **postgres** — Postgres 15 on host port `5555`
+- **indexer** — Checkpoint indexer + GraphQL API on host port `5100`
+- **frontend** — Vite frontend on host port `3000`
+
+The frontend will not start until the indexer is healthy, and the indexer will not start until Postgres is healthy. On first boot Checkpoint creates its internal tables automatically — no manual migration needed.
+
+> If you previously ran `docker compose up` inside the `indexer/` directory, bring it down first (`docker compose down` from that directory) before starting from the root, otherwise port `5100` will already be bound.
+
+### Run services individually (development)
+
+**Indexer only:**
 
 ```bash
 cd indexer
 cp .env.example .env
-# fill in STARKNET_RPC, CONTRACT_ADDRESS, START_BLOCK
+# fill in RPC_URL, CONTRACT_ADDRESS, START_BLOCK
 
-yarn install
-yarn checkpoint
+docker compose up --build   # starts Postgres + indexer
 ```
 
-The indexer must be running before the frontend will display orders or deposits. Keep it running alongside the frontend in development.
+The GraphQL playground will be available at `http://localhost:5100/graphql`.
 
-### Run the frontend
+**Frontend only** (requires the indexer to already be running):
 
 ```bash
 cd frontend
+cp .env.example .env
+# set VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
+
 yarn install
 yarn dev
 ```
@@ -325,9 +347,11 @@ DEPLOYER_PRIVATE_KEY=0x...
 **indexer:**
 
 ```env
-STARKNET_RPC=https://starknet-sepolia.infura.io/v3/YOUR_KEY
+DATABASE_URL=postgres://user:default_password@postgres:5432/checkpoint
+RPC_URL=https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_10/YOUR_KEY
 CONTRACT_ADDRESS=0x...
-START_BLOCK=0          # block number of your deployment
+START_BLOCK=0
+PORT=5100
 ```
 
 **frontend:**
