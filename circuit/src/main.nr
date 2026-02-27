@@ -5,6 +5,7 @@ fn main(
     // public inputs
     root: pub Field,
     nullfier_hash: pub Field,
+    recipient: pub Field,
     // private inputs
     secret: Field,
     nullifier: Field,
@@ -22,4 +23,11 @@ fn main(
     //check the commitment is in the merkle tree
     let computed_root = merkle_tree::compute_merkle_root(commitment, merkle_proof, is_even);
     assert(computed_root == root, "Computed root does not match the provided root");
+
+    let recipient_binding = recipient.pow_32(2); // recipient * recipient'
+    // check that the recipient matches the recipient binding
+    assert(
+        recipient_binding == recipient * recipient,
+        "Recipient does not match the recipient binding",
+    );
 }
