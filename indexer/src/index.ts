@@ -23,6 +23,7 @@ const checkpoint = new Checkpoint(schema, {
   prettifyLogs: true,
   dbConnection: process.env.DATABASE_URL,
   overridesConfig: overrides,
+  resetOnConfigChange: true,
 });
 
 // Register the Sepolia indexer
