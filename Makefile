@@ -68,3 +68,28 @@ artifacts:
 
 run-app:
 	cd app && bun run dev
+
+# ── Docker stack ─────────────────────────────────────────────────────────────
+
+up:
+	docker compose up --build
+
+down:
+	docker compose down
+
+up-indexer:
+	cd indexer && docker compose up --build
+
+down-indexer:
+	cd indexer && docker compose down
+
+logs:
+	docker compose logs -f
+
+# ── Local dev (no Docker) ─────────────────────────────────────────────────────
+
+run-indexer:
+	cd indexer && yarn install && yarn dev
+
+run-frontend:
+	cd frontend && yarn install && yarn dev
