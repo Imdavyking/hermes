@@ -82,6 +82,8 @@ export default function WithdrawTab() {
       });
       toast.update(toastId, {
         render: "Proof generated, submitting transaction...",
+        isLoading: false,
+        type: "success",
       });
 
       const tx = await account.execute([

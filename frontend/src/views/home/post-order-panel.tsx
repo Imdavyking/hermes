@@ -148,7 +148,11 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       const { callData } = await generateProof(noirInput, (msg: string) => {
         toast.update(toastId, { render: msg });
       });
-      toast.update(toastId, { render: "Submitting order…" });
+      toast.update(toastId, {
+        render: "Submitting order…",
+        isLoading: false,
+        type: "success",
+      });
 
       const now = Math.floor(Date.now() / 1000);
       const expiry = now + expirySeconds;
