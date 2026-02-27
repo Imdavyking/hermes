@@ -1,6 +1,7 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
 mod field;
 mod incremental_merkle_tree;
+use crate::poseidon2lib::Poseidon2Trait;
 mod poseidon2;
 mod poseidon2lib;
 
@@ -156,9 +157,10 @@ mod PrivateSwap {
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
     use super::{
-        ContractAddress, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait,
+        ContractAddress, FieldTrait, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait,
         IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait,
-        StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address, get_contract_address,
+        Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address,
+        get_contract_address,
     };
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
@@ -198,6 +200,7 @@ mod PrivateSwap {
         pub const STRK_TRANSFER_FAILED: felt252 = 'STRK transfer failed';
         pub const INVALID_PROOF: felt252 = 'invalid proof';
         pub const UNKNOWN_ROOT: felt252 = 'unknown root';
+        pub const NOT_INTENDED_RECIPIENT: felt252 = 'not intended recipient';
         pub const NULLIFIER_USED: felt252 = 'nullifier already used';
         pub const EXPIRY_TOO_SOON: felt252 = 'expiry is too soon';
         pub const ALREADY_WITHDRAWN: felt252 = 'already withdrawn';
@@ -475,6 +478,13 @@ mod PrivateSwap {
             let result = verified.unwrap();
             let root = *result.at(0);
             let nullifier_hash = *result.at(1);
+            let recipient_hash = *result.at(2);
+
+            let computed_recipient_hash = Poseidon2Trait::hash_1(
+                FieldTrait::from_address(alice_strk_destination),
+            );
+
+            assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
 
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
             // Nullifier must not be spent already
@@ -559,6 +569,13 @@ mod PrivateSwap {
             let result = verified.unwrap();
             let root = *result.at(0);
             let nullifier_hash = *result.at(1);
+            let recipient_hash = *result.at(2);
+
+            let computed_recipient_hash = Poseidon2Trait::hash_1(
+                FieldTrait::from_address(alice_strk_destination),
+            );
+
+            assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
 
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
@@ -597,7 +614,13 @@ mod PrivateSwap {
             let result = verified.unwrap();
             let root = *result.at(0);
             let nullifier_hash = *result.at(1);
+            let recipient_hash = *result.at(2);
 
+            let computed_recipient_hash = Poseidon2Trait::hash_1(
+                FieldTrait::from_address(alice_strk_destination),
+            );
+
+            assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
             self.nullifier_hashes.write(nullifier_hash, true);
