@@ -481,7 +481,7 @@ mod PrivateSwap {
             let recipient_hash = *result.at(2);
 
             let computed_recipient_hash = Poseidon2Trait::hash_1(
-                FieldTrait::from_address(alice_strk_destination),
+                FieldTrait::from_address(recipient),
             );
 
             assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
@@ -572,7 +572,7 @@ mod PrivateSwap {
             let recipient_hash = *result.at(2);
 
             let computed_recipient_hash = Poseidon2Trait::hash_1(
-                FieldTrait::from_address(alice_strk_destination),
+                FieldTrait::from_address(recipient),
             );
 
             assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
