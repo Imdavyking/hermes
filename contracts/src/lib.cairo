@@ -202,9 +202,9 @@ mod PrivateSwap {
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
-    // Oracle price must be no older than 6 hours (we are on testnet).
+    // Oracle price must be no older (we are on testnet).
     // On mainnet this could be much shorter, like 15 mins.
-    const MAX_ORACLE_AGE_SECS: u64 = 21600;
+    const MAX_ORACLE_AGE_SECS: u64 = 86400;
 
     // Both expiry timestamps must be at least 1 hour from now.
     // This gives each party enough time to act before their window closes.

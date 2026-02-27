@@ -199,7 +199,7 @@ Prices are fetched directly from individual Chainlink feed contracts on Starknet
 ```
 BTC/USD feed: 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a
 STRK/USD feed: 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937
-Max oracle age: 6 hours (relaxed for Sepolia; tighten for mainnet)
+Max oracle age: >= 6 hours (relaxed for Sepolia; tighten for mainnet)
 ```
 
 The BTC/STRK rate is computed as a cross rate:
