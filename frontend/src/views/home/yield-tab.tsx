@@ -3,17 +3,19 @@ import { toast } from "react-toastify";
 import { useAccount, useContract } from "@starknet-react/core";
 import { uint256 } from "starknet";
 import { FaSpinner, FaUpload } from "react-icons/fa";
-import { RiPlantLine, RiCoinsLine, RiInformationLine } from "react-icons/ri";
+import {
+  RiPlantLine,
+  RiCoinsLine,
+  RiInformationLine,
+  RiArrowDownLine,
+} from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { merkleTree } from "../../helpers/merkle_tree";
 import { useZkVerifier } from "../../helpers/gen_proof";
 import { useIndexerDeposits } from "../../helpers/use_indexer_deposits";
-import {
-  type CommitmentData,
-  inputStyle,
-} from "./shared";
+import { type CommitmentData, inputStyle } from "./shared";
 import { assertReceiptSuccess } from "../../utils/helpers";
 
 type YieldState =
@@ -21,7 +23,8 @@ type YieldState =
   | "checking"
   | "not-earning"
   | "already-earning"
-  | "done";
+  | "start-done"
+  | "stop-done";
 
 export default function YieldTab() {
   const { address, account } = useAccount();
@@ -32,8 +35,9 @@ export default function YieldTab() {
   const [noteJson, setNoteJson] = useState("");
   const [yieldState, setYieldState] = useState<YieldState>("idle");
   const [yieldBalance, setYieldBalance] = useState<string | null>(null);
-  const [earning, setEarning] = useState(false);
+  const [nullifierHash, setNullifierHash] = useState<string | null>(null);
   const [startLoading, setStartLoading] = useState(false);
+  const [stopLoading, setStopLoading] = useState(false);
 
   // ── Parse + check whenever a valid note is loaded ──────────────────────────
   const checkNote = async (raw: string) => {
@@ -47,13 +51,12 @@ export default function YieldTab() {
 
     setYieldState("checking");
     setYieldBalance(null);
-    setEarning(false);
+    setNullifierHash(null);
 
     try {
       const note: CommitmentData = JSON.parse(raw);
-      const nullifierHash =
-        "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
-      const nullHashU256 = uint256.bnToUint256(BigInt(nullifierHash));
+      const nhHex = "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
+      const nullHashU256 = uint256.bnToUint256(BigInt(nhHex));
 
       const [isEarning, balRaw] = await Promise.all([
         contract.call("is_earning", [nullHashU256]),
@@ -61,7 +64,7 @@ export default function YieldTab() {
       ]);
 
       const earning = Boolean(isEarning);
-      setEarning(earning);
+      setNullifierHash(nhHex);
       setYieldBalance(
         earning ? (Number(balRaw) / 1e8).toFixed(8) + " wBTC" : null,
       );
@@ -75,7 +78,7 @@ export default function YieldTab() {
     setNoteJson(val);
     setYieldState("idle");
     setYieldBalance(null);
-    setEarning(false);
+    setNullifierHash(null);
     if (val.includes('"nullifier"') && val.includes('"commitment"')) {
       checkNote(val);
     }
@@ -83,12 +86,11 @@ export default function YieldTab() {
 
   // ── Poll balance every 15s while earning ──────────────────────────────────
   useEffect(() => {
-    if (!earning || !contract || !noteJson) return;
+    const isEarning =
+      yieldState === "already-earning" || yieldState === "start-done";
+    if (!isEarning || !contract || !nullifierHash) return;
     const poll = async () => {
       try {
-        const note: CommitmentData = JSON.parse(noteJson);
-        const nullifierHash =
-          "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
         const bal = await contract.call("get_yield_balance", [
           uint256.bnToUint256(BigInt(nullifierHash)),
         ]);
@@ -97,11 +99,14 @@ export default function YieldTab() {
     };
     const id = setInterval(poll, 15000);
     return () => clearInterval(id);
-  }, [earning, contract, noteJson]);
+  }, [yieldState, contract, nullifierHash]);
 
   // ── Start earning ──────────────────────────────────────────────────────────
+  // Generates a ZK proof and calls start_earning(proof, recipient).
+  // The contract marks the nullifier as SPENT and locks the recipient.
+  // After this, only stop_earning(nullifier_hash) called by `recipient` can withdraw.
   const handleStartEarning = async () => {
-    if (!account || !contract || !noteJson.trim()) return;
+    if (!account || !contract || !noteJson.trim() || !address) return;
     setStartLoading(true);
     const toastId = toast.loading("Building ZK proof…");
     try {
@@ -115,12 +120,11 @@ export default function YieldTab() {
         );
 
       const merkleProof = tree.proof(leafIndex);
-      const nullifierHash =
-        "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
+      const nhHex = "0x" + poseidon2Hash([BigInt(note.nullifier)]).toString(16);
 
       const noirInput = {
         root: merkleProof.root.toString(),
-        nullfier_hash: nullifierHash,
+        nullfier_hash: nhHex,
         recipient: address,
         nullifier: note.nullifier,
         secret: note.secret,
@@ -133,23 +137,25 @@ export default function YieldTab() {
       });
 
       toast.update(toastId, { render: "Submitting to Vesu…" });
+
+      // start_earning(proof, recipient) — recipient is locked on-chain.
+      // The nullifier is marked spent here; use stop_earning to withdraw later.
       const tx = await account.execute([
-        contract.populate("start_earning", [callData.slice(1)]),
+        contract.populate("start_earning", [callData.slice(1), address]),
       ]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
 
+      setNullifierHash(nhHex);
+      setYieldState("start-done");
+      await checkNote(noteJson);
+
       toast.update(toastId, {
-        render: "Earning yield with Vesu!",
+        render: "Earning yield with Vesu! Use 'Withdraw Yield' to stop.",
         isLoading: false,
         type: "success",
-        autoClose: 5000,
+        autoClose: 6000,
       });
-
-      setEarning(true);
-      setYieldState("done");
-      // Fetch initial balance
-      await checkNote(noteJson);
     } catch (err: any) {
       toast.update(toastId, {
         render: err?.message ?? String(err),
@@ -162,7 +168,48 @@ export default function YieldTab() {
     }
   };
 
+  // ── Stop earning ───────────────────────────────────────────────────────────
+  // Calls stop_earning(nullifier_hash) — no ZK proof needed.
+  // Only works if caller == the recipient committed during start_earning.
+  // Contract redeems Vesu shares and sends wBTC + yield to the recipient.
+  const handleStopEarning = async () => {
+    if (!account || !contract || !nullifierHash) return;
+    setStopLoading(true);
+    const toastId = toast.loading("Redeeming Vesu position…");
+    try {
+      const nullHashU256 = uint256.bnToUint256(BigInt(nullifierHash));
+
+      const tx = await account.execute([
+        contract.populate("stop_earning", [nullHashU256]),
+      ]);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
+
+      setYieldState("stop-done");
+      setYieldBalance(null);
+
+      toast.update(toastId, {
+        render: "Yield withdrawn! wBTC + earnings sent to your wallet.",
+        isLoading: false,
+        type: "success",
+        autoClose: 5000,
+      });
+    } catch (err: any) {
+      toast.update(toastId, {
+        render: err?.message ?? String(err),
+        isLoading: false,
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setStopLoading(false);
+    }
+  };
+
+  const isEarningState =
+    yieldState === "already-earning" || yieldState === "start-done";
   const canStart = yieldState === "not-earning" && !!account && !startLoading;
+  const canStop = isEarningState && !!account && !stopLoading;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -186,8 +233,8 @@ export default function YieldTab() {
         <div style={{ fontSize: "0.68rem", color: "#555", lineHeight: 1.8 }}>
           Lend your deposited wBTC on{" "}
           <span style={{ color: "#22c55e" }}>Vesu</span> and earn interest while
-          you wait to swap or withdraw. Your note stays valid — the nullifier is
-          never spent here.
+          you wait. When you're ready, withdraw your principal + yield directly
+          from this tab.
         </div>
       </div>
 
@@ -219,7 +266,7 @@ export default function YieldTab() {
           <HowRow n="1" text="Load your umbra-note.json below" />
           <HowRow
             n="2"
-            text="A ZK proof proves you own the deposit — without revealing which one"
+            text="A ZK proof proves you own the deposit and locks your recipient address"
           />
           <HowRow
             n="3"
@@ -227,86 +274,124 @@ export default function YieldTab() {
           />
           <HowRow
             n="4"
-            text="When you withdraw or swap, Umbra auto-redeems your shares — you get principal + yield"
+            text='When ready, click "Withdraw Yield" — your wallet receives principal + all accrued yield'
           />
         </div>
-      </div>
 
-      {/* Note loader */}
-      <div
-        style={{
-          background: "#111118",
-          border: "1px solid #1e1e2e",
-          borderRadius: 10,
-          padding: "1.1rem 1.2rem",
-          display: "flex",
-          flexDirection: "column",
-          gap: "0.65rem",
-        }}
-      >
+        {/* Important note about nullifier */}
         <div
           style={{
-            color: "#3a3a4a",
-            fontSize: "0.6rem",
-            letterSpacing: "0.15em",
-            textTransform: "uppercase",
-          }}
-        >
-          Your deposit note
-        </div>
-        <textarea
-          value={noteJson}
-          onChange={(e) => handleNoteChange(e.target.value)}
-          placeholder='{"nullifier":"0x...","secret":"0x...","commitment":"0x..."}'
-          rows={3}
-          style={{
-            ...inputStyle,
-            resize: "none",
-            fontSize: "0.7rem",
-            lineHeight: 1.7,
-          }}
-        />
-        <label
-          htmlFor="yield-note-file"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "0.5rem",
-            padding: "0.65rem",
-            border: "1px dashed #1e1e2e",
+            background: "rgba(245,158,11,0.05)",
+            border: "1px solid rgba(245,158,11,0.2)",
             borderRadius: 8,
-            color: "#3a3a4a",
-            fontSize: "0.68rem",
-            cursor: "pointer",
-            letterSpacing: "0.08em",
-            transition: "border-color 0.2s",
+            padding: "0.75rem 0.9rem",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.6rem",
+            marginTop: "0.25rem",
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#555")}
-          onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#1e1e2e")}
         >
-          <FaUpload size={10} /> Upload umbra-note.json
-          <input
-            id="yield-note-file"
-            type="file"
-            accept=".json"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              const r = new FileReader();
-              r.onload = (ev) => {
-                const val = ev.target?.result as string;
-                setNoteJson(val);
-                checkNote(val);
-              };
-              r.readAsText(f);
-            }}
+          <RiInformationLine
+            size={13}
+            color="#f59e0b"
+            style={{ flexShrink: 0, marginTop: 1 }}
           />
-        </label>
+          <p
+            style={{
+              color: "#a07820",
+              fontSize: "0.63rem",
+              lineHeight: 1.75,
+              margin: 0,
+            }}
+          >
+            <strong style={{ color: "#f59e0b" }}>Note:</strong> Starting yield
+            earmarking spends your note's nullifier. You won't be able to use
+            this note in the Withdraw or Swap tabs afterward — use{" "}
+            <strong style={{ color: "#f59e0b" }}>Withdraw Yield</strong> here
+            instead.
+          </p>
+        </div>
       </div>
 
-      {/* Status panel */}
+      {/* Note loader — hidden once earning */}
+      {!isEarningState && yieldState !== "stop-done" && (
+        <div
+          style={{
+            background: "#111118",
+            border: "1px solid #1e1e2e",
+            borderRadius: 10,
+            padding: "1.1rem 1.2rem",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.65rem",
+          }}
+        >
+          <div
+            style={{
+              color: "#3a3a4a",
+              fontSize: "0.6rem",
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+            }}
+          >
+            Your deposit note
+          </div>
+          <textarea
+            value={noteJson}
+            onChange={(e) => handleNoteChange(e.target.value)}
+            placeholder='{"nullifier":"0x...","secret":"0x...","commitment":"0x..."}'
+            rows={3}
+            style={{
+              ...inputStyle,
+              resize: "none",
+              fontSize: "0.7rem",
+              lineHeight: 1.7,
+            }}
+          />
+          <label
+            htmlFor="yield-note-file"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "0.5rem",
+              padding: "0.65rem",
+              border: "1px dashed #1e1e2e",
+              borderRadius: 8,
+              color: "#3a3a4a",
+              fontSize: "0.68rem",
+              cursor: "pointer",
+              letterSpacing: "0.08em",
+              transition: "border-color 0.2s",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#555")}
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.borderColor = "#1e1e2e")
+            }
+          >
+            <FaUpload size={10} /> Upload umbra-note.json
+            <input
+              id="yield-note-file"
+              type="file"
+              accept=".json"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                const r = new FileReader();
+                r.onload = (ev) => {
+                  const val = ev.target?.result as string;
+                  setNoteJson(val);
+                  checkNote(val);
+                };
+                r.readAsText(f);
+              }}
+            />
+          </label>
+        </div>
+      )}
+
+      {/* Status: checking */}
       {yieldState === "checking" && (
         <StatusBox color="#3a3a4a" border="#1e1e2e" bg="#111118">
           <FaSpinner
@@ -317,6 +402,7 @@ export default function YieldTab() {
         </StatusBox>
       )}
 
+      {/* Status: not earning */}
       {yieldState === "not-earning" && (
         <div
           style={{
@@ -335,8 +421,6 @@ export default function YieldTab() {
               This deposit is not yet earning yield.
             </span>
           </div>
-
-          {/* Privacy + yield insight */}
           <div
             style={{
               background: "#0a0a0f",
@@ -371,7 +455,8 @@ export default function YieldTab() {
         </div>
       )}
 
-      {(yieldState === "already-earning" || yieldState === "done") && (
+      {/* Status: earning — live balance + stop button */}
+      {isEarningState && (
         <div
           style={{
             background: "rgba(34,197,94,0.04)",
@@ -419,7 +504,7 @@ export default function YieldTab() {
                   marginTop: "0.1rem",
                 }}
               >
-                Interest accrues automatically · no action needed
+                Interest accrues automatically · withdraw anytime below
               </div>
             </div>
           </div>
@@ -480,66 +565,150 @@ export default function YieldTab() {
             </div>
           </div>
 
-          <p
+          {/* Recipient note */}
+          <div
             style={{
-              color: "#3a3a4a",
-              fontSize: "0.62rem",
-              margin: 0,
-              lineHeight: 1.7,
+              background: "rgba(34,197,94,0.03)",
+              border: "1px solid rgba(34,197,94,0.1)",
+              borderRadius: 8,
+              padding: "0.7rem 0.9rem",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "0.5rem",
             }}
           >
-            To claim your yield, use the{" "}
-            <span style={{ color: "#aaa" }}>Withdraw</span> or{" "}
-            <span style={{ color: "#aaa" }}>Swap</span> tab with this same note.
-            Umbra will automatically redeem your Vesu shares and include the
-            yield in your payout.
-          </p>
+            <RiInformationLine
+              size={12}
+              color="#22c55e"
+              style={{ flexShrink: 0, marginTop: 1 }}
+            />
+            <p
+              style={{
+                color: "#3a3a4a",
+                fontSize: "0.62rem",
+                margin: 0,
+                lineHeight: 1.7,
+              }}
+            >
+              Yield will be sent to the wallet that started earning. Click{" "}
+              <strong style={{ color: "#22c55e" }}>Withdraw Yield</strong> below
+              to redeem your Vesu shares and receive wBTC + all accrued
+              interest.
+            </p>
+          </div>
+
+          {/* Stop earning button */}
+          <button
+            onClick={handleStopEarning}
+            disabled={!canStop}
+            style={{
+              width: "100%",
+              background: canStop
+                ? "rgba(34,197,94,0.12)"
+                : "rgba(34,197,94,0.03)",
+              color: canStop ? "#22c55e" : "#2a4a2a",
+              border: `1px solid ${canStop ? "rgba(34,197,94,0.35)" : "rgba(34,197,94,0.1)"}`,
+              borderRadius: 8,
+              padding: "0.9rem",
+              fontSize: "0.82rem",
+              fontFamily: "'DM Mono', monospace",
+              fontWeight: 900,
+              letterSpacing: "0.08em",
+              cursor: canStop ? "pointer" : "not-allowed",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "0.5rem",
+              transition: "all 0.2s",
+            }}
+          >
+            {stopLoading ? (
+              <>
+                <FaSpinner
+                  size={13}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+                Redeeming shares…
+              </>
+            ) : (
+              <>
+                <RiArrowDownLine size={14} />
+                Withdraw Yield
+              </>
+            )}
+          </button>
         </div>
       )}
 
-      {/* CTA */}
-      <button
-        onClick={handleStartEarning}
-        disabled={!canStart}
-        style={{
-          width: "100%",
-          background: canStart ? "rgba(34,197,94,0.12)" : "#111118",
-          color: canStart ? "#22c55e" : "#2a2a3a",
-          border: `1px solid ${canStart ? "rgba(34,197,94,0.35)" : "#1e1e2e"}`,
-          borderRadius: 8,
-          padding: "1rem",
-          fontSize: "0.85rem",
-          fontFamily: "'DM Mono', monospace",
-          fontWeight: 900,
-          letterSpacing: "0.08em",
-          cursor: canStart ? "pointer" : "not-allowed",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "0.5rem",
-          transition: "all 0.2s",
-        }}
-      >
-        {startLoading ? (
-          <>
-            <FaSpinner
-              size={13}
-              style={{ animation: "spin 1s linear infinite" }}
-            />
-            Generating ZK proof…
-          </>
-        ) : yieldState === "already-earning" || yieldState === "done" ? (
-          <>
-            <RiPlantLine size={14} />
-            Already earning
-          </>
-        ) : (
-          <>
-            <RiPlantLine size={14} />
-            Start Earning with Vesu
-          </>
-        )}
-      </button>
+      {/* Status: withdrawn */}
+      {yieldState === "stop-done" && (
+        <div
+          style={{
+            background: "rgba(34,197,94,0.06)",
+            border: "1px solid rgba(34,197,94,0.3)",
+            borderRadius: 10,
+            padding: "1.25rem",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.5rem",
+            alignItems: "center",
+            textAlign: "center",
+          }}
+        >
+          <RiPlantLine size={24} color="#22c55e" />
+          <div
+            style={{ color: "#22c55e", fontSize: "0.82rem", fontWeight: 700 }}
+          >
+            Yield withdrawn successfully
+          </div>
+          <div
+            style={{ color: "#3a3a4a", fontSize: "0.65rem", lineHeight: 1.7 }}
+          >
+            Your wBTC + accrued interest has been sent to your wallet.
+          </div>
+        </div>
+      )}
+
+      {/* Start earning CTA — only shown when not already earning */}
+      {!isEarningState && yieldState !== "stop-done" && (
+        <button
+          onClick={handleStartEarning}
+          disabled={!canStart}
+          style={{
+            width: "100%",
+            background: canStart ? "rgba(34,197,94,0.12)" : "#111118",
+            color: canStart ? "#22c55e" : "#2a2a3a",
+            border: `1px solid ${canStart ? "rgba(34,197,94,0.35)" : "#1e1e2e"}`,
+            borderRadius: 8,
+            padding: "1rem",
+            fontSize: "0.85rem",
+            fontFamily: "'DM Mono', monospace",
+            fontWeight: 900,
+            letterSpacing: "0.08em",
+            cursor: canStart ? "pointer" : "not-allowed",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "0.5rem",
+            transition: "all 0.2s",
+          }}
+        >
+          {startLoading ? (
+            <>
+              <FaSpinner
+                size={13}
+                style={{ animation: "spin 1s linear infinite" }}
+              />
+              Generating ZK proof…
+            </>
+          ) : (
+            <>
+              <RiPlantLine size={14} />
+              Start Earning with Vesu
+            </>
+          )}
+        </button>
+      )}
 
       {!account && (
         <p

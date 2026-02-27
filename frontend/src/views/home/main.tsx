@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { useAccount, useReadContract, useContract } from "@starknet-react/core";
 import {
   RiShieldKeyholeFill,
-  RiExchangeLine,
-  RiPlantLine,
 } from "react-icons/ri";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import abi from "../../assets/json/abi";

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract, useReadContract } from "@starknet-react/core";
-import { CallData, Contract, RpcProvider, uint256 } from "starknet";
+import { CallData, uint256 } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload, FaFaucet } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
@@ -20,23 +20,7 @@ import { assertReceiptSuccess } from "../../utils/helpers";
 const VESU_WBTC =
   "0x063d32a3fa6074e72e7a1e06fe78c46a0c8473217773e19f11d8c8cbfc4ff8ca";
 // Mint 0.001 wBTC (1_000 sat) — exactly one deposit lot
-const MINT_AMOUNT = 1_000n;
-
-const mintAbi = [
-  {
-    name: "mint",
-    type: "function",
-    inputs: [
-      {
-        name: "recipient",
-        type: "core::starknet::contract_address::ContractAddress",
-      },
-      { name: "amount", type: "core::integer::u256" },
-    ],
-    outputs: [],
-    state_mutability: "external",
-  },
-] as const;
+const MINT_AMOUNT = 1_000n * 100000000n;
 
 interface DepositTabProps {
   payoutDisplay: string;

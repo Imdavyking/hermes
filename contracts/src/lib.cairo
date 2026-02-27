@@ -87,10 +87,14 @@ trait IPrivateSwap<TContractState> {
     fn deposit(ref self: TContractState, commitment: u256);
     fn zk_withdraw_wbtc(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
 
-    // Yield — user proves ownership via ZK and opts in to Vesu lending
-    // wBTC leaves the idle pool and enters Vesu; yield accrues to their position.
-    // On final withdrawal the contract redeems from Vesu and sends wBTC + yield.
-    fn start_earning(ref self: TContractState, proof: Span<felt252>);
+    // Yield
+    // start_earning() locks the recipient address on-chain and marks the nullifier
+    // as spent. The note cannot be used in zk_withdraw_wbtc or post_wbtc_order after this.
+    // stop_earning() can only be called by the committed recipient — no ZK proof needed.
+    fn start_earning(
+        ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress,
+    );
+    fn stop_earning(ref self: TContractState, nullifier_hash: u256);
     fn get_yield_balance(self: @TContractState, nullifier_hash: u256) -> u256;
     fn is_earning(self: @TContractState, nullifier_hash: u256) -> bool;
 
@@ -124,6 +128,7 @@ trait IPrivateSwap<TContractState> {
     fn get_btc_strk_rate(self: @TContractState) -> u256;
     fn owner(self: @TContractState) -> ContractAddress;
     fn get_quoted_strk_amount(self: @TContractState) -> u256;
+    fn get_yield_recipient(self: @TContractState, nullifier_hash: u256) -> ContractAddress;
 
     // Admin
     fn set_mock_wbtc(ref self: TContractState, wbtc: ContractAddress);
@@ -164,7 +169,8 @@ mod PrivateSwap {
     const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;
     const TREE_DEPTH: u32 = 10;
 
-    const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
+    const BTC_USD_FEED: felt252 =
+        0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
@@ -176,13 +182,12 @@ mod PrivateSwap {
     const BPS_DENOMINATOR: u256 = 10000;
     const MIN_STRK_AMOUNT: u256 = 1_000_000_000_000_000_000;
 
-
-    // Vesu wBTC on Starknet Sepolia (publicly mintable — used for testnet) - switch to wBTC on mainnet
+    // Vesu wBTC on Starknet Sepolia (publicly mintable — used for testnet)
+    // Switch to real wBTC address on mainnet.
     const VESU_WBTC_ADDRESS: felt252 =
         0x063d32a3fa6074e72e7a1e06fe78c46a0c8473217773e19f11d8c8cbfc4ff8ca;
 
-    // Vesu wBTC vToken on Starknet Sepolia (ERC-4626 — deposit wBTC, receive yield-bearing
-    // shares)
+    // Vesu wBTC vToken on Starknet Sepolia (ERC-4626 — deposit wBTC, receive yield-bearing shares)
     const VESU_VTOKEN_ADDRESS: felt252 =
         0x05868ed6b7c57ac071bf6bfe762174a2522858b700ba9fb062709e63b65bf186;
 
@@ -221,6 +226,9 @@ mod PrivateSwap {
         pub const NOT_OWNER: felt252 = 'caller is not the owner';
         pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
         pub const ALREADY_EARNING: felt252 = 'nullifier already earning';
+        pub const NOT_EARNING: felt252 = 'nullifier is not earning';
+        pub const NOT_RECIPIENT: felt252 = 'caller is not the recipient';
+        pub const INVALID_RECIPIENT: felt252 = 'recipient cannot be zero';
         pub const VESU_NOT_CONFIGURED: felt252 = 'vesu vtoken not configured';
         pub const VESU_DEPOSIT_FAILED: felt252 = 'vesu deposit failed';
     }
@@ -244,13 +252,16 @@ mod PrivateSwap {
         // Zero address = Vesu disabled (wBTC sits idle in this contract).
         vesu_vtoken: ContractAddress,
         // Per-nullifier yield tracking.
-        // earning[nullifier_hash] = true means this deposit's wBTC is inside Vesu.
-        // shares[nullifier_hash]  = the vToken shares held on behalf of this nullifier.
-        // Neither field is set until the user calls start_earning().
-        // The nullifier is NOT marked spent in nullifier_hashes until the user
-        // calls zk_withdraw_wbtc or post_wbtc_order — so the note remains valid.
+        // earning[nullifier_hash]   = true  → wBTC is inside Vesu for this nullifier.
+        // shares[nullifier_hash]    = vToken shares held on behalf of this nullifier.
+        // recipient[nullifier_hash] = the address locked in at start_earning time.
+        //                             Only this address can call stop_earning.
+        //
+        // The nullifier IS marked spent in nullifier_hashes inside start_earning.
+        // stop_earning is the sole withdrawal path for an earning position.
         nullifier_earning: Map<u256, bool>,
         nullifier_shares: Map<u256, u256>,
+        nullifier_recipient: Map<u256, ContractAddress>,
     }
 
     // -------------------------------------------------------
@@ -263,6 +274,7 @@ mod PrivateSwap {
         Deposit: Deposit,
         Withdrawal: Withdrawal,
         YieldStarted: YieldStarted,
+        YieldStopped: YieldStopped,
         YieldRedeemed: YieldRedeemed,
         WbtcOrderPosted: WbtcOrderPosted,
         WbtcOrderFilled: WbtcOrderFilled,
@@ -296,18 +308,27 @@ mod PrivateSwap {
     struct YieldStarted {
         #[key]
         nullifier_hash: u256,
+        recipient: ContractAddress,
         // vToken shares received from Vesu for BTC_DENOMINATION wBTC
         shares: u256,
     }
 
-    // Emitted when Vesu shares are redeemed back to wBTC on withdrawal.
+    // Emitted when a user calls stop_earning and receives wBTC + yield.
+    #[derive(Drop, starknet::Event)]
+    struct YieldStopped {
+        #[key]
+        nullifier_hash: u256,
+        recipient: ContractAddress,
+        // wBTC returned (principal + yield)
+        amount: u256,
+    }
+
+    // Emitted internally when Vesu shares are redeemed back to wBTC.
     #[derive(Drop, starknet::Event)]
     struct YieldRedeemed {
         #[key]
         nullifier_hash: u256,
-        // Shares that were burned
         shares: u256,
-        // wBTC returned (principal + yield)
         wbtc_returned: u256,
     }
 
@@ -377,7 +398,7 @@ mod PrivateSwap {
         let tx_info = get_tx_info();
 
         // Use Vesu's wBTC on Sepolia — publicly mintable and compatible with the vToken.
-        // Switch to REAL_WBTC_ADDRESS for mainnet deployment.
+        // Switch to real wBTC address for mainnet deployment.
         self.wBTC.write(VESU_WBTC_ADDRESS.try_into().unwrap());
         self.strk.write(REAL_STRK_ADDRESS.try_into().unwrap());
 
@@ -412,9 +433,10 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // DEPOSIT
         // Alice locks BTC_DENOMINATION wBTC into the anonymous pool.
-        // At this point the wBTC is idle — Alice can later choose to
-        // call start_earning() to move it into Vesu, or withdraw/swap
-        // directly without ever touching yield.
+        // At this point the wBTC is idle — Alice can later:
+        //   a) zk_withdraw_wbtc() to withdraw directly, or
+        //   b) post_wbtc_order()  to swap for STRK, or
+        //   c) start_earning()    to earn Vesu yield (then stop_earning() to exit).
         // ---------------------------------------------------
         fn deposit(ref self: ContractState, commitment: u256) {
             assert(!self.commitments.read(commitment), Errors::COMMITMENT_USED);
@@ -433,15 +455,21 @@ mod PrivateSwap {
         // START EARNING
         // Alice uses her ZK proof to opt her deposit into Vesu yield.
         //
-        // - Verifies proof exactly like zk_withdraw_wbtc does.
-        // - Does NOT mark the nullifier as spent — Alice still holds
-        //   a valid note and can withdraw or post an order later.
-        // - Moves BTC_DENOMINATION wBTC from the idle pool into the
-        //   Vesu vToken. Shares are tracked per nullifier_hash.
-        // - On final withdrawal the contract redeems those shares
-        //   and sends wBTC + accrued yield to the recipient.
+        // SECURITY:
+        // - The nullifier is marked spent immediately so the same proof
+        //   cannot be replayed in zk_withdraw_wbtc or post_wbtc_order.
+        // - The recipient address is locked on-chain. Only that address
+        //   can call stop_earning — no ZK proof required at that point.
+        // - The recipient must be non-zero (zero would lock funds forever).
+        //
+        // After this call the note is consumed. The ONLY way to withdraw
+        // the wBTC + yield is via stop_earning(nullifier_hash).
         // ---------------------------------------------------
-        fn start_earning(ref self: ContractState, proof: Span<felt252>) {
+        fn start_earning(
+            ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
+        ) {
+            assert(recipient != contract_address_const::<0>(), Errors::INVALID_RECIPIENT);
+
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
             assert(verified.is_ok(), Errors::INVALID_PROOF);
@@ -451,10 +479,14 @@ mod PrivateSwap {
             let nullifier_hash = *result.at(1);
 
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
-            // Nullifier must not be spent (already used for withdraw/swap)
+            // Nullifier must not be spent already
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
-            // Cannot opt in twice
+            // Cannot opt in twice (belt-and-suspenders given the nullifier check above)
             assert(!self.nullifier_earning.read(nullifier_hash), Errors::ALREADY_EARNING);
+
+            // Mark nullifier as spent. The proof can no longer be used in
+            // zk_withdraw_wbtc or post_wbtc_order — stop_earning is the only exit.
+            self.nullifier_hashes.write(nullifier_hash, true);
 
             let vtoken_addr = self.vesu_vtoken.read();
             assert(vtoken_addr != contract_address_const::<0>(), Errors::VESU_NOT_CONFIGURED);
@@ -472,22 +504,52 @@ mod PrivateSwap {
             let shares = vtoken.deposit(BTC_DENOMINATION, this);
             assert(shares > 0, Errors::VESU_DEPOSIT_FAILED);
 
-            // Record the earning position. The nullifier is NOT marked spent here —
-            // the user still needs their note to withdraw or post an order.
+            // Record the earning position and lock the recipient.
             self.nullifier_earning.write(nullifier_hash, true);
             self.nullifier_shares.write(nullifier_hash, shares);
+            self.nullifier_recipient.write(nullifier_hash, recipient);
 
-            self.emit(YieldStarted { nullifier_hash, shares });
+            self.emit(YieldStarted { nullifier_hash, recipient, shares });
+        }
+
+        // ---------------------------------------------------
+        // STOP EARNING
+        // Redeems the Vesu position and sends wBTC + yield to the recipient.
+        //
+        // No ZK proof required — the recipient address committed during
+        // start_earning is the sole credential. Only that address can call
+        // this function. Anyone can call it on behalf of the recipient but
+        // funds always go to the pre-committed recipient address.
+        // ---------------------------------------------------
+        fn stop_earning(ref self: ContractState, nullifier_hash: u256) {
+            let recipient = self.nullifier_recipient.read(nullifier_hash);
+
+            // Recipient must have been set (i.e. start_earning was called)
+            assert(recipient != contract_address_const::<0>(), Errors::NOT_EARNING);
+            // Only the committed recipient can trigger withdrawal
+            assert(get_caller_address() == recipient, Errors::NOT_RECIPIENT);
+            // Must still be in the earning state (not already redeemed)
+            assert(self.nullifier_earning.read(nullifier_hash), Errors::NOT_EARNING);
+
+            // Redeem Vesu shares → wBTC + yield lands in this contract
+            let amount = self.redeem_vesu_position(nullifier_hash);
+
+            // Clear the recipient slot
+            self.nullifier_recipient.write(nullifier_hash, contract_address_const::<0>());
+
+            // Transfer to recipient
+            let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
+            let success = wbtc.transfer(recipient, amount);
+            assert(success, Errors::TRANSFER_FAILED);
+
+            self.emit(YieldStopped { nullifier_hash, recipient, amount });
         }
 
         // ---------------------------------------------------
         // ZK WITHDRAW wBTC
         // Alice proves she owns a deposit and withdraws directly.
-        //
-        // If the deposit was opted into Vesu via start_earning(), the
-        // contract redeems the vToken shares first — so Alice receives
-        // BTC_DENOMINATION + any accrued yield. If not earning, she
-        // receives exactly BTC_DENOMINATION as before.
+        // Cannot be used if start_earning() was already called for this note
+        // (the nullifier would already be spent).
         // ---------------------------------------------------
         fn zk_withdraw_wbtc(
             ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
@@ -504,14 +566,9 @@ mod PrivateSwap {
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // Determine how much wBTC to send.
-            // If earning: redeem vToken shares → get back principal + yield.
-            // If idle:    send the fixed BTC_DENOMINATION directly.
-            let amount = if self.nullifier_earning.read(nullifier_hash) {
-                self.redeem_vesu_position(nullifier_hash)
-            } else {
-                BTC_DENOMINATION
-            };
+            // A non-earning note always holds exactly BTC_DENOMINATION.
+            // (Earning notes are exited via stop_earning, not here.)
+            let amount = BTC_DENOMINATION;
 
             let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
             let success = wbtc.transfer(recipient, amount);
@@ -523,10 +580,7 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // POST WBTC ORDER
         // Alice uses her ZK proof to post a swap order.
-        //
-        // If the deposit was earning yield via Vesu, the shares are
-        // redeemed first so the wBTC (+ yield) is back in the contract
-        // and available for Bob to receive when he fills the order.
+        // Cannot be used if start_earning() was already called for this note.
         // ---------------------------------------------------
         fn post_wbtc_order(
             ref self: ContractState,
@@ -550,13 +604,10 @@ mod PrivateSwap {
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // If earning, pull wBTC back from Vesu before locking it in the order.
-            // The redeemed amount (principal + yield) becomes the wbtc_amount in the order.
-            let wbtc_amount = if self.nullifier_earning.read(nullifier_hash) {
-                self.redeem_vesu_position(nullifier_hash)
-            } else {
-                BTC_DENOMINATION
-            };
+            // Non-earning orders always use BTC_DENOMINATION.
+            // (Earning positions must call stop_earning first to exit Vesu,
+            //  then deposit again if they want to swap — by design.)
+            let wbtc_amount = BTC_DENOMINATION;
 
             let now = get_block_timestamp();
             assert(expiry >= now + MIN_EXPIRY_DURATION_SECS, Errors::EXPIRY_TOO_SOON);
@@ -803,6 +854,12 @@ mod PrivateSwap {
             self.nullifier_earning.read(nullifier_hash)
         }
 
+        // Returns the recipient locked in at start_earning time.
+        // Returns zero address if this nullifier is not in an earning state.
+        fn get_yield_recipient(self: @ContractState, nullifier_hash: u256) -> ContractAddress {
+            self.nullifier_recipient.read(nullifier_hash)
+        }
+
         fn get_quoted_strk_amount(self: @ContractState) -> u256 {
             self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION
         }
@@ -890,8 +947,8 @@ mod PrivateSwap {
             assert(get_caller_address() == self.owner.read(), Errors::NOT_OWNER);
         }
 
-        // Redeems the vToken shares for a nullifier_hash earning position.
-        // Clears the earning state and emits YieldRedeemed.
+        // Redeems the vToken shares for an earning position.
+        // Clears earning state and emits YieldRedeemed.
         // Returns the wBTC amount received (principal + yield).
         fn redeem_vesu_position(ref self: ContractState, nullifier_hash: u256) -> u256 {
             let vtoken_addr = self.vesu_vtoken.read();
