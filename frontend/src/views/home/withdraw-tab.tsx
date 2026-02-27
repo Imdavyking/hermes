@@ -85,7 +85,7 @@ export default function WithdrawTab() {
         isLoading: false,
         type: "success",
       });
-
+      toast.dismiss(toastId);
       const tx = await account.execute([
         contract.populate("zk_withdraw_wbtc", [callData.slice(1), recipient]),
       ]);

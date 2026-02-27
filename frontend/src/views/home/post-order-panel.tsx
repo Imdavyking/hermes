@@ -153,7 +153,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
         isLoading: false,
         type: "success",
       });
-
+      toast.dismiss(toastId);
       const now = Math.floor(Date.now() / 1000);
       const expiry = now + expirySeconds;
       const slippage = customSlippage ? parseInt(customSlippage) : slippageBps;
@@ -169,7 +169,7 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       ]);
 
       await account.waitForTransaction(tx.transaction_hash);
-      toast.dismiss(toastId);
+
       toast.success("Order posted! Share your hashlock with Bob.");
       setStep(3);
       onOrderPosted?.(swapHashlock);
