@@ -13,8 +13,6 @@ import { useIndexerDeposits } from "../../helpers/use_indexer_deposits";
 import {
   type CommitmentData,
   inputStyle,
-  btnPrimary,
-  btnGhost,
 } from "./shared";
 import { assertReceiptSuccess } from "../../utils/helpers";
 
