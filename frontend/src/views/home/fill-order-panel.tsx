@@ -63,8 +63,6 @@ export default function FillOrderPanel() {
       rateExpiry: Number(o.rate_expiry),
     }));
 
-  console.log({ orders });
-
   // ── Manual order lookup still uses contract directly ─────────────────────────
   const lookupOrder = async () => {
     if (!contract || !manualOrderId.trim()) return;
