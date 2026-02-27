@@ -103,6 +103,27 @@ const contractAbi = [
       },
       {
         type: "function",
+        name: "start_earning",
+        inputs: [{ name: "proof", type: "core::array::Span::<core::felt252>" }],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "get_yield_balance",
+        inputs: [{ name: "nullifier_hash", type: "core::integer::u256" }],
+        outputs: [{ type: "core::integer::u256" }],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
+        name: "is_earning",
+        inputs: [{ name: "nullifier_hash", type: "core::integer::u256" }],
+        outputs: [{ type: "core::bool" }],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
         name: "post_wbtc_order",
         inputs: [
           { name: "proof", type: "core::array::Span::<core::felt252>" },
@@ -213,6 +234,15 @@ const contractAbi = [
       },
       {
         type: "function",
+        name: "vesu_vtoken_address",
+        inputs: [],
+        outputs: [
+          { type: "core::starknet::contract_address::ContractAddress" },
+        ],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
         name: "wBTC_denomination",
         inputs: [],
         outputs: [{ type: "core::integer::u256" }],
@@ -269,8 +299,13 @@ const contractAbi = [
       },
       {
         type: "function",
-        name: "reset_wbtc_real",
-        inputs: [],
+        name: "set_vesu_vtoken",
+        inputs: [
+          {
+            name: "vtoken",
+            type: "core::starknet::contract_address::ContractAddress",
+          },
+        ],
         outputs: [],
         state_mutability: "external",
       },
@@ -292,10 +327,6 @@ const contractAbi = [
     type: "constructor",
     name: "constructor",
     inputs: [
-      {
-        name: "pstrk_class_hash",
-        type: "core::starknet::class_hash::ClassHash",
-      },
       {
         name: "verifier_class_hash",
         type: "core::starknet::class_hash::ClassHash",
@@ -332,6 +363,38 @@ const contractAbi = [
         name: "nullifier_hash",
         type: "core::integer::u256",
         kind: "key",
+      },
+      { name: "amount", type: "core::integer::u256", kind: "data" },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::YieldStarted",
+    kind: "struct",
+    members: [
+      {
+        name: "nullifier_hash",
+        type: "core::integer::u256",
+        kind: "key",
+      },
+      { name: "shares", type: "core::integer::u256", kind: "data" },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::YieldRedeemed",
+    kind: "struct",
+    members: [
+      {
+        name: "nullifier_hash",
+        type: "core::integer::u256",
+        kind: "key",
+      },
+      { name: "shares", type: "core::integer::u256", kind: "data" },
+      {
+        name: "wbtc_returned",
+        type: "core::integer::u256",
+        kind: "data",
       },
     ],
   },
@@ -448,31 +511,6 @@ const contractAbi = [
   },
   {
     type: "event",
-    name: "contracts::PrivateSwap::StrkOrderPosted",
-    kind: "struct",
-    members: [
-      { name: "order_id", type: "core::felt252", kind: "key" },
-      {
-        name: "strk_seller",
-        type: "core::starknet::contract_address::ContractAddress",
-        kind: "data",
-      },
-      {
-        name: "strk_buyer",
-        type: "core::starknet::contract_address::ContractAddress",
-        kind: "data",
-      },
-      {
-        name: "strk_amount",
-        type: "core::integer::u256",
-        kind: "data",
-      },
-      { name: "hashlock", type: "core::felt252", kind: "data" },
-      { name: "expiry", type: "core::integer::u64", kind: "data" },
-    ],
-  },
-  {
-    type: "event",
     name: "contracts::PrivateSwap::OwnershipTransferred",
     kind: "struct",
     members: [
@@ -509,6 +547,16 @@ const contractAbi = [
         kind: "nested",
       },
       {
+        name: "YieldStarted",
+        type: "contracts::PrivateSwap::YieldStarted",
+        kind: "nested",
+      },
+      {
+        name: "YieldRedeemed",
+        type: "contracts::PrivateSwap::YieldRedeemed",
+        kind: "nested",
+      },
+      {
         name: "WbtcOrderPosted",
         type: "contracts::PrivateSwap::WbtcOrderPosted",
         kind: "nested",
@@ -536,11 +584,6 @@ const contractAbi = [
       {
         name: "StrkRefunded",
         type: "contracts::PrivateSwap::StrkRefunded",
-        kind: "nested",
-      },
-      {
-        name: "StrkOrderPosted",
-        type: "contracts::PrivateSwap::StrkOrderPosted",
         kind: "nested",
       },
       {
