@@ -15,6 +15,7 @@ import {
   btnGhost,
   inputStyle,
 } from "./shared";
+import { assertReceiptSuccess } from "@/utils/helpers";
 
 export default function WithdrawTab() {
   const { address, account } = useAccount();
@@ -90,7 +91,8 @@ export default function WithdrawTab() {
         contract.populate("zk_withdraw_wbtc", [callData.slice(1), recipient]),
       ]);
 
-      await account.waitForTransaction(tx.transaction_hash);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
       toast.success("Withdrawn! STRK sent to your wallet 🎉");
       setWithdrawNote("");
       setRecipient("");

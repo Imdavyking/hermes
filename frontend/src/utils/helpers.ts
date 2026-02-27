@@ -1,4 +1,5 @@
 import * as bcu from "bigint-crypto-utils";
+import type { GetTransactionReceiptResponse } from "starknet";
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 const U256_LIMB_COUNT = 3;
@@ -50,3 +51,13 @@ export const getRandomR = (n: bigint): bigint => {
   } while (bcu.gcd(r, n) !== 1n);
   return r;
 };
+
+
+export function assertReceiptSuccess(receipt: GetTransactionReceiptResponse) {
+  if (receipt.isReverted()) {
+    throw new Error(receipt.revert_reason ?? "Transaction reverted");
+  }
+  if (receipt.isError()) {
+    throw new Error("Transaction error");
+  }
+}

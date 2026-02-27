@@ -18,6 +18,7 @@ import {
   GET_REFUNDABLE_STRK_ORDERS,
 } from "../../graphql/queries";
 import { btnPrimary, inputStyle, btnGhost } from "./shared";
+import { assertReceiptSuccess } from "@/utils/helpers";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -753,7 +754,8 @@ export default function ManageOrdersPanel() {
         maxFee: U128_MAX,
         version: "0x3",
       } as any);
-      await account.waitForTransaction(tx.transaction_hash);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
       toast.success(successMsg);
       setOrderStatus((p) =>
         p

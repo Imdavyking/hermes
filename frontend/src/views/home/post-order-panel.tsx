@@ -16,6 +16,7 @@ import {
   inputStyle,
   type CommitmentData,
 } from "./shared";
+import { assertReceiptSuccess } from "@/utils/helpers";
 
 interface PostOrderPanelProps {
   onOrderPosted?: (orderId: string) => void;
@@ -168,8 +169,8 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
         ]),
       ]);
 
-      await account.waitForTransaction(tx.transaction_hash);
-
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
       toast.success("Order posted! Share your hashlock with Bob.");
       setStep(3);
       onOrderPosted?.(swapHashlock);

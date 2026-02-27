@@ -9,6 +9,7 @@ import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { GET_OPEN_WBTC_ORDERS } from "../../graphql/queries";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
+import { assertReceiptSuccess } from "@/utils/helpers";
 
 interface OpenOrder {
   orderId: string;
@@ -126,7 +127,8 @@ export default function FillOrderPanel() {
           calldata: [CONTRACT_ADDRESS, required.toString(), "0"],
         },
       ]);
-      await account.waitForTransaction(tx.transaction_hash);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
       toast.success("STRK approved!");
       setFillStep("fill");
     } catch (err: any) {
@@ -147,7 +149,8 @@ export default function FillOrderPanel() {
       const tx = await account.execute([
         contract.populate("fill_wbtc_order", [orderIdU256, bobExpiry]),
       ]);
-      await account.waitForTransaction(tx.transaction_hash);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
       toast.success(
         "Order filled! Alice will reveal the secret — then claim your wBTC.",
       );

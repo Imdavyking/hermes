@@ -14,6 +14,7 @@ import {
   btnGhost,
   btnPrimary,
 } from "./shared";
+import { assertReceiptSuccess } from "@/utils/helpers";
 
 interface DepositTabProps {
   payoutDisplay: string;
@@ -119,7 +120,10 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
           calldata: [CONTRACT_ADDRESS, BTCDenomination, 0],
         },
       ]);
-      await account.waitForTransaction(approveTx.transaction_hash);
+      const receipt = await account.waitForTransaction(
+        approveTx.transaction_hash,
+      );
+      assertReceiptSuccess(receipt);
       toast.success("wBTC approved!");
       setStep(3);
     } catch (err: any) {
@@ -145,7 +149,8 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         contract.populate("deposit", [commitData]),
       ]);
 
-      await account.waitForTransaction(tx.transaction_hash);
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      assertReceiptSuccess(receipt);
       toast.success(`Deposited into Umbra pool 🛡️`);
       setStep(4);
     } catch (err: any) {
