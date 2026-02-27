@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract, useReadContract } from "@starknet-react/core";
-import { CallData, uint256 } from "starknet";
-import { FaSpinner, FaBitcoin, FaDownload } from "react-icons/fa";
+import { CallData, Contract, RpcProvider, uint256 } from "starknet";
+import { FaSpinner, FaBitcoin, FaDownload, FaFaucet } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
 import abi from "../../assets/json/abi";
@@ -15,6 +15,28 @@ import {
   btnPrimary,
 } from "./shared";
 import { assertReceiptSuccess } from "../../utils/helpers";
+
+// Vesu's wBTC on Sepolia — publicly mintable, no role required
+const VESU_WBTC =
+  "0x063d32a3fa6074e72e7a1e06fe78c46a0c8473217773e19f11d8c8cbfc4ff8ca";
+// Mint 0.001 wBTC (1_000 sat) — exactly one deposit lot
+const MINT_AMOUNT = 1_000n;
+
+const mintAbi = [
+  {
+    name: "mint",
+    type: "function",
+    inputs: [
+      {
+        name: "recipient",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+      { name: "amount", type: "core::integer::u256" },
+    ],
+    outputs: [],
+    state_mutability: "external",
+  },
+] as const;
 
 interface DepositTabProps {
   payoutDisplay: string;
@@ -31,6 +53,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
   const [noteReady, setNoteReady] = useState(false);
   const [approveLoading, setApproveLoading] = useState(false);
   const [depositLoading, setDepositLoading] = useState(false);
+  const [mintLoading, setMintLoading] = useState(false);
   const [BTCDenomination, setBTCDenomination] = useState(0);
 
   const { data: wbtcDenom } = useReadContract({
@@ -53,7 +76,6 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     const n = randHex();
     const s = randHex();
     const c = "0x" + poseidon2Hash([BigInt(n), BigInt(s)]).toString(16);
-
     setNullifier(n);
     setSecret(s);
     setCommitment(c);
@@ -63,8 +85,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
 
   useEffect(() => {
     const getDenom = async () => {
-      if (!account) return;
-      if (!contract) return;
+      if (!account || !contract) return;
       const wBTCDenom = await contract.call("wBTC_denomination");
       setBTCDenomination(Number(wBTCDenom));
     };
@@ -83,32 +104,61 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     toast.success("Note saved — keep this file safe!");
   }, [nullifier, secret, commitment]);
 
-  const handleApprove = async () => {
-    if (!account || !contract) {
-      toast.error("Connect your wallet.");
-      return;
+  // ── Mint test wBTC ─────────────────────────────────────────────────────────
+  // Vesu's Sepolia wBTC has no minter role — anyone can call mint().
+  // We mint exactly BTC_DENOMINATION (1 000 sat) — one deposit lot.
+  const handleMint = async () => {
+    if (!account || !address) return toast.error("Connect your wallet.");
+    setMintLoading(true);
+    const toastId = toast.loading("Minting test wBTC…");
+    try {
+      const amountU256 = uint256.bnToUint256(MINT_AMOUNT);
+      const tx = await account.execute(
+        [
+          {
+            contractAddress: VESU_WBTC,
+            entrypoint: "mint",
+            calldata: CallData.compile([address, amountU256]),
+          },
+        ],
+        { maxFee: 1_000_000_000_000_000n },
+      );
+
+      await account.waitForTransaction(tx.transaction_hash);
+      toast.update(toastId, {
+        render: `Minted ${Number(MINT_AMOUNT)} sat wBTC to your wallet!`,
+        isLoading: false,
+        type: "success",
+        autoClose: 5000,
+      });
+    } catch (err: any) {
+      toast.update(toastId, {
+        render: "Mint failed: " + (err?.message ?? String(err)),
+        isLoading: false,
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setMintLoading(false);
     }
+  };
+
+  const handleApprove = async () => {
+    if (!account || !contract) return toast.error("Connect your wallet.");
     setApproveLoading(true);
     try {
       const wBTCAddress = await contract.call("wBTC_address");
-      console.log("wBTC address:", wBTCAddress);
       const hexAddr = "0x" + BigInt(wBTCAddress.toString()).toString(16);
-
       const allowanceResult = await account.callContract({
         contractAddress: hexAddr,
         entrypoint: "allowance",
         calldata: CallData.compile([address, CONTRACT_ADDRESS]),
       });
-
       const currentAllowance = uint256.uint256ToBN({
         low: allowanceResult[0],
         high: allowanceResult[1],
       });
-
-      const required = BigInt(BTCDenomination);
-
-      if (currentAllowance >= required) {
-        // Already approved — skip the tx and move on
+      if (currentAllowance >= BigInt(BTCDenomination)) {
         toast.info("Allowance already sufficient, skipping approve.");
         setStep(3);
         return;
@@ -138,27 +188,19 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     setDepositLoading(true);
     try {
       const commitData = uint256.bnToUint256(BigInt(commitment));
-      const callData = CallData.compile([commitData]);
-      await account.estimateInvokeFee({
-        contractAddress: CONTRACT_ADDRESS,
-        entrypoint: "deposit",
-        calldata: callData,
-      });
-
       const tx = await account.execute([
         contract.populate("deposit", [commitData]),
       ]);
-
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
-      toast.success(`Deposited into Umbra pool 🛡️`);
+      toast.success("Deposited into Umbra pool!");
       setStep(4);
     } catch (err: any) {
-      const msg =
+      toast.error(
         err?.baseError?.data?.execution_error?.error ??
-        err?.message ??
-        String(err);
-      toast.error(msg);
+          err?.message ??
+          String(err),
+      );
     } finally {
       setDepositLoading(false);
     }
@@ -166,6 +208,71 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      {/* ── Faucet card ─────────────────────────────────────────────────────── */}
+      <div
+        style={{
+          background: "#111118",
+          border: "1px solid #1e1e2e",
+          borderRadius: 10,
+          padding: "1rem 1.2rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "1rem",
+        }}
+      >
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <FaBitcoin size={12} color="#f7931a" />
+            <span
+              style={{ color: "#aaa", fontSize: "0.72rem", fontWeight: 700 }}
+            >
+              Need test wBTC?
+            </span>
+          </div>
+          <span
+            style={{ color: "#3a3a4a", fontSize: "0.62rem", lineHeight: 1.6 }}
+          >
+            Mints {Number(MINT_AMOUNT).toLocaleString()} sat · Sepolia only ·
+            free
+          </span>
+        </div>
+        <button
+          onClick={handleMint}
+          disabled={mintLoading || !address}
+          style={{
+            background:
+              mintLoading || !address ? "transparent" : "rgba(247,147,26,0.1)",
+            color: mintLoading || !address ? "#2a2a3a" : "#f7931a",
+            border: `1px solid ${mintLoading || !address ? "#1e1e2e" : "rgba(247,147,26,0.35)"}`,
+            borderRadius: 8,
+            padding: "0.55rem 1rem",
+            fontSize: "0.72rem",
+            fontFamily: "'DM Mono', monospace",
+            fontWeight: 700,
+            cursor: mintLoading || !address ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.45rem",
+            whiteSpace: "nowrap",
+            transition: "all 0.2s",
+            flexShrink: 0,
+          }}
+        >
+          {mintLoading ? (
+            <FaSpinner
+              size={11}
+              style={{ animation: "spin 1s linear infinite" }}
+            />
+          ) : (
+            <FaFaucet size={11} />
+          )}
+          {mintLoading ? "Minting…" : "Mint wBTC"}
+        </button>
+      </div>
+
       {/* Step progress */}
       <div
         style={{
@@ -204,7 +311,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         />
       </div>
 
-      {/* Step 1 — Generate note */}
+      {/* Step 1 */}
       {step === 1 && (
         <div
           style={{
@@ -267,7 +374,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         </div>
       )}
 
-      {/* Step 2 — Approve */}
+      {/* Step 2 */}
       {step === 2 && noteReady && (
         <div
           style={{
@@ -312,7 +419,7 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         </div>
       )}
 
-      {/* Step 3 — Deposit */}
+      {/* Step 3 */}
       {step === 3 && (
         <div
           style={{

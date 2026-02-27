@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import { useAccount, useReadContract, useContract } from "@starknet-react/core";
-import { RiShieldKeyholeFill, RiExchangeLine } from "react-icons/ri";
+import {
+  RiShieldKeyholeFill,
+  RiExchangeLine,
+  RiPlantLine,
+} from "react-icons/ri";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import abi from "../../assets/json/abi";
 import { StatCard, hexRoot, shortenAddress } from "./shared";
 import DepositTab from "./deposit-tab";
 import WithdrawTab from "./withdraw-tab";
 import SwapTab from "./swap-tab";
+import YieldTab from "./yield-tab";
 
-// Extend Tab type to include swap
-type AppTab = "deposit" | "withdraw" | "swap";
+type AppTab = "deposit" | "withdraw" | "swap" | "yield";
 
 const erc20Abi = [
   {
@@ -83,6 +87,14 @@ export default function UmbraHome() {
     functionName: "strk_address",
     args: [],
   });
+  const { data: quotedStrkRaw } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "get_quoted_strk_amount",
+    args: [],
+    watch: true,
+    refetchInterval: 30000,
+  });
 
   const { contract: erc20Contract } = useContract({
     abi: erc20Abi,
@@ -119,17 +131,8 @@ export default function UmbraHome() {
 
   const poolDepositCount = leafCount ? Number(leafCount) : 0;
   const btcPriceDisplay = btcPrice
-    ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })}`
+    ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
     : "—";
-
-  const { data: quotedStrkRaw } = useReadContract({
-    abi,
-    address: CONTRACT_ADDRESS,
-    functionName: "get_quoted_strk_amount",
-    args: [],
-    watch: true,
-    refetchInterval: 30000,
-  });
   const payoutDisplay = quotedStrkRaw
     ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 8 })} STRK`
     : "—";
@@ -138,14 +141,11 @@ export default function UmbraHome() {
   const strkDisplay =
     strkBalance != null ? `${Number(strkBalance).toFixed(4)}` : "—";
 
-  const TABS: { key: AppTab; label: string; icon?: React.ReactNode }[] = [
+  const TABS: { key: AppTab; label: string }[] = [
     { key: "deposit", label: "↓  Deposit" },
     { key: "withdraw", label: "↑  Withdraw" },
-    {
-      key: "swap",
-      label: "⇄  P2P Swap",
-      icon: <RiExchangeLine size={11} style={{ verticalAlign: "middle" }} />,
-    },
+    { key: "swap", label: "⇄  Swap" },
+    { key: "yield", label: "🌱  Yield" },
   ];
 
   return (
@@ -272,7 +272,7 @@ export default function UmbraHome() {
             label="1 wBTC →"
             value={
               btcRate
-                ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString()).toLocaleString(undefined, { maximumFractionDigits: 8 })} STRK`
+                ? `${BigInt(((btcRate as bigint) / 10n ** 18n).toString()).toLocaleString()} STRK`
                 : "—"
             }
             highlight
@@ -299,11 +299,11 @@ export default function UmbraHome() {
         )}
         {!address && <div style={{ marginBottom: "1.75rem" }} />}
 
-        {/* Tabs — 3 columns */}
+        {/* Tab nav — 4 columns */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1fr 1fr",
             background: "#111118",
             border: "1px solid #1e1e2e",
             borderRadius: 10,
@@ -318,18 +318,24 @@ export default function UmbraHome() {
               onClick={() => setTab(key)}
               style={{
                 background: tab === key ? "#1e1e2e" : "transparent",
-                color: tab === key ? "#ffc800" : "#3a3a4a",
+                color:
+                  tab === key
+                    ? key === "yield"
+                      ? "#22c55e"
+                      : "#ffc800"
+                    : "#3a3a4a",
                 border:
                   tab === key ? "1px solid #2a2a3a" : "1px solid transparent",
                 borderRadius: 8,
-                padding: "0.7rem",
-                fontSize: "0.7rem",
+                padding: "0.7rem 0.4rem",
+                fontSize: "0.68rem",
                 fontFamily: "'DM Mono', monospace",
                 fontWeight: 700,
-                letterSpacing: "0.1em",
+                letterSpacing: "0.08em",
                 textTransform: "uppercase",
                 cursor: "pointer",
                 transition: "all 0.18s",
+                whiteSpace: "nowrap",
               }}
             >
               {label}
@@ -341,6 +347,7 @@ export default function UmbraHome() {
         {tab === "deposit" && <DepositTab payoutDisplay={payoutDisplay} />}
         {tab === "withdraw" && <WithdrawTab />}
         {tab === "swap" && <SwapTab />}
+        {tab === "yield" && <YieldTab />}
 
         {/* Footer */}
         <footer
@@ -353,7 +360,7 @@ export default function UmbraHome() {
             textTransform: "uppercase",
           }}
         >
-          Umbra · Starknet Sepolia · Powered by Garaga + Chainlink + Noir
+          Umbra · Starknet Sepolia · Powered by Garaga + Chainlink + Noir + Vesu
         </footer>
       </div>
 
