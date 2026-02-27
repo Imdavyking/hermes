@@ -91,9 +91,7 @@ trait IPrivateSwap<TContractState> {
     // start_earning() locks the recipient address on-chain and marks the nullifier
     // as spent. The note cannot be used in zk_withdraw_wbtc or post_wbtc_order after this.
     // stop_earning() can only be called by the committed recipient — no ZK proof needed.
-    fn start_earning(
-        ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress,
-    );
+    fn start_earning(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
     fn stop_earning(ref self: TContractState, nullifier_hash: u256);
     fn get_yield_balance(self: @TContractState, nullifier_hash: u256) -> u256;
     fn is_earning(self: @TContractState, nullifier_hash: u256) -> bool;
@@ -169,8 +167,7 @@ mod PrivateSwap {
     const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;
     const TREE_DEPTH: u32 = 10;
 
-    const BTC_USD_FEED: felt252 =
-        0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
+    const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
@@ -187,7 +184,8 @@ mod PrivateSwap {
     const VESU_WBTC_ADDRESS: felt252 =
         0x063d32a3fa6074e72e7a1e06fe78c46a0c8473217773e19f11d8c8cbfc4ff8ca;
 
-    // Vesu wBTC vToken on Starknet Sepolia (ERC-4626 — deposit wBTC, receive yield-bearing shares)
+    // Vesu wBTC vToken on Starknet Sepolia (ERC-4626 — deposit wBTC, receive yield-bearing
+    // shares)
     const VESU_VTOKEN_ADDRESS: felt252 =
         0x05868ed6b7c57ac071bf6bfe762174a2522858b700ba9fb062709e63b65bf186;
 
@@ -604,11 +602,6 @@ mod PrivateSwap {
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
             self.nullifier_hashes.write(nullifier_hash, true);
 
-            // Non-earning orders always use BTC_DENOMINATION.
-            // (Earning positions must call stop_earning first to exit Vesu,
-            //  then deposit again if they want to swap — by design.)
-            let wbtc_amount = BTC_DENOMINATION;
-
             let now = get_block_timestamp();
             assert(expiry >= now + MIN_EXPIRY_DURATION_SECS, Errors::EXPIRY_TOO_SOON);
             assert(
@@ -617,7 +610,7 @@ mod PrivateSwap {
                 Errors::SLIPPAGE_OUT_OF_RANGE,
             );
 
-            let quoted_strk_amount = self.get_btc_strk_rate() * wbtc_amount / WBTC_PRECISION;
+            let quoted_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
             let alice = get_caller_address();
@@ -632,7 +625,7 @@ mod PrivateSwap {
                         wbtc_buyer: contract_address_const::<0>(),
                         alice_strk_destination,
                         hashlock,
-                        wbtc_amount,
+                        wbtc_amount: BTC_DENOMINATION,
                         quoted_strk_amount,
                         slippage_tolerance_bps,
                         expiry,
@@ -651,7 +644,7 @@ mod PrivateSwap {
                         order_id,
                         wbtc_seller: alice,
                         alice_strk_destination,
-                        wbtc_amount,
+                        wbtc_amount: BTC_DENOMINATION,
                         quoted_strk_amount,
                         hashlock,
                         expiry,
