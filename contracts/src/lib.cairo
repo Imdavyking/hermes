@@ -174,7 +174,7 @@ mod PrivateSwap {
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
-    const MAX_ORACLE_AGE_SECS: u64 = 86400;
+    const MAX_ORACLE_AGE_SECS: u64 = 604800;
     const MIN_EXPIRY_DURATION_SECS: u64 = 3600;
     const RATE_VALID_FOR_SECS: u64 = 3600;
     const MIN_SLIPPAGE_BPS: u256 = 10;
