@@ -68,3 +68,42 @@ type OwnershipTransfer {
   block_number: Int!
   tx_hash: String!
 }
+
+# ── DCA ───────────────────────────────────────────────────────────────────────
+
+type DcaOrder {
+  id: ID! # order_id (u256, decimal string)
+  # Identity
+  order_id: BigDecimalU256! # u256 — same value as id, kept for query filters
+  owner: String! # ContractAddress — ZK note owner
+  usdc_recipient: String! # ContractAddress — receives purchased wBTC
+  # Schedule
+  usdc_per_interval: BigDecimalU256! # u256, USDC 6-dec
+  interval_seconds: Int! # u64
+  executions_total: Int! # u32 — snapshot at creation
+  executions_left: Int! # u32 — decremented on each DCAExecuted
+  next_execution: Int! # u64 unix ts — updated after each execution
+  # Status
+  is_cancelled: Boolean!
+
+  # Metadata
+  created_at_block: Int!
+  created_tx_hash: String!
+  last_executed_at_block: Int # null until first execution
+  cancelled_at_block: Int # null unless cancelled
+}
+
+type DcaExecution {
+  id: ID! # "{order_id}-{execution_number}"
+  # Parent order
+  order_id: String! # matches DcaOrder.id
+  # Execution details
+  execution_number: Int! # 1-based counter (executions_total - executions_left)
+  usdc_spent: BigDecimalU256! # u256, USDC 6-dec
+  wbtc_received: BigDecimalU256! # u256, satoshis
+  btc_price_usd: BigDecimalU256! # u256, oracle price 8-dec
+  # Metadata
+  executed_at_block: Int!
+  executed_tx_hash: String!
+  executed_timestamp: Int! # u64 unix ts from block
+}

@@ -120,3 +120,99 @@ export const GET_REFUNDABLE_STRK_ORDERS = gql`
     }
   }
 `;
+
+// ── All active DCA orders for an owner ───────────────────────────────────────
+// "Active" = not cancelled + executions_left > 0
+// Used in DcaTab to show live orders.
+
+export const GET_ACTIVE_DCA_ORDERS = gql`
+  query GetActiveDcaOrders($owner: String!) {
+    dcaorders(
+      where: { owner: $owner, is_cancelled: false, executions_left_gt: "0" }
+      orderBy: created_at_block
+      orderDirection: desc
+    ) {
+      id
+      order_id
+      usdc_recipient
+      usdc_per_interval
+      interval_seconds
+      executions_total
+      executions_left
+      next_execution
+      is_cancelled
+      created_at_block
+      created_tx_hash
+    }
+  }
+`;
+
+// ── All DCA orders (incl. completed + cancelled) for history view ─────────────
+
+export const GET_ALL_DCA_ORDERS = gql`
+  query GetAllDcaOrders($owner: String!) {
+    dcaorders(
+      where: { owner: $owner }
+      orderBy: created_at_block
+      orderDirection: desc
+    ) {
+      id
+      order_id
+      usdc_recipient
+      usdc_per_interval
+      interval_seconds
+      executions_total
+      executions_left
+      next_execution
+      is_cancelled
+      created_at_block
+      last_executed_at_block
+      cancelled_at_block
+    }
+  }
+`;
+
+// ── Execution history for a single DCA order ─────────────────────────────────
+// Used to render the cost-basis chart / execution log.
+
+export const GET_DCA_EXECUTIONS = gql`
+  query GetDcaExecutions($orderId: String!) {
+    dcaexecutions(
+      where: { order_id: $orderId }
+      orderBy: execution_number
+      orderDirection: asc
+    ) {
+      id
+      execution_number
+      usdc_spent
+      wbtc_received
+      btc_price_usd
+      executed_at_block
+      executed_tx_hash
+      executed_timestamp
+    }
+  }
+`;
+
+// ── Single DCA order (for detail panel / cancel confirmation) ─────────────────
+
+export const GET_DCA_ORDER = gql`
+  query GetDcaOrder($orderId: String!) {
+    dcaorder(id: $orderId) {
+      id
+      order_id
+      owner
+      usdc_recipient
+      usdc_per_interval
+      interval_seconds
+      executions_total
+      executions_left
+      next_execution
+      is_cancelled
+      created_at_block
+      created_tx_hash
+      last_executed_at_block
+      cancelled_at_block
+    }
+  }
+`;

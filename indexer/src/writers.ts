@@ -5,6 +5,8 @@ import {
   WbtcOrder,
   StrkOrder,
   OwnershipTransfer,
+  DcaOrder,
+  DcaExecution,
 } from "../.checkpoint/models";
 import { toHexAddress } from "./shared";
 import { Context } from "./index";
@@ -14,15 +16,12 @@ import { Context } from "./index";
 // -------------------------------------------------------
 
 // u256 is encoded as two consecutive felts: [low, high]
-// Returns a DECIMAL string suitable for BigDecimalU256 / numeric columns.
 function readU256(low: string, high: string): string {
   const lo = BigInt(low || "0");
   const hi = BigInt(high || "0");
-  return ((hi << 128n) | lo).toString(); // decimal string ✓
+  return ((hi << 128n) | lo).toString();
 }
 
-// When the ABI decoder gives us a single already-combined u256 value,
-// convert it to decimal (it may arrive as a hex string or bigint).
 function toDecimal(value: string | bigint | number): string {
   return BigInt(value).toString();
 }
@@ -48,7 +47,7 @@ export function createWriters(ctx: Context) {
     let timestamp: number;
 
     if (event) {
-      commitment = toDecimal(event.commitment); // was toHexAddress — FIXED
+      commitment = toDecimal(event.commitment);
       leafIndex = Number(event.leaf_index);
       timestamp = Number(event.timestamp);
     } else if (rawEvent) {
@@ -84,7 +83,7 @@ export function createWriters(ctx: Context) {
 
     if (event) {
       recipient = toHexAddress(event.recipient);
-      nullifierHash = toDecimal(event.nullifier_hash); // was toHexAddress — FIXED
+      nullifierHash = toDecimal(event.nullifier_hash);
     } else if (rawEvent) {
       recipient = toHexAddress(rawEvent.data[0]);
       nullifierHash = readU256(rawEvent.data[1], rawEvent.data[2]);
@@ -124,12 +123,11 @@ export function createWriters(ctx: Context) {
     let rateExpiry: number;
 
     if (event) {
-      id = toDecimal(event.order_id); // was toHexAddress — FIXED
+      id = toDecimal(event.order_id);
       wbtcSeller = toHexAddress(event.wbtc_seller);
       aliceStrkDest = toHexAddress(event.alice_strk_destination);
-      // ABI gives combined u256 — convert directly to decimal
-      wbtcAmount = toDecimal(event.wbtc_amount); // was readU256(val, "0") — FIXED
-      quotedStrkAmount = toDecimal(event.quoted_strk_amount); // same — FIXED
+      wbtcAmount = toDecimal(event.wbtc_amount);
+      quotedStrkAmount = toDecimal(event.quoted_strk_amount);
       hashlock = toHexAddress(event.hashlock);
       expiry = Number(event.expiry);
       rateExpiry = Number(event.rate_expiry);
@@ -184,10 +182,10 @@ export function createWriters(ctx: Context) {
     let bobExpiry: number;
 
     if (event) {
-      wbtcOrderId = toDecimal(event.wbtc_order_id); // was toHexAddress — FIXED
-      strkOrderId = toDecimal(event.strk_order_id); // was toHexAddress — FIXED
+      wbtcOrderId = toDecimal(event.wbtc_order_id);
+      strkOrderId = toDecimal(event.strk_order_id);
       bob = toHexAddress(event.bob);
-      strkAmount = toDecimal(event.strk_amount_locked); // was readU256(val, "0") — FIXED
+      strkAmount = toDecimal(event.strk_amount_locked);
       bobExpiry = Number(event.bob_expiry);
     } else if (rawEvent) {
       const d = rawEvent.data;
@@ -236,7 +234,7 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      ? toDecimal(event.order_id)
       : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await WbtcOrder.loadEntity(orderId, ctx.indexerName);
@@ -259,7 +257,7 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      ? toDecimal(event.order_id)
       : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await StrkOrder.loadEntity(orderId, ctx.indexerName);
@@ -282,7 +280,7 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      ? toDecimal(event.order_id)
       : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await WbtcOrder.loadEntity(orderId, ctx.indexerName);
@@ -305,7 +303,7 @@ export function createWriters(ctx: Context) {
     if (!block) return;
 
     const orderId = event
-      ? toDecimal(event.order_id) // was toHexAddress — FIXED
+      ? toDecimal(event.order_id)
       : readU256(rawEvent.data[0], rawEvent.data[1]);
 
     const order = await StrkOrder.loadEntity(orderId, ctx.indexerName);
@@ -344,7 +342,164 @@ export function createWriters(ctx: Context) {
     await transfer.save();
   };
 
+  // =======================================================
+  // DCA
+  // =======================================================
+
+  // -------------------------------------------------------
+  // DCA ORDER CREATED
+  // rawEvent.data: [order_id.low, order_id.high,
+  //                 owner,
+  //                 usdc_recipient,
+  //                 usdc_per_interval.low, usdc_per_interval.high,
+  //                 interval_seconds,
+  //                 executions_total,
+  //                 next_execution]
+  // -------------------------------------------------------
+  const handleDCAOrderCreated: starknet.Writer = async ({
+    event,
+    rawEvent,
+    block,
+    txId,
+  }) => {
+    if (!block) return;
+
+    let orderId: string;
+    let owner: string;
+    let usdcRecipient: string;
+    let usdcPerInterval: string;
+    let intervalSeconds: number;
+    let executionsTotal: number;
+    let nextExecution: number;
+
+    if (event) {
+      orderId = toDecimal(event.order_id);
+      owner = toHexAddress(event.owner);
+      usdcRecipient = toHexAddress(event.usdc_recipient);
+      usdcPerInterval = toDecimal(event.usdc_per_interval);
+      intervalSeconds = Number(event.interval_seconds);
+      executionsTotal = Number(event.executions_total);
+      nextExecution = Number(event.next_execution);
+    } else if (rawEvent) {
+      const d = rawEvent.data;
+      orderId = readU256(d[0], d[1]);
+      owner = toHexAddress(d[2]);
+      usdcRecipient = toHexAddress(d[3]);
+      usdcPerInterval = readU256(d[4], d[5]);
+      intervalSeconds = Number(d[6]);
+      executionsTotal = Number(d[7]);
+      nextExecution = Number(d[8]);
+    } else return;
+
+    const order = new DcaOrder(orderId, ctx.indexerName);
+    order.order_id = orderId;
+    order.owner = owner;
+    order.usdc_recipient = usdcRecipient;
+    order.usdc_per_interval = usdcPerInterval;
+    order.interval_seconds = intervalSeconds;
+    order.executions_total = executionsTotal;
+    order.executions_left = executionsTotal;
+    order.next_execution = nextExecution;
+    order.is_cancelled = false;
+    order.created_at_block = block.block_number;
+    order.created_tx_hash = txId;
+
+    await order.save();
+  };
+
+  // -------------------------------------------------------
+  // DCA EXECUTED
+  // rawEvent.data: [order_id.low, order_id.high,
+  //                 usdc_spent.low, usdc_spent.high,
+  //                 wbtc_received.low, wbtc_received.high,
+  //                 btc_price_usd.low, btc_price_usd.high,
+  //                 executions_left,
+  //                 next_execution]
+  // -------------------------------------------------------
+  const handleDCAExecuted: starknet.Writer = async ({
+    event,
+    rawEvent,
+    block,
+    txId,
+  }) => {
+    if (!block) return;
+
+    let orderId: string;
+    let usdcSpent: string;
+    let wbtcReceived: string;
+    let btcPriceUsd: string;
+    let executionsLeft: number;
+    let nextExecution: number;
+
+    if (event) {
+      orderId = toDecimal(event.order_id);
+      usdcSpent = toDecimal(event.usdc_spent);
+      wbtcReceived = toDecimal(event.wbtc_received);
+      btcPriceUsd = toDecimal(event.btc_price_usd);
+      executionsLeft = Number(event.executions_left);
+      nextExecution = Number(event.next_execution);
+    } else if (rawEvent) {
+      const d = rawEvent.data;
+      orderId = readU256(d[0], d[1]);
+      usdcSpent = readU256(d[2], d[3]);
+      wbtcReceived = readU256(d[4], d[5]);
+      btcPriceUsd = readU256(d[6], d[7]);
+      executionsLeft = Number(d[8]);
+      nextExecution = Number(d[9]);
+    } else return;
+
+    // 1. Patch parent DcaOrder
+    const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
+    if (order) {
+      order.executions_left = executionsLeft;
+      order.next_execution = nextExecution;
+      order.last_executed_at_block = block.block_number;
+      await order.save();
+    }
+
+    // 2. Append execution history row
+    //    execution_number counts from 1 (total - left after this exec)
+    const executionNumber = order ? order.executions_total - executionsLeft : 0;
+    const execId = `${orderId}-${executionNumber}`;
+
+    const exec = new DcaExecution(execId, ctx.indexerName);
+    exec.order_id = orderId;
+    exec.execution_number = executionNumber;
+    exec.usdc_spent = usdcSpent;
+    exec.wbtc_received = wbtcReceived;
+    exec.btc_price_usd = btcPriceUsd;
+    exec.executed_at_block = block.block_number;
+    exec.executed_tx_hash = txId;
+    exec.executed_timestamp = block.timestamp ?? 0;
+
+    await exec.save();
+  };
+
+  // -------------------------------------------------------
+  // DCA CANCELLED
+  // rawEvent.data: [order_id.low, order_id.high, owner]
+  // -------------------------------------------------------
+  const handleDCACancelled: starknet.Writer = async ({
+    event,
+    rawEvent,
+    block,
+  }) => {
+    if (!block) return;
+
+    const orderId = event
+      ? toDecimal(event.order_id)
+      : readU256(rawEvent.data[0], rawEvent.data[1]);
+
+    const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
+    if (order) {
+      order.is_cancelled = true;
+      order.cancelled_at_block = block.block_number;
+      await order.save();
+    }
+  };
+
   return {
+    // existing
     handleDeposit,
     handleWithdrawal,
     handleWbtcOrderPosted,
@@ -354,5 +509,9 @@ export function createWriters(ctx: Context) {
     handleWbtcRefunded,
     handleStrkRefunded,
     handleOwnershipTransferred,
+    // DCA
+    handleDCAOrderCreated,
+    handleDCAExecuted,
+    handleDCACancelled,
   };
 }
