@@ -1,362 +1,183 @@
 # Umbra — Private BTC Swap on Starknet
 
-> Deposit Bitcoin anonymously. Swap privately for STRK. No on-chain link between buyer and seller.
+> Deposit wBTC anonymously. Withdraw to any address. Swap privately for STRK. Earn yield without revealing your position. No on-chain link between depositor and withdrawer.
 
-Umbra is a privacy-preserving BTC↔STRK atomic swap protocol built on Starknet. Users deposit wBTC into a shielded pool backed by a ZK-verified incremental Merkle tree, then either withdraw wBTC directly to a fresh address or post an open order for Bob to fill with STRK — with zero on-chain link between depositor and withdrawer.
-
-Proofs are generated with **Noir** and verified on-chain via **Garaga**. Prices are sourced from the **Chainlink oracle** (BTC/USD and STRK/USD cross rate). The Merkle tree uses **Poseidon2 over BN254** to stay compatible with Noir's native hash. Swaps are settled via **Hash Time-Lock Contracts (HTLCs)** — trustless and atomic.
+**Noir** (ZK proofs) · **Garaga** (on-chain verifier) · **Pragma** (oracle) · **Vesu** (yield) · **Poseidon2/BN254** (Merkle tree) · **HTLCs** (atomic swaps)
 
 ---
 
 ## How It Works
 
-### Deposit
+### 1. Deposit
 
-Each deposit is a fixed lot of **1,000 satoshis (0.00001 BTC)** — the value of `BTC_DENOMINATION` in the contract.
+1. Generate `nullifier` and `secret` offchain
+2. Compute `commitment = Poseidon2(nullifier, secret)`
+3. Save your note `{ nullifier, secret, commitment }` — **required for all future actions**
+4. Approve and call `deposit(commitment)` — locks `1,000 sat` wBTC, inserts leaf into Merkle tree
 
-1. Approve PrivateSwap to spend `1,000` wBTC base units (satoshis)
-2. Generate a random `nullifier` and `secret` offchain
-3. Compute `commitment = Poseidon2(nullifier, secret)`
-4. Save your note `{ nullifier, secret, commitment }` — you need this to withdraw
-5. Call `deposit(commitment)` — your commitment is inserted into the Merkle tree
+### 2. ZK Withdraw
 
-### ZK Withdraw (direct)
+1. Load your note → frontend reconstructs Merkle tree from indexed deposits
+2. Noir generates a ZK proof of membership without revealing your leaf
+3. Call `zk_withdraw_wbtc(proof, recipient)` → contract verifies proof, checks nullifier, sends wBTC
 
-1. Load your saved note
-2. Frontend fetches all deposit commitments from the indexer and reconstructs the Merkle tree
-3. Noir circuit generates a ZK proof of Merkle membership without revealing your leaf
-4. Call `zk_withdraw_wbtc(proof, recipient)` — contract verifies the proof, checks the nullifier, transfers wBTC to `recipient`
+> `recipient` is bound to the proof via `recipient_hash = Poseidon2(recipient)` — changing it invalidates the proof and prevents frontrunning.
 
-> Note: `recipient` is a plain function parameter — it is not bound to or verified by the proof. Anyone who obtains a valid proof can specify any recipient address.
+### 3. Yield Earning (Vesu)
 
-### Private HTLC Swap (wBTC → STRK)
+1. Load your note → generate ZK proof (same flow as withdraw)
+2. Call `start_earning(proof, recipient)` — marks nullifier spent, deposits wBTC into Vesu lending pool
+3. Vesu mints yield-bearing shares that appreciate as borrowers pay interest
+4. When ready, call `stop_earning(nullifier_hash)` — redeems shares, sends wBTC + all accrued yield to `recipient`
 
-Alice wants STRK. Bob wants wBTC. Neither needs to trust the other.
+> No ZK proof needed to stop earning — only the `recipient` address committed at start time can call it.  
+> Once `start_earning` is called, the note is consumed. The only exit is `stop_earning`.
 
-**Alice (seller):**
+### 4. HTLC Swap (wBTC → STRK)
 
-1. Generate a `secret` and compute `hashlock = pedersen(0, secret)`
-2. Call `post_wbtc_order(proof, alice_strk_destination, hashlock, expiry, slippage_bps)` — proves Merkle membership, locks wBTC, quotes live BTC/STRK rate
-3. The `wbtc_order_id` is Alice's nullifier hash (guaranteed unique, already stored on-chain)
-4. Once Bob fills, call `withdraw_strk(strk_order_id, secret)` — claims STRK, publishes secret on-chain
+**Alice (wBTC seller):**
 
-**Bob (buyer):**
+1. Generate `secret`, compute `hashlock = pedersen(0, secret)`
+2. Call `post_wbtc_order(proof, strk_dest, hashlock, expiry, slippage_bps)` — locks wBTC, quotes live rate
+3. After Bob fills, call `withdraw_strk(strk_order_id, secret)` — claims STRK, publishes secret on-chain
 
-1. Browse open orders from the indexer or receive Alice's `wbtc_order_id` directly
-2. Approve STRK, call `fill_wbtc_order(wbtc_order_id, bob_expiry)` — locks STRK at the live oracle rate, becomes the wBTC buyer
-3. The `strk_order_id` is `pedersen(hashlock, 'fill')` — Bob can derive it from the fill event
-4. Watch for Alice's `withdraw_strk` — the secret is then stored on the wBTC order
-5. Call `withdraw_wbtc(wbtc_order_id)` — contract reads the revealed secret and transfers wBTC
+**Bob (STRK seller):**
+
+1. Find Alice's order via indexer or `wbtc_order_id`
+2. Approve STRK, call `fill_wbtc_order(wbtc_order_id, bob_expiry)` — locks STRK at live rate
+3. Watch for Alice's `withdraw_strk`, then call `withdraw_wbtc(wbtc_order_id)` — secret is now on-chain
 
 **Safety guarantees:**
 
-- Bob's expiry must be strictly less than Alice's — he can always refund STRK before Alice's window opens
-- Alice cannot refund wBTC after she has already revealed the secret (`swap_initiated` guard prevents double-spend)
-- A quoted rate older than 1 hour blocks fills — prevents filling a stale order after a large price move
-- Slippage tolerance (0.1%–10%) is set per order by Alice; fills are rejected if the live rate falls below her floor
+- Bob expiry < Alice expiry — Bob can always refund STRK before Alice's window opens
+- `swap_initiated` flag — Alice cannot refund wBTC after revealing her secret
+- Rate expiry (1h) — stale quotes rejected at fill time
+- Slippage guard (0.1–10%) — fills rejected if live rate drops below Alice's floor
+
+---
+
+## ZK Circuit
+
+Public inputs: `root`, `nullifier_hash`, `recipient_hash`  
+Private inputs: `nullifier`, `secret`, `recipient`, `merkle_proof[10]`, `is_even[10]`
+
+The circuit proves:
+
+- `commitment = Poseidon2(nullifier, secret)` exists in the tree at `root`
+- `nullifier_hash = Poseidon2(nullifier)` — double-spend prevention without revealing nullifier
+- `recipient_hash = Poseidon2(recipient)` — binds destination address to the proof, blocking frontrunning
+
+The same proof is used for `zk_withdraw_wbtc`, `start_earning`, and `post_wbtc_order` — each binding a different destination address as the recipient.
+
+---
+
+## Contract Reference
+
+| Function                                                   | Description                                    |
+| ---------------------------------------------------------- | ---------------------------------------------- |
+| `deposit(commitment)`                                      | Lock 1,000 sat wBTC, insert leaf               |
+| `zk_withdraw_wbtc(proof, recipient)`                       | Verify proof, withdraw wBTC to recipient       |
+| `start_earning(proof, recipient)`                          | Opt deposit into Vesu yield, lock recipient    |
+| `stop_earning(nullifier_hash)`                             | Redeem Vesu shares, receive wBTC + yield       |
+| `get_yield_balance(nullifier_hash)`                        | Current wBTC value of a Vesu position          |
+| `is_earning(nullifier_hash)`                               | Check if a nullifier is in an earning position |
+| `get_yield_recipient(nullifier_hash)`                      | Address locked in at start_earning time        |
+| `post_wbtc_order(proof, dest, hashlock, expiry, slippage)` | Post HTLC swap order                           |
+| `fill_wbtc_order(order_id, bob_expiry)`                    | Bob locks STRK at live rate                    |
+| `withdraw_strk(order_id, secret)`                          | Alice claims STRK, reveals secret on-chain     |
+| `withdraw_wbtc(order_id)`                                  | Bob claims wBTC using revealed secret          |
+| `refund_wbtc(order_id)`                                    | Alice reclaims wBTC after expiry               |
+| `refund_strk(order_id)`                                    | Bob reclaims STRK after his expiry             |
+| `get_btc_strk_rate()`                                      | Live BTC/STRK cross rate from Pragma           |
+| `get_quoted_strk_amount()`                                 | STRK owed for one lot at current price         |
+| `current_root()`                                           | Latest Merkle root                             |
+| `next_leaf_index()`                                        | Total deposits so far                          |
+| `is_known_root(root)`                                      | Check if root is in the last 30 roots          |
+
+**Token addresses (Sepolia):**
+
+```
+wBTC: 0x063d32a3fa6074e72e7a1e06fe78c46a0c8473217773e19f11d8c8cbfc4ff8ca
+STRK: 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
+Vesu vToken: 0x05868ed6b7c57ac071bf6bfe762174a2522858b700ba9fb062709e63b65bf186
+```
 
 ---
 
 ## Architecture
 
 ```
-contracts/
-├── lib.cairo                      # Entry point, module declarations
-├── field.cairo                    # BN254 field arithmetic
-├── poseidon2.cairo                # Poseidon2 permutation (BN254)
-├── poseidon2lib.cairo             # Public Poseidon2 API
-├── incremental_merkle_tree.cairo  # On-chain IMT component (depth 10)
-└── wBTC.cairo                     # Mock wBTC for local testing (8 decimals)
-
-noir/
-└── src/
-    └── main.nr                    # ZK circuit: proves Merkle membership without revealing leaf
-
-indexer/
-├── config.ts                      # Checkpoint config: contract address, event handlers
-├── schema.gql                     # GraphQL schema (Deposit, WbtcOrder, StrkOrder, …)
-└── src/
-    ├── index.ts                   # Writer registration
-    └── writers.ts                 # Event handlers that persist indexed data
+contracts/   Cairo contracts (PrivateSwap, IMT, Poseidon2, MockWBTC)
+noir/        ZK circuit (Merkle membership proof)
+indexer/     Checkpoint indexer → GraphQL API
+frontend/    React UI (Deposit, Withdraw, Swap, Yield tabs)
 ```
 
-### Key Design Decisions
+**Key decisions:**
 
-| Decision                                   | Reason                                                                          |
-| ------------------------------------------ | ------------------------------------------------------------------------------- |
-| Poseidon2 over BN254 (not Stark field)     | Matches Noir's native hash — proofs are compatible                              |
-| Incremental Merkle tree depth 10           | Supports ~1,024 deposits (testnet scope)                                        |
-| Root history (last 30 roots)               | Users can withdraw even if new deposits happened after theirs                   |
-| Nullifier hash as order ID                 | Guaranteed unique; already recorded on-chain when the order is posted           |
-| HTLC with `hashlock = pedersen(0, secret)` | Trustless atomic swap — no escrow, no counterparty risk                         |
-| Slippage tolerance per order               | Alice controls her price risk; Bob fills at live rate                           |
-| Rate expiry (1h)                           | Prevents filling stale orders after large price moves                           |
-| `MIN_STRK_AMOUNT = 1 STRK`                 | Guards against degenerate oracle responses producing dust fills                 |
-| Real STRK as swap currency                 | No mock token needed — uses native Starknet STRK                                |
-| Checkpoint indexer                         | Replaces per-event RPC loops with a single GraphQL query; scales as chain grows |
+| Decision                   | Reason                                                   |
+| -------------------------- | -------------------------------------------------------- |
+| Poseidon2 over BN254       | Matches Noir's native hash                               |
+| IMT depth 10               | ~1,024 deposits (testnet scope)                          |
+| Root history (30)          | Withdraw even after new deposits                         |
+| Nullifier hash as order ID | Unique, already on-chain                                 |
+| Recipient hash in proof    | Prevents frontrunning on all ZK functions                |
+| Vesu ERC-4626 for yield    | Non-custodial, share-based — yield accrues automatically |
+| Checkpoint indexer         | Single GraphQL query vs O(n) RPC calls                   |
+
+**Oracle (Pragma, Sepolia):**
+
+```
+BTC/USD:  0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a
+STRK/USD: 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937
+
+rate = (btc_usd × 10^strk_dec × STRK_PRECISION) / (strk_usd × 10^btc_dec)
+```
+
+Max oracle age: 7 days (testnet) — tighten to 1h for mainnet.
 
 ---
 
-## Contracts
+## Quick Start
 
-### PrivateSwap
-
-The main contract. Deploys the Garaga verifier internally from its class hash. Defaults to real wBTC and real STRK on Sepolia — no mock tokens required.
-
-```
-wBTC (Starknet Sepolia): 0x00452bd5c0512a61df7c7be8cfea5e4f893cb40e126bdc40aee6054db955129e
-STRK (Starknet Sepolia): 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d
-```
-
-| Function                                                            | Description                                                                      |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `deposit(commitment)`                                               | Lock `BTC_DENOMINATION` (1,000 sat) wBTC, insert commitment into Merkle tree     |
-| `zk_withdraw_wbtc(proof, recipient)`                                | Verify ZK proof and withdraw wBTC directly to any address                        |
-| `post_wbtc_order(proof, strk_dest, hashlock, expiry, slippage_bps)` | Post an open HTLC swap order using a ZK proof                                    |
-| `fill_wbtc_order(wbtc_order_id, bob_expiry)`                        | Bob locks STRK at live rate and becomes the wBTC buyer                           |
-| `withdraw_strk(strk_order_id, secret)`                              | Alice reveals secret to claim STRK; secret is published on the paired wBTC order |
-| `withdraw_wbtc(wbtc_order_id)`                                      | Bob claims wBTC after Alice has revealed the secret on-chain                     |
-| `refund_wbtc(wbtc_order_id)`                                        | Alice reclaims wBTC after expiry, provided she never revealed the secret         |
-| `refund_strk(strk_order_id)`                                        | Bob reclaims STRK after his expiry, if Alice never revealed the secret           |
-| `get_wbtc_order(order_id)`                                          | Read a `WbtcOrder` by ID                                                         |
-| `get_strk_order(order_id)`                                          | Read a `StrkOrder` by ID                                                         |
-| `get_btc_strk_rate()`                                               | Live BTC/STRK rate (STRK units per whole BTC) from Chainlink cross rate          |
-| `get_quoted_strk_amount()`                                          | STRK owed for one `BTC_DENOMINATION` lot at the current price                    |
-| `get_btc_usd_price()`                                               | Raw BTC/USD price and decimals from Chainlink                                    |
-| `get_strk_usd_price()`                                              | Raw STRK/USD price and decimals from Chainlink                                   |
-| `current_root()`                                                    | Latest Merkle root                                                               |
-| `next_leaf_index()`                                                 | Number of deposits so far                                                        |
-| `is_known_root(root)`                                               | Check whether a root is in the last 30 roots                                     |
-| `wBTC_address()`                                                    | Active wBTC contract address                                                     |
-| `strk_address()`                                                    | Active STRK contract address                                                     |
-| `wBTC_denomination()`                                               | The fixed lot size in wBTC base units (1,000)                                    |
-| `owner()`                                                           | Current contract owner                                                           |
-| `set_mock_wbtc(addr)`                                               | Owner-only: replace wBTC address for local testing                               |
-| `reset_wbtc_real()`                                                 | Owner-only: restore wBTC address to the canonical Starknet value                 |
-| `transfer_ownership(new_owner)`                                     | Owner-only: transfer contract ownership                                          |
-
-### Mock wBTC
-
-Used in local tests and development. 8 decimals. Minted by an authorised minter address set at deploy time.
-
----
-
-## Indexer (Checkpoint)
-
-The frontend uses a [Checkpoint](https://www.npmjs.com/package/@snapshot-labs/checkpoint) indexer to query on-chain state without scanning raw RPC events at runtime.
-
-### What it indexes
-
-| Event                  | Stored as                 | Used for                                     |
-| ---------------------- | ------------------------- | -------------------------------------------- |
-| `Deposit`              | `Deposit`                 | Reconstructing the Merkle tree for ZK proofs |
-| `WbtcOrderPosted`      | `WbtcOrder`               | Browsing open orders (Fill Order panel)      |
-| `WbtcOrderFilled`      | `WbtcOrder` + `StrkOrder` | Tracking filled orders, claimable STRK       |
-| `WbtcWithdrawn`        | `WbtcOrder`               | Marking orders as claimed                    |
-| `StrkWithdrawn`        | `StrkOrder`               | Marking STRK orders as claimed               |
-| `WbtcRefunded`         | `WbtcOrder`               | Marking orders as refunded                   |
-| `StrkRefunded`         | `StrkOrder`               | Marking STRK orders as refunded              |
-| `OwnershipTransferred` | `OwnershipTransfer`       | Audit trail                                  |
-
-### Why not just use `provider.getEvents`?
-
-`provider.getEvents` makes one RPC call per page of events, then a separate contract call for each result to fetch current state — O(n) RPC calls that get slower as the chain grows. The indexer pre-processes all events into a Postgres database, so the frontend gets everything in a single GraphQL query.
-
-One exception: checking whether Alice has revealed her secret (`secret` field on a `WbtcOrder`) still requires a direct contract call, because the secret is not included in any event log and therefore cannot be indexed.
-
-### Schema overview
-
-```graphql
-type Deposit       { id, commitment, leaf_index, timestamp, block_number, tx_hash }
-type WbtcOrder     { id, wbtc_seller, wbtc_amount, quoted_strk_amount, hashlock,
-                     expiry, is_filled, is_withdrawn, is_refunded, … }
-type StrkOrder     { id, strk_seller, strk_buyer, strk_amount, hashlock,
-                     expiry, is_withdrawn, is_refunded, … }
-type OwnershipTransfer { id, previous_owner, new_owner, block_number, tx_hash }
-```
-
-See `indexer/src/schema.gql` for the full schema.
-
----
-
-## Oracle Integration
-
-Prices are fetched directly from individual Chainlink feed contracts on Starknet Sepolia:
-
-```
-BTC/USD feed: 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a
-STRK/USD feed: 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937
-Max oracle age: >= 6 hours (relaxed for Sepolia; tighten for mainnet)
-```
-
-The BTC/STRK rate is computed as a cross rate:
-
-```
-rate (STRK per BTC) = (btc_usd × 10^strk_decimals × STRK_PRECISION)
-                      / (strk_usd × 10^btc_decimals)
-
-quoted_strk_amount  = rate × BTC_DENOMINATION / WBTC_PRECISION
-```
-
----
-
-## ZK Circuit (Noir)
-
-```noir
-use dep::poseidon::poseidon2;
-
-fn compute_merkle_root(
-    leaf: Field,
-    merkle_proof: [Field; 10],
-    is_even: [bool; 10]
-) -> Field {
-    let mut hash = leaf;
-    for i in 0..10 {
-        let (left, right) = if is_even[i] {
-            (hash, merkle_proof[i])
-        } else {
-            (merkle_proof[i], hash)
-        };
-        hash = poseidon2::Poseidon2::hash([left, right], 2);
-    }
-    hash
-}
-```
-
-Public outputs (read by the contract from the verified proof): `root`, `nullifier_hash`  
-Private inputs: `nullifier`, `secret`, `merkle_proof`, `is_even`
-
-The circuit proves:
-
-- `commitment = Poseidon2(nullifier, secret)` exists in the tree at the claimed `root`
-- `nullifier_hash = Poseidon2(nullifier)` — prevents double withdrawal without revealing the nullifier
-
-The `recipient` parameter in `zk_withdraw_wbtc` and `post_wbtc_order` is **not** part of the proof — it is a plain calldata argument.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Scarb 2.14.0
-- Cairo 2.14.0
-- snforge 0.53.0
-- Node.js + Yarn (for deploy scripts and indexer)
-- Noir + Barretenberg (for proof generation)
-- Docker + Docker Compose (for running the full stack)
-
-### Build contracts
+**Prerequisites:** Scarb 2.14.0 · Cairo 2.14.0 · snforge 0.53.0 · Node.js + Yarn · Noir + Barretenberg · Docker
 
 ```bash
-cd contracts
-scarb build
-```
-
-### Test
-
-```bash
+# build & test
+cd contracts && scarb build
 snforge test
-```
 
-### Deploy
-
-```bash
-cp .env.example .env
-# fill in RPC_ENDPOINT, DEPLOYER_ADDRESS, DEPLOYER_PRIVATE_KEY
-
+# deploy
+cp .env.example .env   # fill in RPC_ENDPOINT, DEPLOYER_ADDRESS, DEPLOYER_PRIVATE_KEY
 yarn deploy
-```
 
-The deploy script:
-
-1. Declares the Garaga verifier class
-2. Deploys PrivateSwap (verifier deployed internally; wBTC and STRK default to real Sepolia addresses)
-3. Optionally deploys MockWBTC with the deployer as minter
-4. Calls `set_mock_wbtc` to register the mock for local testing
-
-To use real wBTC on Sepolia, skip steps 3–4. The contract defaults to the real address automatically.
-
----
-
-## Running the Stack
-
-### Run everything with Docker (recommended)
-
-The root `docker-compose.yml` includes the indexer (Postgres + indexer service) and the frontend in a single command. **Always use this from the root — do not start the indexer separately or you will get a port conflict.**
-
-```bash
-# copy and fill in env files first
+# run full stack
 cp indexer/.env.example indexer/.env
 cp frontend/.env.example frontend/.env
-
-# start everything
 docker compose up --build
-
-# stop everything
-docker compose down
 ```
 
-Services started:
+Services: **Postgres** `:5555` · **Indexer + GraphQL** `:5100` · **Frontend** `:3000`
 
-- **postgres** — Postgres 15 on host port `5555`
-- **indexer** — Checkpoint indexer + GraphQL API on host port `5100`
-- **frontend** — Vite frontend on host port `3000`
-
-The frontend will not start until the indexer is healthy, and the indexer will not start until Postgres is healthy. On first boot Checkpoint creates its internal tables automatically — no manual migration needed.
-
-> If you previously ran `docker compose up` inside the `indexer/` directory, bring it down first (`docker compose down` from that directory) before starting from the root, otherwise port `5100` will already be bound.
-
-### Run services individually (development)
-
-**Indexer only:**
-
-```bash
-cd indexer
-cp .env.example .env
-# fill in RPC_URL, CONTRACT_ADDRESS, START_BLOCK
-
-docker compose up --build   # starts Postgres + indexer
-```
-
-The GraphQL playground will be available at `http://localhost:5100/graphql`.
-
-**Frontend only** (requires the indexer to already be running):
-
-```bash
-cd frontend
-cp .env.example .env
-# set VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
-
-yarn install
-yarn dev
-```
+> Always run `docker compose up` from the root. Running it inside `indexer/` first will bind port 5100 and cause a conflict.
 
 ---
 
 ## Environment Variables
 
-**contracts / deploy:**
-
 ```env
+# contracts
 RPC_ENDPOINT=https://starknet-sepolia.infura.io/v3/YOUR_KEY
 DEPLOYER_ADDRESS=0x...
 DEPLOYER_PRIVATE_KEY=0x...
-```
 
-**indexer:**
-
-```env
+# indexer
 DATABASE_URL=postgres://user:default_password@postgres:5432/checkpoint
-RPC_URL=https://starknet-sepolia.g.alchemy.com/starknet/version/rpc/v0_10/YOUR_KEY
+RPC_URL=https://...
 CONTRACT_ADDRESS=0x...
 START_BLOCK=0
-PORT=5100
-```
 
-**frontend:**
-
-```env
+# frontend
 VITE_CONTRACT_ADDRESS=0x...
 VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
 ```
@@ -365,16 +186,17 @@ VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
 
 ## Security Notes
 
-- Nullifiers are marked spent **before** token transfers (reentrancy guard)
-- Root history of 30 prevents griefing via fast root rotation
-- `set_mock_wbtc`, `reset_wbtc_real`, and `transfer_ownership` are owner-only — guarded by `assert_only_owner()`
-- Bob's HTLC expiry is enforced to be strictly less than Alice's — Bob can always refund STRK before Alice's window opens
-- Alice cannot refund wBTC after she has revealed the secret (`!swap_initiated` guard prevents double-spend)
-- The 1-hour rate expiry (`RATE_VALID_FOR_SECS`) prevents fills against stale price quotes
-- Fills are rejected if the live STRK amount falls below `1 STRK` (`MIN_STRK_AMOUNT`), guarding against degenerate oracle responses
-- Proof verification is handled by Garaga's `verify_ultra_keccak_zk_honk_proof`
-- The `recipient` in `zk_withdraw_wbtc` is not bound to the proof — a leaked proof could be front-run with a different recipient
-- **This is an unaudited testnet demo — do not use with real funds**
+- Nullifiers marked spent **before** token transfers (CEI pattern — no reentrancy)
+- Recipient address cryptographically bound to proof — frontrunning not possible on any ZK function
+- Root history of 30 — proof stays valid even if new deposits land before submission
+- Yield recipient locked at `start_earning` time — cannot be changed after the fact
+- Vesu deposit approved for exact `BTC_DENOMINATION` only — no excess allowance left on vToken
+- Bob expiry strictly < Alice expiry — HTLC ordering enforced on-chain
+- `swap_initiated` flag — Alice cannot double-spend after secret reveal
+- Rate expiry (1h) + slippage guard — protects Alice from price manipulation at fill time
+- All admin functions are owner-only (`assert_only_owner`)
+
+> ⚠️ Unaudited testnet demo — do not use with real funds.
 
 ---
 
