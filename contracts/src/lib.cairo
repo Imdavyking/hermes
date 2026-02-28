@@ -1,8 +1,8 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
 
 mod field;
-mod mockUSDT;
 mod incremental_merkle_tree;
+mod mockUSDT;
 mod poseidon2;
 mod poseidon2lib;
 use crate::field::FieldTrait;
@@ -70,7 +70,7 @@ struct Round {
 #[derive(Drop, Serde)]
 struct ExecPayload {
     target: ContractAddress,
-selector: ByteArray,
+    selector: ByteArray,
     calldata: Array<felt252>,
 }
 
@@ -265,6 +265,9 @@ mod PrivateSwap {
     const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
+
+    const KEEPER_FEE_STRK: u256 = 500_000_000_000_000_000; // 0.5 STRK
+
 
     const ZERO_ADDRESS: ContractAddress = 0.try_into().unwrap();
 
@@ -950,6 +953,11 @@ mod PrivateSwap {
             let ok = usdc.transfer_from(caller, this, total_usdc);
             assert(ok, Errors::USDC_TRANSFER_FAILED);
 
+            let total_strk_fee = KEEPER_FEE_STRK * total_intervals.into();
+            let strk = IERC20Dispatcher { contract_address: self.strk.read() };
+            assert(strk.allowance(caller, this) >= total_strk_fee, Errors::INSUFFICIENT_ALLOWANCE);
+            strk.transfer_from(caller, this, total_strk_fee);
+
             let order_id = self.dca_order_count.read() + 1;
             self.dca_order_count.write(order_id);
 
@@ -1022,6 +1030,10 @@ mod PrivateSwap {
             }
             self.dca_orders.write(order_id, order);
 
+            let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                .transfer(keeper, KEEPER_FEE_STRK);
+            assert(ok, Errors::STRK_TRANSFER_FAILED);
+
             self
                 .emit(
                     DCAExecuted {
@@ -1057,6 +1069,11 @@ mod PrivateSwap {
                     .transfer(order.owner, usdc_refund);
                 assert(ok, Errors::USDC_TRANSFER_FAILED);
             }
+
+            let strk_refund = KEEPER_FEE_STRK * remaining;
+            let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                .transfer(order.owner, strk_refund);
+            assert(ok, Errors::STRK_TRANSFER_FAILED);
 
             self.emit(DCACancelled { order_id, owner: order.owner, usdc_refunded: usdc_refund });
         }
