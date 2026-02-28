@@ -9,49 +9,10 @@ import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
 import { assertReceiptSuccess } from "../../utils/helpers";
-import { GET_ACTIVE_DCA_ORDERS, GET_DCA_EXECUTIONS } from "../../graphql/queries";
-
-// ── GraphQL ───────────────────────────────────────────────────────────────────
-
-// const GET_ACTIVE_DCA_ORDERS = gql`
-//   query GetActiveDcaOrders($owner: String!) {
-//     dcaorders(
-//       where: { owner: $owner, is_active: true }
-//       orderBy: created_at_block
-//       orderDirection: desc
-//     ) {
-//       id
-//       owner
-//       usdc_per_interval
-//       interval_seconds
-//       total_intervals
-//       total_usdc_deposited
-//       executed_intervals
-//       is_active
-//       last_execution
-//       created_tx_hash
-//       last_executed_at_block
-//     }
-//   }
-// `;
-
-// const GET_DCA_EXECUTIONS = gql`
-//   query GetDcaExecutions($orderId: String!) {
-//     dcaexecutions(
-//       where: { order_id: $orderId }
-//       orderBy: executed_intervals
-//       orderDirection: asc
-//     ) {
-//       id
-//       executed_intervals
-//       usdc_spent
-//       wbtc_received
-//       keeper
-//       executed_timestamp
-//       executed_tx_hash
-//     }
-//   }
-// `;
+import {
+  GET_ACTIVE_DCA_ORDERS,
+  GET_DCA_EXECUTIONS,
+} from "../../graphql/queries";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
