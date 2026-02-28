@@ -10,10 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@apollo/client": "^3.9.0",
-    "cross-fetch": "^4.0.0",
     "dotenv": "^16.4.0",
-    "graphql": "^16.8.0",
+    "graphql": "^16.13.0",
+    "graphql-request": "^7.4.0",
     "starknet": "^6.11.0"
   },
   "devDependencies": {

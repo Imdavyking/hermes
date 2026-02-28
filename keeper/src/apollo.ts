@@ -1,22 +1,9 @@
-import { ApolloClient, InMemoryCache, gql, HttpLink } from "@apollo/client";
-import fetch from "cross-fetch";
+import { GraphQLClient, gql } from "graphql-request";
 import { config } from "./config";
 
-export const apolloClient = new ApolloClient({
-  link: new HttpLink({ uri: config.graphqlUrl, fetch }),
-  cache: new InMemoryCache(),
-  defaultOptions: {
-    // Always hit the indexer fresh — never return stale cached state.
-    query: { fetchPolicy: "network-only" },
-  },
-});
+const client = new GraphQLClient(config.graphqlUrl);
 
-// ── Query ─────────────────────────────────────────────────────────────────────
-// Fetches all active DCA orders regardless of owner.
-// The keeper is permissionless — it processes every order that is due.
-// We only pull the fields needed to decide whether to execute.
-
-export const GET_ALL_ACTIVE_DCA_ORDERS = gql`
+const GET_ALL_ACTIVE_DCA_ORDERS = gql`
   query GetAllActiveDcaOrders {
     dcaorders(
       where: { is_active: true }
@@ -42,9 +29,11 @@ export interface ActiveDcaOrder {
   total_intervals: string;
 }
 
+interface QueryResult {
+  dcaorders: ActiveDcaOrder[];
+}
+
 export async function fetchActiveOrders(): Promise<ActiveDcaOrder[]> {
-  const { data } = await apolloClient.query({
-    query: GET_ALL_ACTIVE_DCA_ORDERS,
-  });
+  const data = await client.request<QueryResult>(GET_ALL_ACTIVE_DCA_ORDERS);
   return data.dcaorders ?? [];
 }

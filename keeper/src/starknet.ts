@@ -24,22 +24,29 @@ export const contract = new Contract(abi, config.contractAddress, provider);
 // Calls checker(order_id) on-chain to confirm the order is still due.
 // This guards against race conditions between the GraphQL query and tx submission:
 // another keeper (or a previous batch) may have already executed the order.
-export async function isOrderDue(orderId: string): Promise<boolean> {
+// starknet.ts
+
+import { Call } from "starknet";
+
+// Returns the ExecPayload if the order is due, null otherwise.
+// The payload is the canonical calldata from the contract itself —
+// the keeper fires it blindly with zero protocol-specific knowledge.
+export async function getExecutePayload(orderId: string): Promise<Call | null> {
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
-    const [canExec] = await contract.checker(orderIdU256);
-    return Boolean(canExec);
-  } catch (err) {
-    // If the RPC call fails for any reason, skip this order rather than
-    // risking a failed batch transaction.
-    console.warn(`checker() failed for order ${orderId}:`, err);
-    return false;
-  }
-}
+    const [canExec, payload] = await contract.checker(orderIdU256);
 
-// Builds a populate call for execute_dca(order_id).
-export function buildExecuteCall(orderId: string) {
-  return contract.populate("execute_dca", [
-    uint256.bnToUint256(BigInt(orderId)),
-  ]);
+    console.log({ canExec, payload });
+
+    if (!canExec) return null;
+
+    return {
+      contractAddress: payload.target,
+      entrypoint: payload.selector,
+      calldata: payload.calldata,
+    };
+  } catch (err) {
+    console.warn(`checker() failed for order ${orderId}:`, err);
+    return null;
+  }
 }
