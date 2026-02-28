@@ -193,7 +193,7 @@ export default function DcaTab() {
     watch: true,
     refetchInterval: 30_000,
   });
-  const { data: MOCK_USDT_ADDRESS } = useReadContract({
+  const { data: USDT_ADDRESS } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
     functionName: "usdc_address",
@@ -435,8 +435,7 @@ export default function DcaTab() {
 
   const handleMintTestUsdt = async () => {
     if (!account || !address) return toast.error("Connect wallet first.");
-    if (!MOCK_USDT_ADDRESS)
-      return toast.error("Mock USDT address not configured.");
+    if (!USDT_ADDRESS) return toast.error("Mock USDT address not configured.");
     const mintAmount = 10_000 * 10 ** 6;
     if (!mintAmount || Number(mintAmount) < 1)
       return toast.error("Enter amount ≥ 1 USDT.");
@@ -448,8 +447,10 @@ export default function DcaTab() {
       const amountRaw = BigInt(Math.round(Number(mintAmount) * 1e6));
       const u256Amount = uint256.bnToUint256(amountRaw);
 
+      console.log({ MOCK_USDT_ADDRESS: USDT_ADDRESS });
+
       const tx = await account.execute({
-        contractAddress: MOCK_USDT_ADDRESS,
+        contractAddress: "0x" + BigInt(USDT_ADDRESS).toString(16),
         entrypoint: "mint",
         calldata: CallData.compile([address, u256Amount]),
       });
