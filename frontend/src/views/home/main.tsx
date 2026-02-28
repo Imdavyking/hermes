@@ -143,7 +143,7 @@ export default function UmbraHome() {
     { key: "withdraw", label: "↑  Withdraw" },
     { key: "swap", label: "⇄  Swap" },
     { key: "yield", label: "🌱  Yield" },
-    { key: "dca", label: "DCA" },
+    { key: "dca", label: "↻  DCA" },
   ];
 
   return (
