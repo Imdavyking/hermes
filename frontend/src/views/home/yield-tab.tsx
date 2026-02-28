@@ -126,7 +126,7 @@ export default function YieldTab() {
 
       const noirInput = {
         root: merkleProof.root.toString(),
-        nullfier_hash: nullifierHash,
+        nullifier_hash: nullifierHash,
         recipient: address,
         recipient_hash: recipientHash,
         nullifier: note.nullifier,

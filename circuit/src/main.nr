@@ -4,7 +4,7 @@ mod merkle_tree;
 fn main(
     // public inputs
     root: pub Field,
-    nullfier_hash: pub Field,
+    nullifier_hash: pub Field,
     recipient_hash: pub Field,
     // private inputs
     recipient: Field,
@@ -18,7 +18,7 @@ fn main(
     // check that the nullfier matches the nullifier hash
     let computed_nullifier_hash = poseidon2::Poseidon2::hash([nullifier], 1);
     assert(
-        computed_nullifier_hash == nullfier_hash,
+        computed_nullifier_hash == nullifier_hash,
         "Computed nullifier hash does not match the provided nullifier hash",
     );
     //check the commitment is in the merkle tree

@@ -72,7 +72,7 @@ export default function WithdrawTab() {
 
       const noirInput = {
         root: merkleProof.root.toString(),
-        nullfier_hash: nullifierHash,
+        nullifier_hash: nullifierHash,
         recipient: recipient,
         recipient_hash: recipientHash,
         nullifier: note.nullifier,
