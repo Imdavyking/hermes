@@ -26,7 +26,6 @@ mod MockUSDT {
     struct Storage {
         #[substorage(v0)]
         erc20: ERC20Component::Storage,
-        minter: ContractAddress,
     }
 
     #[event]
@@ -38,12 +37,10 @@ mod MockUSDT {
     #[constructor]
     fn constructor(ref self: ContractState, minter: ContractAddress) {
         self.erc20.initializer("USDT", "USDT");
-        self.minter.write(minter);
     }
 
     #[external(v0)]
     fn mint(ref self: ContractState, recipient: ContractAddress, amount: u256) {
-        assert(get_caller_address() == self.minter.read(), 'not authorized minter');
         self.erc20.mint(recipient, amount);
     }
 }
