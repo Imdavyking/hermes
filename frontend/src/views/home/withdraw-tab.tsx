@@ -92,7 +92,6 @@ export default function WithdrawTab() {
       });
 
       toast.dismiss(toastId);
-      //  "0x004F57d3a568B903C6271D1D793eb989c85A8CeEe812B7C1E35f6b5A02AB73c2",
       const populate = contract.populate("zk_withdraw_wbtc", [
         callData.slice(1),
         recipient,

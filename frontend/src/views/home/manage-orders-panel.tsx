@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract } from "@starknet-react/core";
-import { hash, uint256, type Call } from "starknet";
+import { uint256, type Call } from "starknet";
 import { FaSpinner, FaUpload, FaSync } from "react-icons/fa";
 import {
   RiArrowRightLine,
