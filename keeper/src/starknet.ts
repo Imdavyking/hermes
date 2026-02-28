@@ -34,9 +34,16 @@ import { Call } from "starknet";
 export async function getExecutePayload(orderId: string): Promise<Call | null> {
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
-    const [canExec, payload] = await contract.checker(orderIdU256);
+    console.log({ orderId });
+    const result = (await contract.call("checker", [orderIdU256], {
+      blockIdentifier: "latest",
+    })) as unknown as [
+      boolean,
+      { target: string; selector: string; calldata: string[] },
+    ];
 
-    console.log({ canExec, payload });
+    const canExec = result[0];
+    const payload = result[1];
 
     if (!canExec) return null;
 

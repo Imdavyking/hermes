@@ -40,6 +40,9 @@ export async function runKeeper(): Promise<void> {
   const candidates = allOrders.filter((o) => isDue(o, now));
   console.log(`  Candidates due for execution: ${candidates.length}`);
 
+  const call = await getExecutePayload("1");
+  console.log({ call });
+
   if (candidates.length === 0) return;
 
   // 3. Confirm each candidate on-chain via checker() and collect the payload.
