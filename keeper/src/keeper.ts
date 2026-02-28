@@ -40,65 +40,59 @@ export async function runKeeper(): Promise<void> {
   const candidates = allOrders.filter((o) => isDue(o, now));
   console.log(`  Candidates due for execution: ${candidates.length}`);
 
-  console.log({ id: allOrders[0].id });
+  if (candidates.length === 0) return;
 
-  const call = await getExecutePayload(allOrders[0].id);
+  // 3. Confirm each candidate on-chain via checker() and collect the payload.
+  //    Guards against indexer lag and race conditions — checker() is the
+  //    contract's own source of truth for whether an order is executable.
+  //    null means the order was skipped (already executed, inactive, etc).
+  const calls = (
+    await Promise.all(
+      candidates.map(async (o) => {
+        const call = await getExecutePayload(o.id);
+        if (!call)
+          console.log(`  Order ${o.id} skipped (checker returned false)`);
+        return call;
+      }),
+    )
+  ).filter((call): call is Call => call !== null);
 
-  // console.log({ call });
+  console.log(`  Confirmed on-chain: ${calls.length}`);
 
-  // if (candidates.length === 0) return;
+  if (calls.length === 0) return;
 
-  // // 3. Confirm each candidate on-chain via checker() and collect the payload.
-  // //    Guards against indexer lag and race conditions — checker() is the
-  // //    contract's own source of truth for whether an order is executable.
-  // //    null means the order was skipped (already executed, inactive, etc).
-  // const calls = (
-  //   await Promise.all(
-  //     candidates.map(async (o) => {
-  //       const call = await getExecutePayload(o.id);
-  //       if (!call)
-  //         console.log(`  Order ${o.id} skipped (checker returned false)`);
-  //       return call;
-  //     }),
-  //   )
-  // ).filter((call): call is Call => call !== null);
+  // 4. Chunk into batches and submit.
+  //    Starknet multicall is a first-class primitive — one tx, one gas payment.
+  //    We cap batch size to avoid hitting block gas limits.
+  const chunks: Call[][] = [];
+  for (let i = 0; i < calls.length; i += config.maxBatchSize) {
+    chunks.push(calls.slice(i, i + config.maxBatchSize));
+  }
 
-  // console.log(`  Confirmed on-chain: ${calls.length}`);
+  console.log(
+    `  Submitting ${chunks.length} batch(es) of up to ${config.maxBatchSize} calls`,
+  );
 
-  // if (calls.length === 0) return;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
 
-  // // 4. Chunk into batches and submit.
-  // //    Starknet multicall is a first-class primitive — one tx, one gas payment.
-  // //    We cap batch size to avoid hitting block gas limits.
-  // const chunks: Call[][] = [];
-  // for (let i = 0; i < calls.length; i += config.maxBatchSize) {
-  //   chunks.push(calls.slice(i, i + config.maxBatchSize));
-  // }
+    console.log(`  Batch ${i + 1}/${chunks.length}: ${chunk.length} call(s)`);
 
-  // console.log(
-  //   `  Submitting ${chunks.length} batch(es) of up to ${config.maxBatchSize} calls`,
-  // );
+    try {
+      const tx = await account.execute(chunk);
+      console.log(`  Batch ${i + 1} submitted: ${tx.transaction_hash}`);
 
-  // for (let i = 0; i < chunks.length; i++) {
-  //   const chunk = chunks[i];
-
-  //   console.log(`  Batch ${i + 1}/${chunks.length}: ${chunk.length} call(s)`);
-
-  //   try {
-  //     const tx = await account.execute(chunk);
-  //     console.log(`  Batch ${i + 1} submitted: ${tx.transaction_hash}`);
-
-  //     const receipt = await account.waitForTransaction(tx.transaction_hash);
-  //     if (receipt.isSuccess()) {
-  //       console.log(`  Batch ${i + 1} confirmed ✓`);
-  //     } else {
-  //       // Individual reverts inside a multicall cause the whole tx to revert.
-  //       // Log and continue — the next tick will retry any still-due orders.
-  //       console.error(`  Batch ${i + 1} reverted. Receipt:`, receipt);
-  //     }
-  //   } catch (err) {
-  //     console.error(`  Batch ${i + 1} failed to submit:`, err);
-  //     // Do not rethrow — a single failed batch should not stop the keeper loop.
-  //   }
-  // }
+      const receipt = await account.waitForTransaction(tx.transaction_hash);
+      if (receipt.isSuccess()) {
+        console.log(`  Batch ${i + 1} confirmed ✓`);
+      } else {
+        // Individual reverts inside a multicall cause the whole tx to revert.
+        // Log and continue — the next tick will retry any still-due orders.
+        console.error(`  Batch ${i + 1} reverted. Receipt:`, receipt);
+      }
+    } catch (err) {
+      console.error(`  Batch ${i + 1} failed to submit:`, err);
+      // Do not rethrow — a single failed batch should not stop the keeper loop.
+    }
+  }
 }
