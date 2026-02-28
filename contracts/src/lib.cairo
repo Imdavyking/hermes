@@ -1,21 +1,66 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+
 mod field;
 mod incremental_merkle_tree;
-use crate::field::FieldTrait;
-use crate::poseidon2lib::Poseidon2Trait;
 mod poseidon2;
 mod poseidon2lib;
 
+use crate::field::FieldTrait;
+use crate::poseidon2lib::Poseidon2Trait;
+
 // -------------------------------------------------------
-// Interfaces
+// External Interfaces
 // -------------------------------------------------------
 
 #[starknet::interface]
 trait IVerifier<TContractState> {
     fn verify_ultra_keccak_zk_honk_proof(
-        self: @TContractState, full_proof_with_hints: Span<felt252>,
+        self: @TContractState,
+        full_proof_with_hints: Span<felt252>,
     ) -> Result<Span<u256>, felt252>;
 }
+
+#[starknet::interface]
+trait IAggregatorProxy<TContractState> {
+    fn latest_round_data(self: @TContractState) -> Round;
+    fn decimals(self: @TContractState) -> u8;
+}
+
+// Gelato-style keeper resolver.
+// Keeper calls checker() to learn whether an action is due and what calldata
+// to submit, then fires the payload blindly with zero protocol-specific logic.
+#[starknet::interface]
+trait IResolver<TContractState> {
+    fn checker(self: @TContractState, order_id: u256) -> (bool, ExecPayload);
+}
+
+// ERC-4626 vToken — Vesu lending protocol on Starknet.
+// Depositing wBTC mints yield-bearing shares that appreciate as borrowers pay interest.
+#[starknet::interface]
+trait IVToken<TContractState> {
+    fn deposit(ref self: TContractState, assets: u256, receiver: ContractAddress) -> u256;
+    fn redeem(
+        ref self: TContractState,
+        shares: u256,
+        receiver: ContractAddress,
+        owner: ContractAddress,
+    ) -> u256;
+    fn convert_to_assets(self: @TContractState, shares: u256) -> u256;
+}
+
+// Testnet only — Vesu's wBTC on Sepolia is publicly mintable.
+// Lets the keeper stay stateless: no capital, no approvals needed.
+//
+// MAINNET: delete this interface. Replace _acquire_wbtc() with an Ekubo
+// USDC → wBTC swap using the USDC already held by this contract.
+#[starknet::interface]
+trait IMockWBTC<TContractState> {
+    fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
+}
+
+// -------------------------------------------------------
+// Shared Data Types
+// -------------------------------------------------------
 
 #[derive(Drop, Serde)]
 struct Round {
@@ -26,102 +71,101 @@ struct Round {
     updated_at: u64,
 }
 
-#[starknet::interface]
-trait IAggregatorProxy<TContractState> {
-    fn latest_round_data(self: @TContractState) -> Round;
-    fn decimals(self: @TContractState) -> u8;
+#[derive(Drop, Serde)]
+struct ExecPayload {
+    target: ContractAddress,
+    selector: felt252,
+    calldata: Array<felt252>,
 }
 
-// ERC-4626 vToken interface (Vesu lending protocol)
-//
-// Vesu is a non-custodial lending protocol on Starknet.
-// When wBTC is deposited, Vesu mints yield-bearing vToken shares.
-// These shares appreciate over time as borrowers pay interest.
-//
-// deposit(assets, receiver) → mints shares to receiver, returns share count
-// redeem(shares, receiver, owner) → burns shares, returns underlying wBTC + yield to receiver
-// convert_to_assets(shares) → read-only preview of current wBTC value of shares
-#[starknet::interface]
-trait IVToken<TContractState> {
-    fn deposit(ref self: TContractState, assets: u256, receiver: ContractAddress) -> u256;
-    fn redeem(
-        ref self: TContractState, shares: u256, receiver: ContractAddress, owner: ContractAddress,
-    ) -> u256;
-    fn convert_to_assets(self: @TContractState, shares: u256) -> u256;
-}
-
-// -------------------------------------------------------
-// Structs
-// -------------------------------------------------------
-
-// Represents a pending wBTC → STRK swap posted by Alice (the wBTC seller).
+// Alice's pending wBTC → STRK HTLC swap order.
 //
 // Flow:
-//   1. Alice calls post_wbtc_order() with a hashlock = pedersen(0, secret).
-//      Her wBTC is already locked in this contract from her earlier deposit.
+//   1. Alice calls post_wbtc_order() with hashlock = pedersen(0, secret).
+//      Her wBTC is already locked in this contract from deposit().
 //   2. Bob calls fill_wbtc_order(), locking STRK into this contract.
-//   3. Alice calls withdraw_strk() revealing her secret, claiming STRK.
-//      The secret is stored on-chain so Bob can use it next.
-//   4. Bob calls withdraw_wbtc() using the now-revealed secret, claiming wBTC.
+//   3. Alice calls withdraw_strk(), revealing the secret and claiming STRK.
+//      The secret is now stored on-chain for Bob to use.
+//   4. Bob calls withdraw_wbtc(), using the revealed secret to claim wBTC.
 //
-// If either party does not act before expiry, refund functions are available.
-// swap_initiated is set to true when Alice reveals her secret, extending
-// Bob's withdrawal window even if his expiry has technically passed.
+// swap_initiated is set when Alice reveals her secret, extending Bob's claim
+// window even if his expiry has technically elapsed — prevents a race condition.
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct WbtcOrder {
-    wbtc_seller: ContractAddress, // Alice — posted the order
-    wbtc_buyer: ContractAddress, // Bob — filled the order (zero until filled)
-    alice_strk_destination: ContractAddress, // where STRK is sent when Alice withdraws
-    hashlock: felt252, // pedersen(0, secret) — commitment to the swap secret
-    wbtc_amount: u256, // always BTC_DENOMINATION
-    quoted_strk_amount: u256, // STRK amount quoted at order creation time
-    slippage_tolerance_bps: u256, // max price movement Alice accepts (in basis points)
-    expiry: u64, // Alice's order expiry timestamp
-    rate_expiry: u64, // timestamp after which the quoted rate is considered stale
-    is_filled: bool, // true once Bob has locked STRK
-    is_withdrawn: bool, // true once Bob has claimed wBTC
-    is_refunded: bool, // true once Alice has reclaimed her wBTC
-    swap_initiated: bool, // true once Alice reveals secret — protects Bob's claim window
-    secret: felt252 // revealed by Alice in withdraw_strk; used by Bob in withdraw_wbtc
+    wbtc_seller: ContractAddress,
+    wbtc_buyer: ContractAddress,
+    alice_strk_destination: ContractAddress,
+    hashlock: felt252,
+    wbtc_amount: u256,
+    quoted_strk_amount: u256,
+    slippage_tolerance_bps: u256,
+    expiry: u64,
+    rate_expiry: u64,
+    is_filled: bool,
+    is_withdrawn: bool,
+    is_refunded: bool,
+    swap_initiated: bool,
+    secret: felt252,
 }
 
-// Represents Bob's locked STRK position, created when Bob fills a wBTC order.
-//
-// Bob locks STRK with the same hashlock as Alice's wBTC order.
-// Alice claims STRK by revealing the secret (withdraw_strk).
-// If Alice never reveals, Bob can reclaim STRK after his expiry (refund_strk).
+// Bob's locked STRK position, created symmetrically with Alice's wBTC order.
+// Same hashlock, shorter expiry. Bob reclaims STRK if Alice never reveals.
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct StrkOrder {
-    strk_seller: ContractAddress, // Bob — locked the STRK
-    strk_buyer: ContractAddress, // Alice's strk destination — receives the STRK
-    hashlock: felt252, // same hashlock as the parent WbtcOrder
-    strk_amount: u256, // STRK locked by Bob (at live rate, not quoted rate)
-    expiry: u64, // Bob's expiry — must be < Alice's expiry
-    is_withdrawn: bool, // true once Alice has claimed STRK
-    is_refunded: bool, // true once Bob has reclaimed STRK
-    wbtc_order_id: u256 // links back to the parent WbtcOrder
+    strk_seller: ContractAddress,
+    strk_buyer: ContractAddress,
+    hashlock: felt252,
+    strk_amount: u256,
+    expiry: u64,
+    is_withdrawn: bool,
+    is_refunded: bool,
+    wbtc_order_id: u256,
+}
+
+// Recurring USDC → wBTC Dollar Cost Averaging order.
+//
+// Why USDC and not STRK?
+// DCA means "spend $X to buy BTC every interval." STRK's dollar value
+// fluctuates, so a fixed STRK amount is an inconsistent dollar spend.
+// USDC is pegged, making usdc_per_interval a genuine fixed dollar budget.
+//
+// Each interval the full usdc_per_interval is consumed to buy as much wBTC
+// as the live BTC/USD oracle price allows. The wBTC amount received varies
+// with price — that variability is exactly the point of DCA.
+#[derive(Drop, Serde, Copy, starknet::Store)]
+struct DCAOrder {
+    owner: ContractAddress,    // receives wBTC each interval
+    usdc_per_interval: u256,   // exact USDC spent per execution (6 decimals)
+    interval_seconds: u64,     // minimum gap between executions
+    last_execution: u64,       // timestamp of last execution (or order creation)
+    total_intervals: u32,      // total number of purchases to execute
+    executed_intervals: u32,   // purchases completed so far
+    is_active: bool,           // false once fully executed or cancelled
 }
 
 // -------------------------------------------------------
-// Interface
+// Public Interface
 // -------------------------------------------------------
 
 #[starknet::interface]
 trait IPrivateSwap<TContractState> {
-    // Core pool
+    // --- Core pool ---
     fn deposit(ref self: TContractState, commitment: u256);
-    fn zk_withdraw_wbtc(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
+    fn zk_withdraw_wbtc(
+        ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress,
+    );
 
-    // Yield
-    // start_earning() locks the recipient address on-chain and marks the nullifier
-    // as spent. The note cannot be used in zk_withdraw_wbtc or post_wbtc_order after this.
-    // stop_earning() can only be called by the committed recipient — no ZK proof needed.
+    // --- Yield (Vesu) ---
+    // start_earning() consumes the note — unusable in zk_withdraw_wbtc or
+    // post_wbtc_order afterward. stop_earning() requires no ZK proof; the
+    // committed recipient address is the sole credential.
     fn start_earning(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
     fn stop_earning(ref self: TContractState, nullifier_hash: u256);
     fn get_yield_balance(self: @TContractState, nullifier_hash: u256) -> u256;
     fn is_earning(self: @TContractState, nullifier_hash: u256) -> bool;
+    fn get_yield_recipient(self: @TContractState, nullifier_hash: u256) -> ContractAddress;
 
-    // HTLC swap
+    // --- HTLC swap (wBTC → STRK) ---
     fn post_wbtc_order(
         ref self: TContractState,
         proof: Span<felt252>,
@@ -136,26 +180,45 @@ trait IPrivateSwap<TContractState> {
     fn refund_wbtc(ref self: TContractState, wbtc_order_id: u256);
     fn refund_strk(ref self: TContractState, strk_order_id: u256);
 
-    // Views
+    // --- DCA (USDC → wBTC) ---
+    // User pre-approves usdc_per_interval * total_intervals USDC.
+    // Each interval the keeper calls execute_dca(); the contract reads the live
+    // BTC/USD oracle, calculates how much wBTC the user's USDC buys, and
+    // delivers it. wBTC received varies with price — USDC spent is always exact.
+    fn create_dca_order(
+        ref self: TContractState,
+        usdc_per_interval: u256,
+        interval_hours: u64,
+        total_intervals: u32,
+    ) -> u256;
+    fn execute_dca(ref self: TContractState, order_id: u256);
+    fn cancel_dca(ref self: TContractState, order_id: u256);
+    fn checker(self: @TContractState, order_id: u256) -> (bool, ExecPayload);
+
+    // --- Views ---
     fn get_wbtc_order(self: @TContractState, order_id: u256) -> WbtcOrder;
     fn get_strk_order(self: @TContractState, order_id: u256) -> StrkOrder;
+    fn get_dca_order(self: @TContractState, order_id: u256) -> DCAOrder;
+    fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
+    fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
+    fn get_btc_strk_rate(self: @TContractState) -> u256;
+    fn get_quoted_strk_amount(self: @TContractState) -> u256;
+    // Returns how much wBTC a given USDC amount buys at the current oracle price.
+    fn preview_wbtc_for_usdc(self: @TContractState, usdc_amount: u256) -> u256;
     fn current_root(self: @TContractState) -> u256;
     fn next_leaf_index(self: @TContractState) -> u32;
     fn is_known_root(self: @TContractState, root: u256) -> bool;
     fn wBTC_address(self: @TContractState) -> ContractAddress;
     fn strk_address(self: @TContractState) -> ContractAddress;
+    fn usdc_address(self: @TContractState) -> ContractAddress;
     fn vesu_vtoken_address(self: @TContractState) -> ContractAddress;
     fn wBTC_denomination(self: @TContractState) -> u256;
-    fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
-    fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
-    fn get_btc_strk_rate(self: @TContractState) -> u256;
     fn owner(self: @TContractState) -> ContractAddress;
-    fn get_quoted_strk_amount(self: @TContractState) -> u256;
-    fn get_yield_recipient(self: @TContractState, nullifier_hash: u256) -> ContractAddress;
 
-    // Admin
+    // --- Admin ---
     fn set_mock_wbtc(ref self: TContractState, wbtc: ContractAddress);
     fn set_vesu_vtoken(ref self: TContractState, vtoken: ContractAddress);
+    fn set_usdc(ref self: TContractState, usdc: ContractAddress);
     fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
 }
 
@@ -180,171 +243,173 @@ mod PrivateSwap {
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
     use super::{
-        ContractAddress, FieldTrait, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait,
+        ContractAddress, DCAOrder, ExecPayload, FieldTrait, IAggregatorProxyDispatcher,
+        IAggregatorProxyDispatcherTrait, IMockWBTCDispatcher, IMockWBTCDispatcherTrait,
         IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait,
         Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address,
         get_contract_address,
     };
+
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
-    // Fixed deposit size enforces a uniform anonymity set.
-    // All deposits look identical on-chain — no amount leaks which note belongs to whom.
-    // Value: 1000 satoshis (0.00001 BTC) — small enough for testnet experimentation.
+    // -------------------------------------------------------
+    // Constants
+    // -------------------------------------------------------
+
+    // Fixed deposit size for the ZK pool. Uniform amounts make every deposit
+    // indistinguishable on-chain, preserving the anonymity set.
+    // 1000 satoshis = 0.00001 BTC. DCA does NOT use this constant.
     const BTC_DENOMINATION: u256 = 1_000;
 
-    // wBTC uses 8 decimal places (like Bitcoin itself). 1 BTC = 100_000_000 satoshis.
-    // Used when converting between wBTC amounts and oracle prices (which are in USD).
-    const WBTC_PRECISION: u256 = 100_000_000;
+    const WBTC_PRECISION: u256 = 100_000_000;                // 8 decimals
+    const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;  // 18 decimals
+    const USDC_PRECISION: u256 = 1_000_000;                  // 6 decimals
 
-    // STRK uses 18 decimal places (standard ERC-20).
-    // Used in the BTC/STRK rate calculation to preserve precision.
-    const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;
-
-    // Depth of the incremental Merkle tree. Supports up to 2^10 = 1024 deposits.
     const TREE_DEPTH: u32 = 10;
 
-    // Pragma oracle feed addresses on Starknet Sepolia.
-    // These return (price, decimals) for USD-denominated pairs.
-    const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
+    // Pragma oracle feeds — Starknet Sepolia
+    const BTC_USD_FEED: felt252 =
+        0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
     const ZERO_ADDRESS: ContractAddress = 0.try_into().unwrap();
 
+    // 7 days — Sepolia oracles update infrequently. Tighten to 3600 on mainnet.
+    const MAX_ORACLE_AGE_SECS: u64 = 604_800;
 
-    // Maximum age of an oracle price before it is considered stale.
-    // Set to 7 days for testnet — Sepolia oracles update infrequently.
-    // On mainnet, tighten this to 1 hour (3600) or less.
-    const MAX_ORACLE_AGE_SECS: u64 = 604800; // 7 days (testnet only)
+    const MIN_EXPIRY_DURATION_SECS: u64 = 3_600;
+    const RATE_VALID_FOR_SECS: u64 = 3_600;
 
-    // Minimum time between now and an order's expiry when it is posted or filled.
-    // Prevents orders that expire immediately and cannot be acted on.
-    const MIN_EXPIRY_DURATION_SECS: u64 = 3600; // 1 hour
+    const MIN_SLIPPAGE_BPS: u256 = 10;    // 0.1%
+    const MAX_SLIPPAGE_BPS: u256 = 1_000; // 10%
+    const BPS_DENOMINATOR: u256 = 10_000;
 
-    // How long a quoted STRK rate stays valid after an order is posted.
-    // Bob must fill the order within this window or the quoted rate is considered stale.
-    // This protects Alice from accepting a fill at a price that has drifted too far.
-    const RATE_VALID_FOR_SECS: u64 = 3600; // 1 hour
-
-    // Slippage tolerance bounds in basis points (1 bps = 0.01%).
-    // Alice specifies her tolerance when posting an order.
-    // The live rate at fill time must not have moved more than this from the quoted rate.
-    // MIN = 0.1% (protects against absurdly tight settings), MAX = 10%.
-    const MIN_SLIPPAGE_BPS: u256 = 10; // 0.1%
-    const MAX_SLIPPAGE_BPS: u256 = 1000; // 10%
-    const BPS_DENOMINATOR: u256 = 10000;
-
-    // Minimum STRK amount required in a swap order.
-    // Prevents dust orders that waste gas and pollute the order book.
+    // Prevents dust HTLC orders.
     const MIN_STRK_AMOUNT: u256 = 1_000_000_000_000_000_000; // 1 STRK
 
-    // Vesu wBTC on Starknet Sepolia — publicly mintable for testnet use.
-    // IMPORTANT: Replace with the real wBTC address before mainnet deployment.
+    // Minimum USDC per DCA interval — ensures the oracle calc produces non-zero wBTC.
+    const MIN_USDC_PER_INTERVAL: u256 = 1_000_000; // 1 USDC
+
+    const DCA_MAX_INTERVALS: u32 = 1_000;
+    const DCA_MAX_INTERVAL_HOURS: u64 = 720; // 30 days
+
+    // Token addresses — Starknet Sepolia
     const VESU_WBTC_ADDRESS: felt252 =
         0x063d32a3fa6074e72e7a1e06fe78c46a0c8473217773e19f11d8c8cbfc4ff8ca;
-
-    // Vesu wBTC vToken (ERC-4626) on Starknet Sepolia.
-    // Depositing wBTC here mints yield-bearing shares. Redeeming burns shares and returns wBTC +
-    // yield.
-    // Set vesu_vtoken storage to zero address to disable yield and keep wBTC idle in this contract.
     const VESU_VTOKEN_ADDRESS: felt252 =
         0x05868ed6b7c57ac071bf6bfe762174a2522858b700ba9fb062709e63b65bf186;
-
-    // Real STRK token address — same on both Sepolia and mainnet.
     const REAL_STRK_ADDRESS: felt252 =
         0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d;
+    const USDC_ADDRESS: felt252 =
+        0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8;
+
+    // -------------------------------------------------------
+    // Errors
+    // -------------------------------------------------------
 
     pub mod Errors {
-        pub const COMMITMENT_USED: felt252 = 'commitment already used';
-        pub const WBTC_TRANSFER_FAILED: felt252 = 'wBTC transfer failed';
-        pub const STRK_TRANSFER_FAILED: felt252 = 'STRK transfer failed';
+        // Proof / Merkle
         pub const INVALID_PROOF: felt252 = 'invalid proof';
         pub const UNKNOWN_ROOT: felt252 = 'unknown root';
-        pub const NOT_INTENDED_RECIPIENT: felt252 = 'not intended recipient';
         pub const NULLIFIER_USED: felt252 = 'nullifier already used';
-        pub const EXPIRY_TOO_SOON: felt252 = 'expiry is too soon';
-        pub const ALREADY_WITHDRAWN: felt252 = 'already withdrawn';
-        pub const NOT_A_STRK_ORDER: felt252 = 'order is not a STRK order';
-        pub const ALREADY_REFUNDED: felt252 = 'already refunded';
-        pub const SECRET_CANNOT_BE_ZERO: felt252 = 'secret cannot be zero';
-        pub const SWAP_STARTED: felt252 = 'swap started';
-        pub const NOT_THE_BUYER: felt252 = 'caller is not the buyer';
-        pub const ORDER_EXPIRED: felt252 = 'order has expired';
-        pub const INVALID_SECRET: felt252 = 'secret does not match lock';
-        pub const NOT_EXPIRED_YET: felt252 = 'order has not expired yet';
-        pub const INSUFFICIENT_ALLOWANCE: felt252 = 'insufficient token allowance';
-        pub const ZERO_AMOUNT: felt252 = 'amount must be non-zero';
+        pub const COMMITMENT_USED: felt252 = 'commitment already used';
+        pub const NOT_INTENDED_RECIPIENT: felt252 = 'not intended recipient';
+        pub const INVALID_RECIPIENT: felt252 = 'recipient cannot be zero';
+
+        // Transfers
+        pub const WBTC_TRANSFER_FAILED: felt252 = 'wBTC transfer failed';
+        pub const STRK_TRANSFER_FAILED: felt252 = 'STRK transfer failed';
+        pub const USDC_TRANSFER_FAILED: felt252 = 'USDC transfer failed';
         pub const TRANSFER_FAILED: felt252 = 'token transfer failed';
-        pub const ORDER_ALREADY_FILLED: felt252 = 'order already filled';
+        pub const INSUFFICIENT_ALLOWANCE: felt252 = 'insufficient token allowance';
+
+        // HTLC
         pub const NOT_A_WBTC_ORDER: felt252 = 'order_id is not a wBTC order';
+        pub const NOT_A_STRK_ORDER: felt252 = 'order is not a STRK order';
+        pub const ORDER_ALREADY_FILLED: felt252 = 'order already filled';
+        pub const ORDER_EXPIRED: felt252 = 'order has expired';
+        pub const NOT_EXPIRED_YET: felt252 = 'order has not expired yet';
+        pub const ALREADY_WITHDRAWN: felt252 = 'already withdrawn';
+        pub const ALREADY_REFUNDED: felt252 = 'already refunded';
+        pub const SWAP_STARTED: felt252 = 'swap started';
+        pub const EXPIRY_TOO_SOON: felt252 = 'expiry is too soon';
         pub const BOB_EXPIRY_TOO_LONG: felt252 = 'bob expiry exceeds alice expiry';
         pub const QUOTED_RATE_EXPIRED: felt252 = 'quoted rate has expired';
         pub const SLIPPAGE_TOO_HIGH: felt252 = 'price moved since quote';
         pub const SLIPPAGE_OUT_OF_RANGE: felt252 = 'slippage tolerance out of range';
         pub const STRK_AMOUNT_TOO_LOW: felt252 = 'strk amount below minimum';
+        pub const SECRET_CANNOT_BE_ZERO: felt252 = 'secret cannot be zero';
         pub const SECRET_UNKNOWN: felt252 = 'secret not yet revealed';
-        pub const ORDER_STILL_FILLED: felt252 = 'order is filled, cannot refund';
-        pub const NOT_OWNER: felt252 = 'caller is not the owner';
-        pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
+        pub const INVALID_SECRET: felt252 = 'secret does not match lock';
+        pub const NOT_THE_BUYER: felt252 = 'caller is not the buyer';
+
+        // Yield
         pub const ALREADY_EARNING: felt252 = 'nullifier already earning';
         pub const NOT_EARNING: felt252 = 'nullifier is not earning';
         pub const NOT_RECIPIENT: felt252 = 'caller is not the recipient';
-        pub const INVALID_RECIPIENT: felt252 = 'recipient cannot be zero';
         pub const VESU_NOT_CONFIGURED: felt252 = 'vesu vtoken not configured';
         pub const VESU_DEPOSIT_FAILED: felt252 = 'vesu deposit failed';
+
+        // DCA
+        pub const DCA_NOT_ACTIVE: felt252 = 'dca order not active';
+        pub const DCA_NOT_DUE: felt252 = 'interval not elapsed yet';
+        pub const DCA_NOT_OWNER: felt252 = 'caller is not dca owner';
+        pub const DCA_COMPLETED: felt252 = 'dca order completed';
+        pub const DCA_INVALID_INTERVALS: felt252 = 'total intervals must be > 0';
+        pub const DCA_TOO_MANY_INTERVALS: felt252 = 'exceeds max intervals';
+        pub const DCA_INVALID_INTERVAL_HOURS: felt252 = 'interval hours must be > 0';
+        pub const DCA_INTERVAL_TOO_LONG: felt252 = 'interval exceeds 30 days';
+        pub const DCA_USDC_TOO_LOW: felt252 = 'usdc_per_interval below min';
+        pub const DCA_WBTC_ZERO: felt252 = 'wbtc amount would be zero';
+
+        // Admin
+        pub const NOT_OWNER: felt252 = 'caller is not the owner';
+        pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
     }
 
     // -------------------------------------------------------
     // Storage
     // -------------------------------------------------------
+
     #[storage]
     struct Storage {
-        // Incremental Merkle tree — stores deposit commitments.
-        // Each leaf is a commitment = Poseidon2(nullifier, secret).
-        // The tree root is used in ZK proofs to prove membership without
-        // revealing which specific leaf (deposit) belongs to the prover.
+        // Incremental Merkle tree — stores ZK pool deposit commitments.
+        // Each leaf = Poseidon2(nullifier, secret), computed off-chain.
+        // The root is used to prove deposit membership without revealing
+        // which leaf belongs to the prover.
         #[substorage(v0)]
         imt: IncrementalMerkleTreeComponent::Storage,
-        // Tracks commitments that have been deposited.
-        // Prevents the same commitment from being inserted into the tree twice.
         commitments: Map<u256, bool>,
-        // Tracks nullifier hashes that have been spent.
-        // A nullifier hash is Poseidon2(nullifier). When a ZK proof is used
-        // (withdraw, start_earning, post_wbtc_order), the nullifier is marked spent here.
-        // This is the primary double-spend prevention mechanism — a note can only
-        // be used once across all three ZK-gated functions.
         nullifier_hashes: Map<u256, bool>,
+
+        // HTLC orders
         wbtc_orders: Map<u256, WbtcOrder>,
         strk_orders: Map<u256, StrkOrder>,
-        wBTC: ContractAddress,
-        strk: ContractAddress,
-        verifier: ContractAddress,
-        owner: ContractAddress,
-        // Vesu vToken address (ERC-4626). When non-zero, yield earning is enabled.
-        // Zero address = Vesu disabled (wBTC sits idle in this contract).
-        // Can be updated by owner via set_vesu_vtoken().
-        vesu_vtoken: ContractAddress,
-        // Per-nullifier yield tracking.
-        //
-        // nullifier_earning[nh] = true  → this nullifier's wBTC is currently inside Vesu.
-        // nullifier_shares[nh]  = N     → N vToken shares held on behalf of this nullifier.
-        //                                  Shares are redeemed for wBTC + yield in stop_earning.
-        // nullifier_recipient[nh] = addr → the address locked in at start_earning time.
-        //                                   Only this address can call stop_earning.
-        //                                   Cannot be changed after start_earning is called.
-        //
-        // IMPORTANT: The nullifier IS marked spent in nullifier_hashes when start_earning
-        // is called. This means the original ZK proof is consumed and cannot be reused.
-        // stop_earning() is the sole withdrawal path for an earning position — no proof needed,
-        // only the committed recipient address can call it.
+
+        // Yield state (Vesu)
         nullifier_earning: Map<u256, bool>,
         nullifier_shares: Map<u256, u256>,
         nullifier_recipient: Map<u256, ContractAddress>,
+
+        // DCA orders
+        dca_orders: Map<u256, DCAOrder>,
+        dca_order_count: u256,
+
+        // Token addresses
+        wBTC: ContractAddress,
+        strk: ContractAddress,
+        usdc: ContractAddress,
+        vesu_vtoken: ContractAddress,
+
+        verifier: ContractAddress,
+        owner: ContractAddress,
     }
 
     // -------------------------------------------------------
     // Events
     // -------------------------------------------------------
+
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
@@ -361,6 +426,9 @@ mod PrivateSwap {
         WbtcRefunded: WbtcRefunded,
         StrkRefunded: StrkRefunded,
         OwnershipTransferred: OwnershipTransferred,
+        DCAOrderCreated: DCAOrderCreated,
+        DCAExecuted: DCAExecuted,
+        DCACancelled: DCACancelled,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -377,8 +445,6 @@ mod PrivateSwap {
         recipient: ContractAddress,
         #[key]
         nullifier_hash: u256,
-        // Amount is always BTC_DENOMINATION for direct withdrawals.
-        // Yield-bearing positions use YieldStopped instead.
         amount: u256,
     }
 
@@ -387,8 +453,6 @@ mod PrivateSwap {
         #[key]
         nullifier_hash: u256,
         recipient: ContractAddress,
-        // vToken shares received from Vesu for BTC_DENOMINATION wBTC.
-        // Share value increases over time as lending interest accrues.
         shares: u256,
     }
 
@@ -397,13 +461,9 @@ mod PrivateSwap {
         #[key]
         nullifier_hash: u256,
         recipient: ContractAddress,
-        // wBTC returned to recipient — principal + all accrued yield.
-        // Will be >= BTC_DENOMINATION if any interest was earned.
         amount: u256,
     }
 
-    // Emitted internally when Vesu shares are redeemed back to wBTC.
-    // Allows off-chain tracking of yield earned per nullifier.
     #[derive(Drop, starknet::Event)]
     struct YieldRedeemed {
         #[key]
@@ -470,75 +530,89 @@ mod PrivateSwap {
         new_owner: ContractAddress,
     }
 
+    // Emitted when a DCA order is created and funded.
+    #[derive(Drop, starknet::Event)]
+    struct DCAOrderCreated {
+        #[key]
+        order_id: u256,
+        owner: ContractAddress,
+        usdc_per_interval: u256,    // exact USDC spent each execution
+        interval_seconds: u64,
+        total_intervals: u32,
+        total_usdc_deposited: u256, // usdc_per_interval * total_intervals
+    }
+
+    // Emitted on every successful DCA execution.
+    // usdc_spent   = full usdc_per_interval consumed this interval
+    // wbtc_received = oracle-priced wBTC delivered; varies with BTC price
+    #[derive(Drop, starknet::Event)]
+    struct DCAExecuted {
+        #[key]
+        order_id: u256,
+        owner: ContractAddress,
+        usdc_spent: u256,
+        wbtc_received: u256,
+        executed_intervals: u32,
+        keeper: ContractAddress,
+    }
+
+    // Emitted when the owner cancels an active DCA order.
+    #[derive(Drop, starknet::Event)]
+    struct DCACancelled {
+        #[key]
+        order_id: u256,
+        owner: ContractAddress,
+        usdc_refunded: u256, // remaining unspent USDC returned to owner
+    }
+
     // -------------------------------------------------------
     // Constructor
     // -------------------------------------------------------
+
     #[constructor]
     fn constructor(ref self: ContractState, verifier_class_hash: ClassHash) {
         let tx_info = get_tx_info();
 
-        // Use Vesu's wBTC on Sepolia — publicly mintable and compatible with the vToken.
-        // IMPORTANT: Switch to real wBTC address for mainnet deployment.
         self.wBTC.write(VESU_WBTC_ADDRESS.try_into().unwrap());
         self.strk.write(REAL_STRK_ADDRESS.try_into().unwrap());
-
-        // Configure Vesu vToken for yield earning.
-        // Set to zero address to disable yield (idle pool mode).
+        self.usdc.write(USDC_ADDRESS.try_into().unwrap());
         self.vesu_vtoken.write(VESU_VTOKEN_ADDRESS.try_into().unwrap());
 
-        // Deploy the ZK verifier as a separate contract using the provided class hash.
-        // The verifier is responsible for validating UltraHonk ZK proofs on-chain.
-        // Separating it allows the verifier to be upgraded independently if needed.
-        let verifier_calldata: Array<felt252> = array![];
         let (verifier_address, _) = deploy_syscall(
-            verifier_class_hash, 0, verifier_calldata.span(), false,
-        )
-            .unwrap_syscall();
+            verifier_class_hash, 0, array![].span(), false,
+        ).unwrap_syscall();
         self.verifier.write(verifier_address);
 
         self.imt.initializer(TREE_DEPTH);
+        self.dca_order_count.write(0);
 
-        // Set the deploying account as the initial owner.
-        // Owner can update wBTC address, Vesu vToken, and transfer ownership.
         let owner = tx_info.account_contract_address;
         self.owner.write(owner);
-        self
-            .emit(
-                OwnershipTransferred {
-                    previous_owner: ZERO_ADDRESS, new_owner: owner,
-                },
-            );
+        self.emit(OwnershipTransferred { previous_owner: ZERO_ADDRESS, new_owner: owner });
     }
 
     // -------------------------------------------------------
     // Implementation
     // -------------------------------------------------------
+
     #[abi(embed_v0)]
     impl PrivateSwapImpl of super::IPrivateSwap<ContractState> {
+
         // ---------------------------------------------------
         // DEPOSIT
         //
-        // Alice locks BTC_DENOMINATION wBTC and inserts a commitment into the Merkle tree.
-        // The commitment = Poseidon2(nullifier, secret), computed off-chain by Alice.
-        // The nullifier and secret are known only to Alice and stored in her note file.
-        //
-        // After depositing, Alice can:
-        //   a) zk_withdraw_wbtc()  — privately withdraw wBTC to any address
-        //   b) post_wbtc_order()   — privately swap wBTC for STRK via HTLC
-        //   c) start_earning()     — earn Vesu yield on her deposit
-        //
-        // SECURITY: The commitment uniqueness check prevents Alice from inserting
-        // the same commitment twice, which would allow double-spending the same note.
+        // Locks BTC_DENOMINATION wBTC and inserts a commitment into the Merkle tree.
+        // commitment = Poseidon2(nullifier, secret), computed off-chain by Alice.
+        // All deposits are identical in size — preserves the anonymity set.
         // ---------------------------------------------------
         fn deposit(ref self: ContractState, commitment: u256) {
-            // Prevent the same commitment from being deposited twice.
-            // Two identical commitments would allow one note to be withdrawn twice.
             assert(!self.commitments.read(commitment), Errors::COMMITMENT_USED);
 
-            let wBTC = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let success = wBTC
-                .transfer_from(get_caller_address(), get_contract_address(), BTC_DENOMINATION);
-            assert(success, Errors::WBTC_TRANSFER_FAILED);
+            let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
+            let ok = wbtc.transfer_from(
+                get_caller_address(), get_contract_address(), BTC_DENOMINATION,
+            );
+            assert(ok, Errors::WBTC_TRANSFER_FAILED);
 
             let leaf_index = self.imt._insert(commitment);
             self.commitments.write(commitment, true);
@@ -548,100 +622,28 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // START EARNING
         //
-        // Alice opts her deposit into Vesu yield earning using a ZK proof.
-        // The proof proves she owns an unspent deposit without revealing which one.
-        //
-        // SECURITY MODEL:
-        //
-        // 1. ANTI-FRONTRUNNING: The recipient address is cryptographically bound to the proof
-        //    via recipient_hash = Poseidon2(recipient), which is a public input in the ZK circuit.
-        //    An attacker copying the proof from the mempool cannot substitute their own address —
-        //    changing recipient changes the hash, invalidating the proof.
-        //
-        // 2. DOUBLE-SPEND PREVENTION: The nullifier is marked spent immediately, before any
-        //    external calls. This prevents the same proof from being used in zk_withdraw_wbtc
-        //    or post_wbtc_order after this function succeeds.
-        //
-        // 3. PERMANENT RECIPIENT LOCK: The recipient address is written to storage and cannot
-        //    be changed. Only stop_earning() called by this exact address can withdraw.
-        //    This means even if Alice loses her note file, her wBTC is still recoverable
-        //    as long as she has access to the recipient wallet.
-        //
-        // 4. ZERO ADDRESS GUARD: A zero recipient would lock funds permanently with no
-        //    recovery path, since stop_earning requires caller == recipient.
-        //
-        // After this call the note is fully consumed. The ONLY exit is
-        // stop_earning(nullifier_hash).
+        // Opts the deposit into Vesu yield earning via a ZK proof.
+        // The note is fully consumed — only stop_earning() can exit this state.
         // ---------------------------------------------------
         fn start_earning(
             ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
         ) {
-            // A zero recipient would lock funds with no recovery — reject early.
             assert(recipient != ZERO_ADDRESS, Errors::INVALID_RECIPIENT);
 
-            let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
-            let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
-            assert(verified.is_ok(), Errors::INVALID_PROOF);
-
-            // Public inputs returned by the verifier in order:
-            //   [0] root          — must match a known Merkle root
-            //   [1] nullifier_hash — Poseidon2(nullifier), used for double-spend prevention
-            //   [2] recipient_hash — Poseidon2(recipient), binds the proof to the intended
-            //   recipient
-            let result = verified.unwrap();
-            let root = *result.at(0);
-            let nullifier_hash = *result.at(1);
-            let recipient_hash = *result.at(2);
-
-            // Verify the recipient passed as a function argument matches the one committed
-            // inside the ZK proof. This prevents frontrunning: an attacker who copies the
-            // proof cannot change the recipient because doing so changes the hash,
-            // causing this assertion to fail.
-            let computed_recipient_hash = Poseidon2Trait::hash_1(
-                FieldTrait::from_address(recipient),
-            );
-            assert(
-                computed_recipient_hash.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT,
-            );
-
-            // The root must be one that existed when Alice generated her proof.
-            // The IMT retains a history of recent roots to handle the case where
-            // new deposits are made between proof generation and submission.
-            assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
-
-            // Nullifier must not already be spent.
-            // A spent nullifier means this note was already used in one of:
-            // zk_withdraw_wbtc, start_earning, or post_wbtc_order.
-            assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
-
-            // Belt-and-suspenders: also check earning state directly,
-            // in case storage gets into an unexpected state.
+            let nullifier_hash = self.verify_proof_and_consume(proof, recipient);
             assert(!self.nullifier_earning.read(nullifier_hash), Errors::ALREADY_EARNING);
-
-            // Mark nullifier spent BEFORE any external calls (CEI pattern).
-            // This prevents reentrancy: if Vesu or the ERC-20 were to call back into
-            // this contract, the nullifier is already spent and cannot be reused.
-            self.nullifier_hashes.write(nullifier_hash, true);
 
             let vtoken_addr = self.vesu_vtoken.read();
             assert(vtoken_addr != ZERO_ADDRESS, Errors::VESU_NOT_CONFIGURED);
 
-            let wbtc_addr = self.wBTC.read();
             let this = get_contract_address();
+            IERC20Dispatcher { contract_address: self.wBTC.read() }
+                .approve(vtoken_addr, BTC_DENOMINATION);
 
-            // Approve exactly BTC_DENOMINATION — no excess allowance left after deposit.
-            let wbtc = IERC20Dispatcher { contract_address: wbtc_addr };
-            wbtc.approve(vtoken_addr, BTC_DENOMINATION);
-
-            // Deposit wBTC into Vesu. Shares represent Alice's proportional claim on the
-            // lending pool. Their value increases as borrowers pay interest.
-            let vtoken = IVTokenDispatcher { contract_address: vtoken_addr };
-            let shares = vtoken.deposit(BTC_DENOMINATION, this);
-
-            // Zero shares would mean the deposit silently failed — reject it.
+            let shares = IVTokenDispatcher { contract_address: vtoken_addr }
+                .deposit(BTC_DENOMINATION, this);
             assert(shares > 0, Errors::VESU_DEPOSIT_FAILED);
 
-            // Record the earning position and permanently lock the recipient.
             self.nullifier_earning.write(nullifier_hash, true);
             self.nullifier_shares.write(nullifier_hash, shares);
             self.nullifier_recipient.write(nullifier_hash, recipient);
@@ -653,46 +655,20 @@ mod PrivateSwap {
         // STOP EARNING
         //
         // Redeems the Vesu position and sends wBTC + accrued yield to the recipient.
-        // No ZK proof required — the recipient address committed during start_earning
-        // is the sole credential.
-        //
-        // SECURITY MODEL:
-        //
-        // 1. CALLER CHECK: Only the exact recipient committed at start_earning time can
-        //    call this. The recipient is locked in storage and cannot be changed.
-        //
-        // 2. CEI PATTERN: The earning position is cleared (via redeem_vesu_position)
-        //    before the wBTC transfer. This prevents reentrancy — if the wBTC transfer
-        //    somehow called back into stop_earning, nullifier_earning would be false
-        //    and the second call would revert with NOT_EARNING.
-        //
-        // 3. RECIPIENT CLEARED: After redemption, nullifier_recipient is set to zero.
-        //    This is a cleanup step — the primary guard is nullifier_earning being false.
+        // No ZK proof — the committed recipient address is the sole credential.
         // ---------------------------------------------------
         fn stop_earning(ref self: ContractState, nullifier_hash: u256) {
             let recipient = self.nullifier_recipient.read(nullifier_hash);
-
-            // A zero recipient means start_earning was never called for this nullifier.
             assert(recipient != ZERO_ADDRESS, Errors::NOT_EARNING);
-
-            // Only the committed recipient can trigger redemption.
-            // This prevents anyone else from forcing an early exit on Alice's behalf.
             assert(get_caller_address() == recipient, Errors::NOT_RECIPIENT);
-
-            // Must still be in the earning state.
-            // This also protects against reentrancy — redeem_vesu_position sets this to false.
             assert(self.nullifier_earning.read(nullifier_hash), Errors::NOT_EARNING);
 
-            // Redeem Vesu shares → wBTC + yield lands in this contract.
-            // This also clears nullifier_earning and nullifier_shares (CEI pattern).
             let amount = self.redeem_vesu_position(nullifier_hash);
-
-            // Clear the recipient slot as a cleanup step.
             self.nullifier_recipient.write(nullifier_hash, ZERO_ADDRESS);
 
-            let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let success = wbtc.transfer(recipient, amount);
-            assert(success, Errors::TRANSFER_FAILED);
+            let ok = IERC20Dispatcher { contract_address: self.wBTC.read() }
+                .transfer(recipient, amount);
+            assert(ok, Errors::TRANSFER_FAILED);
 
             self.emit(YieldStopped { nullifier_hash, recipient, amount });
         }
@@ -700,88 +676,27 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // ZK WITHDRAW wBTC
         //
-        // Alice proves she owns an unspent deposit and withdraws directly to any address.
-        //
-        // SECURITY MODEL:
-        //
-        // 1. ANTI-FRONTRUNNING: The recipient is bound to the ZK proof via
-        //    recipient_hash = Poseidon2(recipient) as a public input in the circuit.
-        //    An attacker who copies this transaction from the mempool cannot change
-        //    the recipient — doing so changes recipient_hash, which invalidates the proof.
-        //    The proof is only valid for the exact recipient Alice committed to.
-        //
-        // 2. DOUBLE-SPEND PREVENTION: The nullifier is marked spent before the transfer.
-        //    If this note was already used (in this function, start_earning, or post_wbtc_order),
-        //    the nullifier_hash check will catch it and revert.
-        //
-        // 3. MERKLE ROOT HISTORY: The root check accepts any recent root, not just the
-        //    current one. This allows Alice's proof to remain valid even if new deposits
-        //    were made between when she generated her proof and when she submits it.
-        //
-        // 4. CEI PATTERN: The nullifier is marked spent before the ERC-20 transfer.
-        //    This prevents any reentrancy attack via the wBTC token contract.
+        // Proves ownership of an unspent deposit and withdraws to any address.
+        // Recipient is cryptographically bound to the proof — frontrunning impossible.
         // ---------------------------------------------------
         fn zk_withdraw_wbtc(
             ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
         ) {
-            let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
-            let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
-            assert(verified.is_ok(), Errors::INVALID_PROOF);
+            let nullifier_hash = self.verify_proof_and_consume(proof, recipient);
 
-            // Public inputs returned by the verifier in order:
-            //   [0] root          — must match a known Merkle root
-            //   [1] nullifier_hash — Poseidon2(nullifier), used for double-spend prevention
-            //   [2] recipient_hash — Poseidon2(recipient), binds the proof to the intended
-            //   recipient
-            let result = verified.unwrap();
-            let root = *result.at(0);
-            let nullifier_hash = *result.at(1);
-            let recipient_hash = *result.at(2);
+            let ok = IERC20Dispatcher { contract_address: self.wBTC.read() }
+                .transfer(recipient, BTC_DENOMINATION);
+            assert(ok, Errors::TRANSFER_FAILED);
 
-            // Verify the recipient argument matches the one committed in the ZK proof.
-            // Poseidon2 is a ZK-friendly hash — both the circuit and this contract
-            // use the same implementation, so the hashes are directly comparable.
-            // A ContractAddress fits in a single felt252, so no splitting is needed.
-            let computed_recipient_hash = Poseidon2Trait::hash_1(
-                FieldTrait::from_address(recipient),
-            );
-            assert(
-                computed_recipient_hash.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT,
-            );
-
-            assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
-
-            // Check and mark nullifier spent BEFORE the transfer (CEI pattern).
-            assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
-            self.nullifier_hashes.write(nullifier_hash, true);
-
-            // Direct withdrawals always receive exactly BTC_DENOMINATION.
-            // Yield-bearing positions exit via stop_earning instead, which returns
-            // principal + accrued interest.
-            let amount = BTC_DENOMINATION;
-
-            let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let success = wbtc.transfer(recipient, amount);
-            assert(success, Errors::TRANSFER_FAILED);
-
-            self.emit(Withdrawal { recipient, nullifier_hash, amount });
+            self.emit(Withdrawal { recipient, nullifier_hash, amount: BTC_DENOMINATION });
         }
 
         // ---------------------------------------------------
         // POST WBTC ORDER
         //
-        // Alice uses her ZK proof to post a wBTC → STRK swap order (HTLC).
-        // Her wBTC remains locked in this contract until Bob fills the order
-        // and the HTLC is completed, or until Alice refunds after expiry.
-        //
-        // The same ZK security properties as zk_withdraw_wbtc apply here.
-        // The recipient binding uses alice_strk_destination instead of a withdrawal address —
-        // this is where Alice will receive STRK when she reveals her secret.
-        //
-        // SECURITY: hashlock must not be pedersen(0, 0) — this would mean Alice's
-        // secret is 0, which is publicly known. Bob could call withdraw_strk(secret=0)
-        // immediately after filling, claiming STRK without Alice ever revealing anything,
-        // breaking the atomicity of the HTLC.
+        // Uses a ZK proof to post a wBTC → STRK HTLC swap order.
+        // The quoted STRK amount is snapshot at posting time. Bob has
+        // RATE_VALID_FOR_SECS to fill before the quote expires.
         // ---------------------------------------------------
         fn post_wbtc_order(
             ref self: ContractState,
@@ -791,114 +706,60 @@ mod PrivateSwap {
             expiry: u64,
             slippage_tolerance_bps: u256,
         ) {
-            // Reject trivially broken hashlocks before paying proof verification gas.
-            // pedersen(0, 0) is the hashlock you'd get if secret == 0.
             assert(hashlock != pedersen(0, 0), Errors::SECRET_CANNOT_BE_ZERO);
 
-            let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
-            let verified = verifier.verify_ultra_keccak_zk_honk_proof(proof);
-            assert(verified.is_ok(), Errors::INVALID_PROOF);
-
-            let result = verified.unwrap();
-            let root = *result.at(0);
-            let nullifier_hash = *result.at(1);
-            let recipient_hash = *result.at(2);
-
-            // The ZK proof binds alice_strk_destination as the STRK recipient.
-            // This prevents an attacker from substituting a different destination address
-            // while replaying Alice's proof from the mempool.
-            let computed_recipient_hash = Poseidon2Trait::hash_1(
-                FieldTrait::from_address(alice_strk_destination),
-            );
-            assert(
-                computed_recipient_hash.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT,
-            );
-
-            assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
-
-            // Mark nullifier spent BEFORE writing order state (CEI pattern).
-            assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
-            self.nullifier_hashes.write(nullifier_hash, true);
+            let nullifier_hash = self.verify_proof_and_consume(proof, alice_strk_destination);
 
             let now = get_block_timestamp();
-
-            // Expiry must be far enough in the future that Bob has time to fill and act.
             assert(expiry >= now + MIN_EXPIRY_DURATION_SECS, Errors::EXPIRY_TOO_SOON);
-
-            // Slippage tolerance must be in range [MIN_SLIPPAGE_BPS, MAX_SLIPPAGE_BPS].
-            // Too tight a tolerance would cause fills to fail on minor price movements.
             assert(
                 slippage_tolerance_bps >= MIN_SLIPPAGE_BPS
                     && slippage_tolerance_bps <= MAX_SLIPPAGE_BPS,
                 Errors::SLIPPAGE_OUT_OF_RANGE,
             );
 
-            // Snapshot the current BTC/STRK rate. Bob must fill at a rate within
-            // slippage_tolerance_bps of this value, and only within RATE_VALID_FOR_SECS.
             let quoted_strk_amount = self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION;
             assert(quoted_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
-            // The nullifier_hash doubles as the order ID. This is safe because nullifiers
-            // are unique per note, so order IDs are globally unique with no extra storage.
-            let alice = get_caller_address();
-            let order_id: u256 = nullifier_hash;
+            let rate_expiry = now + RATE_VALID_FOR_SECS;
 
-            self
-                .wbtc_orders
-                .write(
-                    order_id,
-                    WbtcOrder {
-                        wbtc_seller: alice,
-                        wbtc_buyer: ZERO_ADDRESS,
-                        alice_strk_destination,
-                        hashlock,
-                        wbtc_amount: BTC_DENOMINATION,
-                        quoted_strk_amount,
-                        slippage_tolerance_bps,
-                        expiry,
-                        rate_expiry: now + RATE_VALID_FOR_SECS,
-                        is_filled: false,
-                        is_withdrawn: false,
-                        is_refunded: false,
-                        swap_initiated: false,
-                        secret: 0,
-                    },
-                );
+            self.wbtc_orders.write(
+                nullifier_hash,
+                WbtcOrder {
+                    wbtc_seller: get_caller_address(),
+                    wbtc_buyer: ZERO_ADDRESS,
+                    alice_strk_destination,
+                    hashlock,
+                    wbtc_amount: BTC_DENOMINATION,
+                    quoted_strk_amount,
+                    slippage_tolerance_bps,
+                    expiry,
+                    rate_expiry,
+                    is_filled: false,
+                    is_withdrawn: false,
+                    is_refunded: false,
+                    swap_initiated: false,
+                    secret: 0,
+                },
+            );
 
-            self
-                .emit(
-                    WbtcOrderPosted {
-                        order_id,
-                        wbtc_seller: alice,
-                        alice_strk_destination,
-                        wbtc_amount: BTC_DENOMINATION,
-                        quoted_strk_amount,
-                        hashlock,
-                        expiry,
-                        rate_expiry: now + RATE_VALID_FOR_SECS,
-                    },
-                );
+            self.emit(WbtcOrderPosted {
+                order_id: nullifier_hash,
+                wbtc_seller: get_caller_address(),
+                alice_strk_destination,
+                wbtc_amount: BTC_DENOMINATION,
+                quoted_strk_amount,
+                hashlock,
+                expiry,
+                rate_expiry,
+            });
         }
 
         // ---------------------------------------------------
         // FILL WBTC ORDER
         //
-        // Bob locks STRK into this contract against Alice's pending wBTC order.
-        // This creates a Hashed Time-Lock Contract (HTLC) pair:
-        //   - Alice's wBTC is locked here (deposited earlier)
-        //   - Bob's STRK is now locked here (deposited in this call)
-        //
-        // Both sides share the same hashlock. Atomicity is guaranteed:
-        // Alice can only claim Bob's STRK by revealing the secret,
-        // and revealing the secret lets Bob claim Alice's wBTC.
-        //
-        // SECURITY:
-        // - Bob's expiry must be strictly less than Alice's expiry, ensuring Alice
-        //   has time to refund her wBTC after Bob's STRK refund window opens.
-        // - The live rate is checked against the quoted rate + slippage tolerance
-        //   to protect Alice from price manipulation between quote and fill.
-        // - The strk_order_id is derived from the hashlock so it is deterministic
-        //   and Bob cannot create duplicate STRK orders for the same wBTC order.
+        // Bob locks STRK at the live oracle rate. Creates a symmetric HTLC:
+        // same hashlock as Alice's order, Bob's expiry must be < Alice's expiry.
         // ---------------------------------------------------
         fn fill_wbtc_order(ref self: ContractState, wbtc_order_id: u256, bob_expiry: u64) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
@@ -907,27 +768,15 @@ mod PrivateSwap {
             assert(!order.is_filled, Errors::ORDER_ALREADY_FILLED);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
-
-            // wbtc_amount == 0 means this order_id was never posted.
             assert(order.wbtc_amount > 0, Errors::NOT_A_WBTC_ORDER);
-
             assert(now < order.expiry, Errors::ORDER_EXPIRED);
-
-            // The quoted rate must still be fresh. Alice's slippage tolerance is relative
-            // to the rate snapshotted at post_wbtc_order time.
             assert(now <= order.rate_expiry, Errors::QUOTED_RATE_EXPIRED);
-
-            // Bob's expiry must be before Alice's. This ensures Alice's refund window
-            // opens only after Bob can no longer claim his STRK refund.
             assert(bob_expiry < order.expiry, Errors::BOB_EXPIRY_TOO_LONG);
             assert(bob_expiry >= now + MIN_EXPIRY_DURATION_SECS, Errors::EXPIRY_TOO_SOON);
 
-            // Use the live rate at fill time — Bob pays what BTC is worth right now.
             let live_strk_amount = self.get_btc_strk_rate() * order.wbtc_amount / WBTC_PRECISION;
             assert(live_strk_amount >= MIN_STRK_AMOUNT, Errors::STRK_AMOUNT_TOO_LOW);
 
-            // Enforce Alice's slippage tolerance.
-            // If the price has moved adversely beyond Alice's tolerance, reject the fill.
             let min_acceptable = order.quoted_strk_amount
                 * (BPS_DENOMINATOR - order.slippage_tolerance_bps)
                 / BPS_DENOMINATOR;
@@ -935,60 +784,44 @@ mod PrivateSwap {
 
             let bob = get_caller_address();
             let this = get_contract_address();
-
             let strk = IERC20Dispatcher { contract_address: self.strk.read() };
             assert(strk.allowance(bob, this) >= live_strk_amount, Errors::INSUFFICIENT_ALLOWANCE);
-            let success = strk.transfer_from(bob, this, live_strk_amount);
-            assert(success, Errors::STRK_TRANSFER_FAILED);
+            let ok = strk.transfer_from(bob, this, live_strk_amount);
+            assert(ok, Errors::STRK_TRANSFER_FAILED);
 
             order.wbtc_buyer = bob;
             order.is_filled = true;
             self.wbtc_orders.write(wbtc_order_id, order);
 
-            // Derive a deterministic STRK order ID from the hashlock.
-            // Using the hashlock ensures the ID is unique to this specific swap
-            // and cannot be forged or collided with other orders.
             let strk_order_id: u256 = pedersen(order.hashlock, 'fill').into();
-            self
-                .strk_orders
-                .write(
-                    strk_order_id,
-                    StrkOrder {
-                        strk_seller: bob,
-                        strk_buyer: order.alice_strk_destination,
-                        hashlock: order.hashlock,
-                        strk_amount: live_strk_amount,
-                        expiry: bob_expiry,
-                        is_withdrawn: false,
-                        is_refunded: false,
-                        wbtc_order_id,
-                    },
-                );
+            self.strk_orders.write(
+                strk_order_id,
+                StrkOrder {
+                    strk_seller: bob,
+                    strk_buyer: order.alice_strk_destination,
+                    hashlock: order.hashlock,
+                    strk_amount: live_strk_amount,
+                    expiry: bob_expiry,
+                    is_withdrawn: false,
+                    is_refunded: false,
+                    wbtc_order_id,
+                },
+            );
 
-            self
-                .emit(
-                    WbtcOrderFilled {
-                        wbtc_order_id,
-                        strk_order_id,
-                        bob,
-                        strk_amount_locked: live_strk_amount,
-                        bob_expiry,
-                    },
-                );
+            self.emit(WbtcOrderFilled {
+                wbtc_order_id,
+                strk_order_id,
+                bob,
+                strk_amount_locked: live_strk_amount,
+                bob_expiry,
+            });
         }
 
         // ---------------------------------------------------
-        // WITHDRAW wBTC (Bob's side of the HTLC)
+        // WITHDRAW wBTC  (Bob's side)
         //
-        // Bob calls this after Alice reveals her secret via withdraw_strk.
-        // The secret is stored on-chain by withdraw_strk, so Bob does not
-        // need to pass it as a parameter — he just needs to be the registered buyer.
-        //
-        // SECURITY:
-        // - swap_initiated acts as an emergency override: if Bob's expiry has passed
-        //   but Alice already revealed her secret (swap_initiated = true), Bob can
-        //   still claim his wBTC. This prevents Alice from racing Bob's expiry to
-        //   reclaim wBTC after already receiving STRK.
+        // Bob claims wBTC after Alice reveals her secret via withdraw_strk().
+        // swap_initiated protects Bob if Alice races his expiry.
         // ---------------------------------------------------
         fn withdraw_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
@@ -996,48 +829,29 @@ mod PrivateSwap {
 
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
-
-            // Only Bob (the registered buyer) can claim the wBTC.
             assert(order.wbtc_buyer == caller, Errors::NOT_THE_BUYER);
-
-            // The secret must have been revealed on-chain by Alice calling withdraw_strk.
-            // This is what makes the HTLC atomic: Alice can only get STRK by revealing
-            // the secret, and revealing it automatically enables Bob's wBTC claim.
             assert(order.secret != 0, Errors::SECRET_UNKNOWN);
-
-            // Allow claim if either: not yet expired, or Alice already initiated the swap.
-            // swap_initiated protects Bob if Alice deliberately waits until near Bob's expiry
-            // to reveal her secret, hoping Bob misses his window.
             assert(
-                get_block_timestamp() < order.expiry || order.swap_initiated, Errors::ORDER_EXPIRED,
+                get_block_timestamp() < order.expiry || order.swap_initiated,
+                Errors::ORDER_EXPIRED,
             );
-
-            // Verify the revealed secret matches the original hashlock — final sanity check.
-            let hash = pedersen(0, order.secret);
-            assert(hash == order.hashlock, Errors::INVALID_SECRET);
+            assert(pedersen(0, order.secret) == order.hashlock, Errors::INVALID_SECRET);
 
             order.is_withdrawn = true;
             self.wbtc_orders.write(wbtc_order_id, order);
 
-            let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let success = wbtc.transfer(caller, order.wbtc_amount);
-            assert(success, Errors::TRANSFER_FAILED);
+            let ok = IERC20Dispatcher { contract_address: self.wBTC.read() }
+                .transfer(caller, order.wbtc_amount);
+            assert(ok, Errors::TRANSFER_FAILED);
 
             self.emit(WbtcWithdrawn { order_id: wbtc_order_id, wbtc_buyer: caller });
         }
 
         // ---------------------------------------------------
-        // WITHDRAW STRK (Alice's side of the HTLC)
+        // WITHDRAW STRK  (Alice's side)
         //
-        // Alice reveals her secret to claim Bob's locked STRK.
-        // Revealing the secret on-chain simultaneously enables Bob to claim his wBTC.
-        //
-        // SECURITY:
-        // - The secret is stored in the wBTC order so Bob can retrieve it and call
-        //   withdraw_wbtc. swap_initiated is also set to true, protecting Bob's
-        //   claim window even if his expiry is near.
-        // - Only alice_strk_destination (set at order creation) can receive the STRK.
-        //   This is enforced by strk_buyer == caller check.
+        // Alice reveals her secret to claim Bob's STRK. The secret is written
+        // into the wBTC order so Bob can claim without a separate reveal step.
         // ---------------------------------------------------
         fn withdraw_strk(ref self: ContractState, strk_order_id: u256, secret: felt252) {
             let mut order = self.strk_orders.read(strk_order_id);
@@ -1046,17 +860,10 @@ mod PrivateSwap {
             assert(secret != 0, Errors::SECRET_CANNOT_BE_ZERO);
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
-
-            // Only Alice's designated STRK destination can claim.
             assert(order.strk_buyer == caller, Errors::NOT_THE_BUYER);
             assert(get_block_timestamp() < order.expiry, Errors::ORDER_EXPIRED);
+            assert(pedersen(0, secret) == order.hashlock, Errors::INVALID_SECRET);
 
-            let hash = pedersen(0, secret);
-            assert(hash == order.hashlock, Errors::INVALID_SECRET);
-
-            // Store the revealed secret in the parent wBTC order and set swap_initiated.
-            // This atomically enables Bob to call withdraw_wbtc without knowing the secret
-            // in advance — he just reads it from chain after Alice's tx is confirmed.
             let mut wbtc_order = self.wbtc_orders.read(order.wbtc_order_id);
             wbtc_order.swap_initiated = true;
             wbtc_order.secret = secret;
@@ -1065,9 +872,9 @@ mod PrivateSwap {
             order.is_withdrawn = true;
             self.strk_orders.write(strk_order_id, order);
 
-            let strk = IERC20Dispatcher { contract_address: self.strk.read() };
-            let success = strk.transfer(caller, order.strk_amount);
-            assert(success, Errors::TRANSFER_FAILED);
+            let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                .transfer(caller, order.strk_amount);
+            assert(ok, Errors::TRANSFER_FAILED);
 
             self.emit(StrkWithdrawn { order_id: strk_order_id, strk_buyer: caller });
         }
@@ -1075,30 +882,23 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // REFUND wBTC
         //
-        // Alice reclaims her wBTC if Bob never filled the order, or if the swap
-        // was never completed after the expiry.
-        //
-        // SECURITY: swap_initiated must be false — if Alice already revealed her
-        // secret (claimed STRK), she cannot also refund her wBTC. This enforces
-        // the atomicity guarantee from Alice's side.
+        // Alice reclaims wBTC if Bob never filled, or the swap was never completed.
+        // Blocked once Alice has revealed her secret (swap_initiated = true).
         // ---------------------------------------------------
         fn refund_wbtc(ref self: ContractState, wbtc_order_id: u256) {
             let mut order = self.wbtc_orders.read(wbtc_order_id);
             assert(order.wbtc_amount > 0, Errors::NOT_A_WBTC_ORDER);
             assert(!order.is_withdrawn, Errors::ALREADY_WITHDRAWN);
             assert(!order.is_refunded, Errors::ALREADY_REFUNDED);
-
-            // If Alice already revealed her secret (swap_initiated = true), she has
-            // received STRK and cannot reclaim her wBTC — that would be double-dipping.
             assert(!order.swap_initiated, Errors::SWAP_STARTED);
             assert(get_block_timestamp() >= order.expiry, Errors::NOT_EXPIRED_YET);
 
             order.is_refunded = true;
             self.wbtc_orders.write(wbtc_order_id, order);
 
-            let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let success = wbtc.transfer(order.wbtc_seller, order.wbtc_amount);
-            assert(success, Errors::TRANSFER_FAILED);
+            let ok = IERC20Dispatcher { contract_address: self.wBTC.read() }
+                .transfer(order.wbtc_seller, order.wbtc_amount);
+            assert(ok, Errors::TRANSFER_FAILED);
 
             self.emit(WbtcRefunded { order_id: wbtc_order_id, wbtc_seller: order.wbtc_seller });
         }
@@ -1106,10 +906,7 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // REFUND STRK
         //
-        // Bob reclaims his locked STRK if Alice never revealed the secret
-        // before Bob's expiry. Bob's expiry is always less than Alice's,
-        // so this can only succeed after Bob's window closes but while
-        // Alice's refund window may still be open.
+        // Bob reclaims STRK if Alice never revealed the secret before Bob's expiry.
         // ---------------------------------------------------
         fn refund_strk(ref self: ContractState, strk_order_id: u256) {
             let mut order = self.strk_orders.read(strk_order_id);
@@ -1121,53 +918,196 @@ mod PrivateSwap {
             order.is_refunded = true;
             self.strk_orders.write(strk_order_id, order);
 
-            let strk = IERC20Dispatcher { contract_address: self.strk.read() };
-            let success = strk.transfer(order.strk_seller, order.strk_amount);
-            assert(success, Errors::TRANSFER_FAILED);
+            let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                .transfer(order.strk_seller, order.strk_amount);
+            assert(ok, Errors::TRANSFER_FAILED);
 
             self.emit(StrkRefunded { order_id: strk_order_id, strk_seller: order.strk_seller });
         }
 
         // ---------------------------------------------------
+        // CREATE DCA ORDER
+        //
+        // Deposits total USDC upfront and schedules recurring wBTC purchases.
+        // User must approve usdc_per_interval * total_intervals before calling.
+        //
+        // usdc_per_interval is spent in full each execution. The wBTC amount
+        // received varies with the live BTC/USD oracle price — that is the point.
+        // Returns the new order_id.
+        // ---------------------------------------------------
+        fn create_dca_order(
+            ref self: ContractState,
+            usdc_per_interval: u256,
+            interval_hours: u64,
+            total_intervals: u32,
+        ) -> u256 {
+            assert(total_intervals > 0, Errors::DCA_INVALID_INTERVALS);
+            assert(total_intervals <= DCA_MAX_INTERVALS, Errors::DCA_TOO_MANY_INTERVALS);
+            assert(interval_hours > 0, Errors::DCA_INVALID_INTERVAL_HOURS);
+            assert(interval_hours <= DCA_MAX_INTERVAL_HOURS, Errors::DCA_INTERVAL_TOO_LONG);
+            assert(usdc_per_interval >= MIN_USDC_PER_INTERVAL, Errors::DCA_USDC_TOO_LOW);
+
+            let total_usdc: u256 = usdc_per_interval * total_intervals.into();
+            let caller = get_caller_address();
+            let this = get_contract_address();
+
+            let usdc = IERC20Dispatcher { contract_address: self.usdc.read() };
+            assert(usdc.allowance(caller, this) >= total_usdc, Errors::INSUFFICIENT_ALLOWANCE);
+            let ok = usdc.transfer_from(caller, this, total_usdc);
+            assert(ok, Errors::USDC_TRANSFER_FAILED);
+
+            let order_id = self.dca_order_count.read() + 1;
+            self.dca_order_count.write(order_id);
+
+            let interval_seconds: u64 = interval_hours * 3_600;
+
+            self.dca_orders.write(
+                order_id,
+                DCAOrder {
+                    owner: caller,
+                    usdc_per_interval,
+                    interval_seconds,
+                    last_execution: get_block_timestamp(),
+                    total_intervals,
+                    executed_intervals: 0,
+                    is_active: true,
+                },
+            );
+
+            self.emit(DCAOrderCreated {
+                order_id,
+                owner: caller,
+                usdc_per_interval,
+                interval_seconds,
+                total_intervals,
+                total_usdc_deposited: total_usdc,
+            });
+
+            order_id
+        }
+
+        // ---------------------------------------------------
+        // EXECUTE DCA
+        //
+        // Permissionless — any keeper can call this when an interval is due.
+        // Keeper needs zero capital and zero approvals.
+        //
+        // The full usdc_per_interval is consumed every execution. The contract
+        // reads the live BTC/USD oracle, calculates how much wBTC that USDC buys,
+        // and delivers it to the order owner. No change — no refunds.
+        //
+        // TESTNET: _acquire_wbtc() mints wBTC directly (no DEX needed).
+        // MAINNET: replace _acquire_wbtc() with an Ekubo USDC → wBTC swap.
+        // ---------------------------------------------------
+        fn execute_dca(ref self: ContractState, order_id: u256) {
+            let mut order = self.dca_orders.read(order_id);
+            let now = get_block_timestamp();
+            let keeper = get_caller_address();
+
+            assert(order.is_active, Errors::DCA_NOT_ACTIVE);
+            assert(order.executed_intervals < order.total_intervals, Errors::DCA_COMPLETED);
+            assert(now >= order.last_execution + order.interval_seconds, Errors::DCA_NOT_DUE);
+
+            // How much wBTC the user's USDC budget buys at the live oracle price.
+            let wbtc_amount = self.wbtc_for_usdc(order.usdc_per_interval);
+            assert(wbtc_amount > 0, Errors::DCA_WBTC_ZERO);
+
+            // Acquire wBTC for the owner (testnet: mint; mainnet: Ekubo swap).
+            self._acquire_wbtc(order.owner, order.usdc_per_interval, wbtc_amount);
+
+            // Update state after all external calls (CEI).
+            order.last_execution = now;
+            order.executed_intervals += 1;
+            if order.executed_intervals == order.total_intervals {
+                order.is_active = false;
+            }
+            self.dca_orders.write(order_id, order);
+
+            self.emit(DCAExecuted {
+                order_id,
+                owner: order.owner,
+                usdc_spent: order.usdc_per_interval,
+                wbtc_received: wbtc_amount,
+                executed_intervals: order.executed_intervals,
+                keeper,
+            });
+        }
+
+        // ---------------------------------------------------
+        // CANCEL DCA
+        //
+        // Owner cancels an active DCA order. All remaining unspent USDC is returned.
+        // Already-executed intervals are not reversed.
+        // ---------------------------------------------------
+        fn cancel_dca(ref self: ContractState, order_id: u256) {
+            let mut order = self.dca_orders.read(order_id);
+            assert(order.is_active, Errors::DCA_NOT_ACTIVE);
+            assert(get_caller_address() == order.owner, Errors::DCA_NOT_OWNER);
+
+            let remaining: u256 = (order.total_intervals - order.executed_intervals).into();
+            let usdc_refund = order.usdc_per_interval * remaining;
+
+            order.is_active = false; // CEI: mark inactive before transfer
+            self.dca_orders.write(order_id, order);
+
+            if usdc_refund > 0 {
+                let ok = IERC20Dispatcher { contract_address: self.usdc.read() }
+                    .transfer(order.owner, usdc_refund);
+                assert(ok, Errors::USDC_TRANSFER_FAILED);
+            }
+
+            self.emit(DCACancelled { order_id, owner: order.owner, usdc_refunded: usdc_refund });
+        }
+
+        // ---------------------------------------------------
+        // CHECKER (IResolver / Gelato-style)
+        //
+        // Returns (can_exec, payload). Keeper polls this view and fires the
+        // payload when can_exec is true. Zero keeper logic required.
+        // ---------------------------------------------------
+        fn checker(self: @ContractState, order_id: u256) -> (bool, ExecPayload) {
+            let order = self.dca_orders.read(order_id);
+            let now = get_block_timestamp();
+
+            let can_exec = order.is_active
+                && order.executed_intervals < order.total_intervals
+                && now >= order.last_execution + order.interval_seconds;
+
+            let payload = ExecPayload {
+                target: get_contract_address(),
+                selector: selector!("execute_dca"),
+                calldata: array![order_id.low.into(), order_id.high.into()],
+            };
+
+            (can_exec, payload)
+        }
+
+        // ---------------------------------------------------
         // Views
         // ---------------------------------------------------
+
         fn owner(self: @ContractState) -> ContractAddress {
             self.owner.read()
+        }
+
+        fn wBTC_address(self: @ContractState) -> ContractAddress {
+            self.wBTC.read()
+        }
+
+        fn strk_address(self: @ContractState) -> ContractAddress {
+            self.strk.read()
+        }
+
+        fn usdc_address(self: @ContractState) -> ContractAddress {
+            self.usdc.read()
         }
 
         fn vesu_vtoken_address(self: @ContractState) -> ContractAddress {
             self.vesu_vtoken.read()
         }
 
-        // Returns the current wBTC value of a yield position.
-        // Uses Vesu's convert_to_assets() which reads the live exchange rate
-        // of shares → wBTC, reflecting all accrued interest.
-        // Returns 0 if the nullifier is not earning or Vesu is not configured.
-        fn get_yield_balance(self: @ContractState, nullifier_hash: u256) -> u256 {
-            if !self.nullifier_earning.read(nullifier_hash) {
-                return 0;
-            }
-            let vtoken_addr = self.vesu_vtoken.read();
-            if vtoken_addr == ZERO_ADDRESS {
-                return 0;
-            }
-            let shares = self.nullifier_shares.read(nullifier_hash);
-            let vtoken = IVTokenDispatcher { contract_address: vtoken_addr };
-            vtoken.convert_to_assets(shares)
-        }
-
-        fn is_earning(self: @ContractState, nullifier_hash: u256) -> bool {
-            self.nullifier_earning.read(nullifier_hash)
-        }
-
-        // Returns the recipient locked in at start_earning time.
-        // Returns zero address if this nullifier is not in an earning state.
-        fn get_yield_recipient(self: @ContractState, nullifier_hash: u256) -> ContractAddress {
-            self.nullifier_recipient.read(nullifier_hash)
-        }
-
-        fn get_quoted_strk_amount(self: @ContractState) -> u256 {
-            self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION
+        fn wBTC_denomination(self: @ContractState) -> u256 {
+            BTC_DENOMINATION
         }
 
         fn get_wbtc_order(self: @ContractState, order_id: u256) -> WbtcOrder {
@@ -1178,24 +1118,55 @@ mod PrivateSwap {
             self.strk_orders.read(order_id)
         }
 
+        fn get_dca_order(self: @ContractState, order_id: u256) -> DCAOrder {
+            self.dca_orders.read(order_id)
+        }
+
+        fn get_yield_balance(self: @ContractState, nullifier_hash: u256) -> u256 {
+            if !self.nullifier_earning.read(nullifier_hash) {
+                return 0;
+            }
+            let vtoken_addr = self.vesu_vtoken.read();
+            if vtoken_addr == ZERO_ADDRESS {
+                return 0;
+            }
+            let shares = self.nullifier_shares.read(nullifier_hash);
+            IVTokenDispatcher { contract_address: vtoken_addr }.convert_to_assets(shares)
+        }
+
+        fn is_earning(self: @ContractState, nullifier_hash: u256) -> bool {
+            self.nullifier_earning.read(nullifier_hash)
+        }
+
+        fn get_yield_recipient(self: @ContractState, nullifier_hash: u256) -> ContractAddress {
+            self.nullifier_recipient.read(nullifier_hash)
+        }
+
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
-            self.get_oracle_price(BTC_USD_FEED)
+            self.fetch_oracle_price(BTC_USD_FEED)
         }
 
         fn get_strk_usd_price(self: @ContractState) -> (u128, u32) {
-            self.get_oracle_price(STRK_USD_FEED)
+            self.fetch_oracle_price(STRK_USD_FEED)
         }
 
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
-            let (btc_usd, btc_dec) = self.get_oracle_price(BTC_USD_FEED);
-            let (strk_usd, strk_dec) = self.get_oracle_price(STRK_USD_FEED);
+            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD_FEED);
+            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
-            // Formula: (BTC_USD / STRK_USD) * STRK_PRECISION
-            // Decimal adjustment: multiply by 10^strk_dec and divide by 10^btc_dec
-            // to cancel out the oracle's fixed-point representation differences.
             (btc_usd.into() * self.pow10(strk_dec.into()) * STRK_PRECISION)
                 / (strk_usd.into() * self.pow10(btc_dec.into()))
+        }
+
+        fn get_quoted_strk_amount(self: @ContractState) -> u256 {
+            self.get_btc_strk_rate() * BTC_DENOMINATION / WBTC_PRECISION
+        }
+
+        // Returns how much wBTC a given USDC amount buys at the current oracle price.
+        // Frontend uses this to preview DCA output before creating an order.
+        fn preview_wbtc_for_usdc(self: @ContractState, usdc_amount: u256) -> u256 {
+            self.wbtc_for_usdc(usdc_amount)
         }
 
         fn current_root(self: @ContractState) -> u256 {
@@ -1210,36 +1181,27 @@ mod PrivateSwap {
             self.imt.is_known_root(root)
         }
 
-        fn strk_address(self: @ContractState) -> ContractAddress {
-            self.strk.read()
-        }
-
-        fn wBTC_address(self: @ContractState) -> ContractAddress {
-            self.wBTC.read()
-        }
-
-        fn wBTC_denomination(self: @ContractState) -> u256 {
-            BTC_DENOMINATION
-        }
-
         // ---------------------------------------------------
         // Admin
         // ---------------------------------------------------
 
-        // Override the wBTC token address. Only callable by owner.
-        // The new token must have exactly 8 decimals to match BTC_DENOMINATION accounting.
         fn set_mock_wbtc(ref self: ContractState, wbtc: ContractAddress) {
             self.assert_only_owner();
-            let wBTC = IERC20MetadataDispatcher { contract_address: wbtc };
-            assert(wBTC.decimals() == 8, 'mock wBTC must have 8 decimals');
+            let meta = IERC20MetadataDispatcher { contract_address: wbtc };
+            assert(meta.decimals() == 8, 'mock wBTC must have 8 decimals');
             self.wBTC.write(wbtc);
         }
 
-        // Update the Vesu vToken address.
-        // Set to zero address to disable yield earning (wBTC stays idle in this contract).
         fn set_vesu_vtoken(ref self: ContractState, vtoken: ContractAddress) {
             self.assert_only_owner();
             self.vesu_vtoken.write(vtoken);
+        }
+
+        fn set_usdc(ref self: ContractState, usdc: ContractAddress) {
+            self.assert_only_owner();
+            let meta = IERC20MetadataDispatcher { contract_address: usdc };
+            assert(meta.decimals() == 6, 'USDC must have 6 decimals');
+            self.usdc.write(usdc);
         }
 
         fn transfer_ownership(ref self: ContractState, new_owner: ContractAddress) {
@@ -1254,76 +1216,132 @@ mod PrivateSwap {
     // -------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------
+
     #[generate_trait]
     impl Private of PrivateTrait {
+
         fn assert_only_owner(self: @ContractState) {
             assert(get_caller_address() == self.owner.read(), Errors::NOT_OWNER);
         }
 
-        // Redeems the vToken shares for an earning position and clears all earning state.
-        //
-        // This is an internal helper called only by stop_earning.
-        // It follows the CEI pattern: state is cleared BEFORE the Vesu external call,
-        // preventing reentrancy into stop_earning.
-        //
-        // Returns the wBTC amount received from Vesu (principal + yield).
+        // Shared ZK proof verification used by zk_withdraw_wbtc(), start_earning(),
+        // and post_wbtc_order(). Verifies the proof, checks the Merkle root, confirms
+        // the recipient hash, and marks the nullifier as spent.
+        // Returns the nullifier_hash for the caller to use as a key.
+        fn verify_proof_and_consume(
+            ref self: ContractState,
+            proof: Span<felt252>,
+            recipient: ContractAddress,
+        ) -> u256 {
+            let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
+            let result = verifier.verify_ultra_keccak_zk_honk_proof(proof);
+            assert(result.is_ok(), Errors::INVALID_PROOF);
+
+            let out = result.unwrap();
+            let root: u256 = *out.at(0);
+            let nullifier_hash: u256 = *out.at(1);
+            let recipient_hash: u256 = *out.at(2);
+
+            let computed = Poseidon2Trait::hash_1(FieldTrait::from_address(recipient));
+            assert(computed.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
+
+            assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
+            assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
+            self.nullifier_hashes.write(nullifier_hash, true); // CEI
+
+            nullifier_hash
+        }
+
+        // Redeems vToken shares and clears all earning state.
+        // State is cleared BEFORE the Vesu external call (CEI — prevents reentrancy).
         fn redeem_vesu_position(ref self: ContractState, nullifier_hash: u256) -> u256 {
             let vtoken_addr = self.vesu_vtoken.read();
             let shares = self.nullifier_shares.read(nullifier_hash);
             let this = get_contract_address();
 
-            // Clear earning state BEFORE the external call (CEI pattern).
-            // If Vesu's redeem somehow re-enters stop_earning, nullifier_earning
-            // is already false and the second call will revert with NOT_EARNING.
             self.nullifier_earning.write(nullifier_hash, false);
             self.nullifier_shares.write(nullifier_hash, 0);
 
-            let vtoken = IVTokenDispatcher { contract_address: vtoken_addr };
-            // redeem(shares, receiver, owner):
-            //   shares — how many vToken shares to burn
-            //   receiver (this) — where the returned wBTC lands
-            //   owner (this) — who owns the shares being redeemed
-            let wbtc_returned = vtoken.redeem(shares, this, this);
+            let wbtc_returned = IVTokenDispatcher { contract_address: vtoken_addr }
+                .redeem(shares, this, this);
 
             self.emit(YieldRedeemed { nullifier_hash, shares, wbtc_returned });
-
             wbtc_returned
         }
 
-        // Fetches price from a Pragma oracle feed and validates freshness.
-        // Reverts if the price is stale (older than MAX_ORACLE_AGE_SECS) or zero.
-        // Returns (price, decimals) — price is in USD with `decimals` fixed-point precision.
-        fn get_oracle_price(self: @ContractState, feed_address: felt252) -> (u128, u32) {
+        // Fetches a Pragma oracle price and validates freshness.
+        // Reverts on stale data or a zero price. Returns (price, decimals).
+        fn fetch_oracle_price(self: @ContractState, feed_address: felt252) -> (u128, u32) {
             let feed = IAggregatorProxyDispatcher {
                 contract_address: feed_address.try_into().unwrap(),
             };
             let round = feed.latest_round_data();
-            let now = get_block_timestamp();
-            assert(round.updated_at + MAX_ORACLE_AGE_SECS >= now, 'stale oracle price');
+            assert(
+                round.updated_at + MAX_ORACLE_AGE_SECS >= get_block_timestamp(),
+                'stale oracle price',
+            );
             assert(round.answer > 0, 'invalid oracle price');
-            let decimals: u32 = feed.decimals().into();
-            (round.answer, decimals)
+            (round.answer, feed.decimals().into())
         }
 
-        // Integer power of 10. Used for decimal normalization in oracle price calculations.
-        // Common values are matched directly for gas efficiency.
+        // Converts a USDC amount into the equivalent wBTC satoshi amount at the
+        // live BTC/USD oracle price.
+        //
+        // Formula:
+        //   wbtc_amount = usdc_amount * WBTC_PRECISION * 10^btc_dec
+        //                 / (btc_usd_price * USDC_PRECISION)
+        //
+        // Example at BTC = $95,000 (oracle: 9_500_000_000_000, 8 dec), 1 USDC in:
+        //   wbtc = 1_000_000 * 100_000_000 * 100_000_000
+        //          / (9_500_000_000_000 * 1_000_000)
+        //        ≈ 1_052 satoshis  (~0.00001052 BTC ≈ $0.999)
+        fn wbtc_for_usdc(self: @ContractState, usdc_amount: u256) -> u256 {
+            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD_FEED);
+            usdc_amount * WBTC_PRECISION * self.pow10(btc_dec.into())
+                / (btc_usd.into() * USDC_PRECISION)
+        }
+
+        // Acquires wBTC for the DCA order owner.
+        //
+        // TESTNET: mints wBTC directly — no DEX needed; usdc_spent is tracked
+        //          for event accuracy but not transferred on testnet.
+        //
+        // MAINNET: replace the body with an Ekubo swap:
+        //   IERC20Dispatcher { contract_address: self.usdc.read() }
+        //       .approve(EKUBO_ROUTER_ADDRESS, usdc_spent);
+        //   IEkuboRouterDispatcher { contract_address: EKUBO_ROUTER_ADDRESS }
+        //       .swap_exact_input(
+        //           self.usdc.read(), self.wBTC.read(), usdc_spent, wbtc_amount, recipient,
+        //       );
+        fn _acquire_wbtc(
+            ref self: ContractState,
+            recipient: ContractAddress,
+            usdc_spent: u256,   // passed through for mainnet; unused on testnet
+            wbtc_amount: u256,
+        ) {
+            // TESTNET ONLY — replace with Ekubo swap on mainnet
+            IMockWBTCDispatcher { contract_address: self.wBTC.read() }
+                .mint(recipient, wbtc_amount);
+        }
+
+        // Integer power-of-10 lookup for oracle decimal normalisation.
         fn pow10(self: @ContractState, n: u256) -> u256 {
             match n {
-                0 => 1,
-                1 => 10,
-                2 => 100,
-                3 => 1_000,
-                4 => 10_000,
-                5 => 100_000,
-                6 => 1_000_000,
-                7 => 10_000_000,
-                8 => 100_000_000,
-                9 => 1_000_000_000,
+                0  => 1,
+                1  => 10,
+                2  => 100,
+                3  => 1_000,
+                4  => 10_000,
+                5  => 100_000,
+                6  => 1_000_000,
+                7  => 10_000_000,
+                8  => 100_000_000,
+                9  => 1_000_000_000,
                 10 => 10_000_000_000,
                 11 => 100_000_000_000,
                 12 => 1_000_000_000_000,
                 18 => 1_000_000_000_000_000_000,
-                _ => {
+                _  => {
                     let mut result: u256 = 1;
                     let mut i: u256 = 0;
                     while i < n {
