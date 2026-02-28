@@ -112,6 +112,22 @@ const HOUR_PRESETS = [
 
 const EXEC_PRESETS = [3, 6, 12, 24, 52];
 
+// Minimal ERC-20 ABI for balance_of — avoids importing the full token ABI.
+const ERC20_BALANCE_ABI = [
+  {
+    name: "balance_of",
+    type: "function",
+    inputs: [
+      {
+        name: "account",
+        type: "core::starknet::contract_address::ContractAddress",
+      },
+    ],
+    outputs: [{ type: "core::integer::u256" }],
+    state_mutability: "view",
+  },
+] as const;
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DcaTab() {
@@ -207,6 +223,7 @@ export default function DcaTab() {
   const isTestnet =
     chain?.name?.toLowerCase().includes("sepolia") ||
     chain?.name?.toLowerCase().includes("test");
+
   // Returns tuple: [price_u128, decimals_u32]
   const btcPrice = btcPriceData ? Number((btcPriceData as any)[0]) : null;
   const btcDecimals = btcPriceData ? Number((btcPriceData as any)[1]) : 8;
@@ -239,10 +256,32 @@ export default function DcaTab() {
     args: [],
   });
 
+  const usdcAddr = usdcAddressRaw
+    ? (`0x${BigInt(usdcAddressRaw.toString()).toString(16)}` as `0x${string}`)
+    : undefined;
+
+  // ── USDC balance ───────────────────────────────────────────────────────────
+  const { data: usdcBalanceData } = useReadContract({
+    abi: ERC20_BALANCE_ABI,
+    address: usdcAddr,
+    functionName: "balance_of",
+    args: address ? [address] : undefined,
+    enabled: !!usdcAddr && !!address,
+    watch: true,
+    refetchInterval: 15_000,
+  });
+
+  const usdcBalance =
+    usdcBalanceData !== undefined && usdcBalanceData !== null
+      ? Number(BigInt((usdcBalanceData as any).toString())) / 1e6
+      : null;
+
   const now = Math.floor(Date.now() / 1000);
   const effHours = customHours ? Number(customHours) : intervalHours;
   const effExecs = customExec ? Number(customExec) : numExecs;
   const totalUsdc = usdcAmount ? Number(usdcAmount) * effExecs : null;
+  const insufficientBalance =
+    totalUsdc !== null && usdcBalance !== null && totalUsdc > usdcBalance;
 
   // reset approve gate whenever the amount or exec count changes
   const handleAmountChange = (v: string) => {
@@ -263,11 +302,15 @@ export default function DcaTab() {
     if (!usdcAddressRaw) return toast.error("Could not read USDC address.");
     if (!usdcAmount || Number(usdcAmount) < 1)
       return toast.error("Minimum 1 USDC.");
+    if (insufficientBalance)
+      return toast.error(
+        `Insufficient balance — you have $${usdcBalance!.toFixed(2)} USDC`,
+      );
 
     const toastId = toast.loading("Approving USDC…");
     setApproving(true);
     try {
-      const usdcAddr = "0x" + BigInt(usdcAddressRaw.toString()).toString(16);
+      const usdcAddrHex = "0x" + BigInt(usdcAddressRaw.toString()).toString(16);
 
       // Approve exactly usdc_per_interval * total_intervals (no buffer needed —
       // contract checks allowance >= total exactly).
@@ -276,7 +319,7 @@ export default function DcaTab() {
 
       // Skip approve tx if existing allowance is sufficient
       const alwRes = await account.callContract({
-        contractAddress: usdcAddr,
+        contractAddress: usdcAddrHex,
         entrypoint: "allowance",
         calldata: CallData.compile([address, CONTRACT_ADDRESS]),
       });
@@ -294,7 +337,7 @@ export default function DcaTab() {
 
       const tx = await account.execute([
         {
-          contractAddress: usdcAddr,
+          contractAddress: usdcAddrHex,
           entrypoint: "approve",
           calldata: CallData.compile([CONTRACT_ADDRESS, amtU256]),
         } as Call,
@@ -436,18 +479,14 @@ export default function DcaTab() {
   const handleMintTestUsdt = async () => {
     if (!account || !address) return toast.error("Connect wallet first.");
     if (!USDT_ADDRESS) return toast.error("Mock USDT address not configured.");
-    const mintAmount = 10_000 * 10 ** 6;
-    if (!mintAmount || Number(mintAmount) < 1)
-      return toast.error("Enter amount ≥ 1 USDT.");
+    const mintAmount = 10_000;
 
     const toastId = toast.loading("Minting test USDT…");
     setMinting(true);
 
     try {
-      const amountRaw = BigInt(Math.round(Number(mintAmount) * 1e6));
+      const amountRaw = BigInt(Math.round(mintAmount * 1e6));
       const u256Amount = uint256.bnToUint256(amountRaw);
-
-      console.log({ MOCK_USDT_ADDRESS: USDT_ADDRESS });
 
       const tx = await account.execute({
         contractAddress: "0x" + BigInt(USDT_ADDRESS).toString(16),
@@ -458,7 +497,7 @@ export default function DcaTab() {
       await account.waitForTransaction(tx.transaction_hash);
 
       toast.update(toastId, {
-        render: `Minted ${mintAmount} test USDT successfully!`,
+        render: `Minted $${mintAmount.toLocaleString()} test USDT successfully!`,
         isLoading: false,
         type: "success",
         autoClose: 4000,
@@ -477,7 +516,12 @@ export default function DcaTab() {
   };
 
   const canApprove =
-    !!address && !!usdcAmount && Number(usdcAmount) >= 1 && !approving;
+    !!address &&
+    !!usdcAmount &&
+    Number(usdcAmount) >= 1 &&
+    !approving &&
+    !insufficientBalance;
+
   const canCreate =
     !!address &&
     !!usdcAmount &&
@@ -558,7 +602,30 @@ export default function DcaTab() {
 
         {/* USDC per execution */}
         <div>
-          <div style={fieldLabel}>USDC per execution</div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              marginBottom: "0.35rem",
+            }}
+          >
+            <div style={fieldLabel}>USDC per execution</div>
+            {usdcBalance !== null && (
+              <div style={{ fontSize: "0.6rem", color: "#555" }}>
+                Balance:{" "}
+                <span
+                  style={{ color: insufficientBalance ? "#f87171" : "#aaa" }}
+                >
+                  $
+                  {usdcBalance.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+            )}
+          </div>
           <div style={{ position: "relative" }}>
             <input
               value={usdcAmount}
@@ -566,7 +633,13 @@ export default function DcaTab() {
               placeholder="Min 1 USDC"
               type="number"
               min="1"
-              style={{ ...inputStyle, paddingRight: "3.5rem" }}
+              style={{
+                ...inputStyle,
+                paddingRight: "3.5rem",
+                borderColor: insufficientBalance
+                  ? "rgba(248,113,113,0.4)"
+                  : undefined,
+              }}
             />
             <span style={suffix}>USDC</span>
           </div>
@@ -701,6 +774,25 @@ export default function DcaTab() {
               value={totalUsdc ? `$${totalUsdc.toFixed(2)}` : "—"}
               highlight
             />
+            {insufficientBalance && (
+              <div
+                style={{
+                  fontSize: "0.62rem",
+                  color: "#f87171",
+                  marginTop: "0.15rem",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.3rem",
+                }}
+              >
+                ⚠ Insufficient balance — you have $
+                {usdcBalance!.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{" "}
+                USDC
+              </div>
+            )}
             <div
               style={{
                 fontSize: "0.6rem",
