@@ -1,8 +1,8 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
 
 mod field;
-mod incremental_merkle_tree;
 mod mockUSDT;
+mod incremental_merkle_tree;
 mod poseidon2;
 mod poseidon2lib;
 use crate::field::FieldTrait;
@@ -550,7 +550,7 @@ mod PrivateSwap {
         interval_seconds: u64,
         total_intervals: u32,
         total_usdc_deposited: u256,
-        total_strk_fee_deposited: u256 // KEEPER_FEE_STRK * total_intervals
+        total_strk_fee_deposited: u256, // KEEPER_FEE_STRK * total_intervals
     }
 
     // Emitted on every successful DCA execution.
@@ -564,7 +564,7 @@ mod PrivateSwap {
         wbtc_received: u256,
         executed_intervals: u32,
         keeper: ContractAddress,
-        keeper_fee_paid: u256 // STRK paid to keeper this execution
+        keeper_fee_paid: u256, // STRK paid to keeper this execution
     }
 
     // Emitted when the owner cancels an active DCA order.
@@ -575,7 +575,7 @@ mod PrivateSwap {
         order_id: u256,
         owner: ContractAddress,
         usdc_refunded: u256,
-        strk_fee_refunded: u256 // unspent keeper fee reserve returned
+        strk_fee_refunded: u256, // unspent keeper fee reserve returned
     }
 
     // -------------------------------------------------------
@@ -972,26 +972,25 @@ mod PrivateSwap {
             let caller = get_caller_address();
             let this = get_contract_address();
 
-            // ── Pull USDC swap budget
-            // ──────────────────────────────────────
+            // ── Pull USDC swap budget ──────────────────────────────────────
             let total_usdc: u256 = usdc_per_interval * total_intervals.into();
             let usdc = IERC20Dispatcher { contract_address: self.usdc.read() };
             assert(usdc.allowance(caller, this) >= total_usdc, Errors::INSUFFICIENT_ALLOWANCE);
             let ok = usdc.transfer_from(caller, this, total_usdc);
             assert(ok, Errors::USDC_TRANSFER_FAILED);
 
-            // ── Pull STRK keeper fee reserve
-            // ──────────────────────────────
+            // ── Pull STRK keeper fee reserve ──────────────────────────────
             // Locked here; paid out to keeper on each execute_dca().
             // Remaining balance is refunded on cancel_dca().
             let total_strk_fee: u256 = KEEPER_FEE_STRK * total_intervals.into();
             let strk = IERC20Dispatcher { contract_address: self.strk.read() };
-            assert(strk.allowance(caller, this) >= total_strk_fee, Errors::DCA_STRK_FEE_ALLOWANCE);
+            assert(
+                strk.allowance(caller, this) >= total_strk_fee, Errors::DCA_STRK_FEE_ALLOWANCE,
+            );
             let ok2 = strk.transfer_from(caller, this, total_strk_fee);
             assert(ok2, Errors::STRK_TRANSFER_FAILED);
 
-            // ── Write order
-            // ───────────────────────────────────────────────
+            // ── Write order ───────────────────────────────────────────────
             let order_id = self.dca_order_count.read() + 1;
             self.dca_order_count.write(order_id);
 
@@ -1060,8 +1059,7 @@ mod PrivateSwap {
             let wbtc_amount = self.wbtc_for_usdc(order.usdc_per_interval);
             assert(wbtc_amount > 0, Errors::DCA_WBTC_ZERO);
 
-            // ── Update state first (CEI)
-            // ───────────────────────────────────
+            // ── Update state first (CEI) ───────────────────────────────────
             order.last_execution = now;
             order.executed_intervals += 1;
             if order.executed_intervals == order.total_intervals {
@@ -1073,8 +1071,7 @@ mod PrivateSwap {
             let reserved = self.dca_strk_reserved.read(order_id);
             self.dca_strk_reserved.write(order_id, reserved - KEEPER_FEE_STRK);
 
-            // ── External calls after state is finalised
-            // ───────────────────
+            // ── External calls after state is finalised ───────────────────
 
             // Deliver wBTC to the order owner.
             self._acquire_wbtc(order.owner, order.usdc_per_interval, wbtc_amount);
@@ -1117,22 +1114,19 @@ mod PrivateSwap {
             // This equals dca_strk_reserved[order_id] but we re-derive it for clarity.
             let strk_refund = KEEPER_FEE_STRK * remaining;
 
-            // ── CEI: mark inactive before any external calls
-            // ───────────────
+            // ── CEI: mark inactive before any external calls ───────────────
             order.is_active = false;
             self.dca_orders.write(order_id, order);
             self.dca_strk_reserved.write(order_id, 0);
 
-            // ── Refund USDC
-            // ───────────────────────────────────────────────
+            // ── Refund USDC ───────────────────────────────────────────────
             if usdc_refund > 0 {
                 let ok = IERC20Dispatcher { contract_address: self.usdc.read() }
                     .transfer(order.owner, usdc_refund);
                 assert(ok, Errors::USDC_TRANSFER_FAILED);
             }
 
-            // ── Refund unspent STRK fee reserve
-            // ───────────────────────────
+            // ── Refund unspent STRK fee reserve ───────────────────────────
             if strk_refund > 0 {
                 let ok = IERC20Dispatcher { contract_address: self.strk.read() }
                     .transfer(order.owner, strk_refund);
@@ -1162,8 +1156,7 @@ mod PrivateSwap {
 
             let can_exec = order.is_active
                 && order.executed_intervals < order.total_intervals
-                && now >= order.last_execution
-                + order.interval_seconds;
+                && now >= order.last_execution + order.interval_seconds;
 
             let payload = ExecPayload {
                 target: get_contract_address(),
