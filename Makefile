@@ -52,7 +52,7 @@ gen-vk:
 gen-verifier:
 	cd contracts && garaga gen --system ultra_keccak_zk_honk --vk ../circuit/target/vk --project-name verifier
 
-build-verifier:
+build-contract:
 	cd contracts/verifier && scarb build
 	cd contracts && scarb build
 
