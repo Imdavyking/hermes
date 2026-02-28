@@ -70,21 +70,36 @@ type OwnershipTransfer {
 }
 
 # ── DCA ───────────────────────────────────────────────────────────────────────
+#
+# Contract: create_dca_order(usdc_per_interval, interval_hours, total_intervals)
+#   - wBTC always delivered to order.owner (= get_caller_address())
+#   - No recipient field anywhere
+#
+# DCAOrderCreated { order_id, owner, usdc_per_interval, interval_seconds,
+#                   total_intervals, total_usdc_deposited }
+#
+# DCAExecuted { order_id, owner, usdc_spent, wbtc_received,
+#               executed_intervals,   ← post-increment value (1, 2, 3…)
+#               keeper }
+#   NOTE: no btc_price_usd in this event — not emitted by contract
+#
+# DCACancelled { order_id, owner, usdc_refunded }
 
 type DcaOrder {
-  id: ID! # order_id (u256, decimal string)
-  # Identity
-  order_id: BigDecimalU256! # u256 — same value as id, kept for query filters
-  owner: String! # ContractAddress — ZK note owner
-  usdc_recipient: String! # ContractAddress — receives purchased wBTC
-  # Schedule
+  id: ID! # order_id (u256 decimal string, auto-incremented from dca_order_count)
+
+  # From DCAOrderCreated
+  owner: String! # ContractAddress — also receives wBTC each execution
   usdc_per_interval: BigDecimalU256! # u256, USDC 6-dec
-  interval_seconds: Int! # u64
-  executions_total: Int! # u32 — snapshot at creation
-  executions_left: Int! # u32 — decremented on each DCAExecuted
-  next_execution: Int! # u64 unix ts — updated after each execution
-  # Status
-  is_cancelled: Boolean!
+  interval_seconds: Int! # u64 (contract converts interval_hours * 3600)
+  total_intervals: Int! # u32
+  total_usdc_deposited: BigDecimalU256! # u256 = usdc_per_interval * total_intervals
+
+  # Mutable — updated by DCAExecuted / DCACancelled
+  executed_intervals: Int! # u32, starts 0, post-increment value after each exec
+  is_active: Boolean! # false when fully executed or cancelled
+  last_execution: Int! # unix ts — block.timestamp at creation; updated each exec
+  usdc_refunded: BigDecimalU256 # set on DCACancelled; null otherwise
 
   # Metadata
   created_at_block: Int!
@@ -94,16 +109,18 @@ type DcaOrder {
 }
 
 type DcaExecution {
-  id: ID! # "{order_id}-{execution_number}"
-  # Parent order
+  id: ID! # "{order_id}-{executed_intervals}" (post-increment, so 1-based)
+
   order_id: String! # matches DcaOrder.id
-  # Execution details
-  execution_number: Int! # 1-based counter (executions_total - executions_left)
-  usdc_spent: BigDecimalU256! # u256, USDC 6-dec
-  wbtc_received: BigDecimalU256! # u256, satoshis
-  btc_price_usd: BigDecimalU256! # u256, oracle price 8-dec
+
+  # From DCAExecuted
+  executed_intervals: Int! # post-increment counter (1, 2, 3…)
+  usdc_spent: BigDecimalU256! # u256, USDC 6-dec — always = usdc_per_interval
+  wbtc_received: BigDecimalU256! # u256, satoshis — varies with oracle price
+  keeper: String! # ContractAddress — who triggered this execution
+
   # Metadata
   executed_at_block: Int!
   executed_tx_hash: String!
-  executed_timestamp: Int! # u64 unix ts from block
+  executed_timestamp: Int! # block.timestamp
 }

@@ -1,129 +1,179 @@
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract, useReadContract } from "@starknet-react/core";
 import { CallData, uint256, type Call } from "starknet";
 import { FaSpinner, FaBitcoin, FaSync, FaChevronDown } from "react-icons/fa";
-import {
-  RiTimeLine,
-  RiLoopLeftLine,
-  RiCloseLine,
-  RiAddLine,
-} from "react-icons/ri";
+import { RiLoopLeftLine, RiCloseLine, RiAddLine } from "react-icons/ri";
 import { useQuery } from "@apollo/client";
+import { gql } from "@apollo/client";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
 import { assertReceiptSuccess } from "../../utils/helpers";
 import { GET_ACTIVE_DCA_ORDERS, GET_DCA_EXECUTIONS } from "@/graphql/queries";
 
-// ── Queries ──────────────────────────────────────────────────────────────────
+// ── GraphQL ───────────────────────────────────────────────────────────────────
+
+// const GET_ACTIVE_DCA_ORDERS = gql`
+//   query GetActiveDcaOrders($owner: String!) {
+//     dcaorders(
+//       where: { owner: $owner, is_active: true }
+//       orderBy: created_at_block
+//       orderDirection: desc
+//     ) {
+//       id
+//       owner
+//       usdc_per_interval
+//       interval_seconds
+//       total_intervals
+//       total_usdc_deposited
+//       executed_intervals
+//       is_active
+//       last_execution
+//       created_tx_hash
+//       last_executed_at_block
+//     }
+//   }
+// `;
+
+// const GET_DCA_EXECUTIONS = gql`
+//   query GetDcaExecutions($orderId: String!) {
+//     dcaexecutions(
+//       where: { order_id: $orderId }
+//       orderBy: executed_intervals
+//       orderDirection: asc
+//     ) {
+//       id
+//       executed_intervals
+//       usdc_spent
+//       wbtc_received
+//       keeper
+//       executed_timestamp
+//       executed_tx_hash
+//     }
+//   }
+// `;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface DcaOrder {
   orderId: string;
-  usdcRecipient: string;
-  usdcPerInterval: string;
+  owner: string;
+  usdcPerInterval: string; // decimal string, USDC 6-dec
   intervalSeconds: number;
-  executionsTotal: number;
-  executionsLeft: number;
-  nextExecution: number;
+  totalIntervals: number;
+  totalUsdcDeposited: string;
+  executedIntervals: number; // post-increment count from contract
+  isActive: boolean;
+  lastExecution: number; // unix ts; next due = lastExecution + intervalSeconds
   createdTxHash: string;
   lastExecutedAtBlock?: number;
 }
 
 interface DcaExecution {
-  executionNumber: number;
+  executedIntervals: number; // 1-based
   usdcSpent: string;
   wbtcReceived: string;
-  btcPriceUsd: string;
+  keeper: string;
   executedTimestamp: number;
   executedTxHash: string;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
-function fmtUsdc(raw: string) {
-  return (
-    "$" +
-    (Number(raw) / 1e6).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
-  );
-}
-function fmtSats(raw: string) {
-  return (Number(raw) / 1e8).toFixed(8) + " wBTC";
-}
-function fmtPrice(raw: string) {
-  return (
-    "$" +
-    (Number(raw) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })
-  );
-}
-function fmtInterval(secs: number) {
+const fmtUsdc = (raw: string | number) =>
+  "$" +
+  (Number(raw) / 1e6).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const fmtSats = (raw: string) => (Number(raw) / 1e8).toFixed(8) + " wBTC";
+
+// BTC price comes from get_btc_usd_price() which returns (u128 price, u32 decimals).
+// price / 10^decimals = USD.
+const fmtBtcPrice = (price: number, decimals: number) =>
+  "$" +
+  (price / Math.pow(10, decimals)).toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  });
+
+// interval_seconds → human label
+const fmtInterval = (secs: number) => {
   if (secs < 3600) return `${secs / 60}m`;
   if (secs < 86400) return `${secs / 3600}h`;
   return `${Math.round(secs / 86400)}d`;
-}
-function fmtCountdown(ts: number, now: number) {
-  const diff = ts - now;
+};
+
+// interval_hours form value → human label
+const fmtHours = (h: number) => {
+  if (h < 24) return `${h}h`;
+  if (h % 168 === 0) return `${h / 168}w`;
+  if (h % 24 === 0) return `${h / 24}d`;
+  return `${h}h`;
+};
+
+const fmtCountdown = (nextDueTs: number, now: number) => {
+  const diff = nextDueTs - now;
   if (diff <= 0) return "Ready";
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   if (diff < 86400)
     return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`;
   return `${Math.floor(diff / 86400)}d`;
-}
-function fmtDate(ts: number) {
-  return new Date(ts * 1000).toLocaleDateString(undefined, {
+};
+
+const fmtDate = (ts: number) =>
+  new Date(ts * 1000).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-function toHexAddr(raw: string) {
-  return "0x" + BigInt(raw).toString(16).padStart(64, "0");
-}
 
-// ── Interval presets ──────────────────────────────────────────────────────────
+const toHexAddr = (raw: string) =>
+  "0x" + BigInt(raw).toString(16).padStart(64, "0");
 
-const INTERVAL_PRESETS = [
-  { label: "1h", secs: 3600 },
-  { label: "6h", secs: 21600 },
-  { label: "1d", secs: 86400 },
-  { label: "1w", secs: 604800 },
+const shortenAddr = (addr: string) => addr.slice(0, 8) + "…" + addr.slice(-6);
+
+// ── Presets ───────────────────────────────────────────────────────────────────
+// Contract: interval_hours must be 1–720 (DCA_MAX_INTERVAL_HOURS = 720)
+
+const HOUR_PRESETS = [
+  { label: "1h", hours: 1 },
+  { label: "6h", hours: 6 },
+  { label: "1d", hours: 24 },
+  { label: "1w", hours: 168 },
 ];
 
-const EXECUTIONS_PRESETS = [3, 6, 12, 24, 52];
+const EXEC_PRESETS = [3, 6, 12, 24, 52];
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DcaTab() {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
 
-  // ── Create form state ──────────────────────────────────────────────────────
+  // ── Form ──────────────────────────────────────────────────────────────────
   const [usdcAmount, setUsdcAmount] = useState("");
-  const [intervalSecs, setIntervalSecs] = useState(86400);
-  const [customInterval, setCustomInterval] = useState("");
-  const [executions, setExecutions] = useState(12);
+  const [intervalHours, setIntervalHours] = useState(24); // sent to contract
+  const [customHours, setCustomHours] = useState("");
+  const [numExecs, setNumExecs] = useState(12);
   const [customExec, setCustomExec] = useState("");
-  const [recipient, setRecipient] = useState("");
-  const [creating, setCreating] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [approveOk, setApproveOk] = useState(false); // gate step 2
+  const [creating, setCreating] = useState(false);
 
-  // ── Orders list ────────────────────────────────────────────────────────────
-  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  // ── List ──────────────────────────────────────────────────────────────────
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
-  const [hiddenOrders, setHiddenOrders] = useState<Set<string>>(new Set());
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
 
   const myAddr = address ? toHexAddr(address) : "";
 
   const {
     data: ordersData,
     loading: ordersLoading,
-    refetch: refetchOrders,
+    refetch,
   } = useQuery(GET_ACTIVE_DCA_ORDERS, {
     variables: { owner: myAddr },
     skip: !myAddr,
@@ -131,54 +181,77 @@ export default function DcaTab() {
   });
 
   const orders: DcaOrder[] = ((ordersData?.dcaorders ?? []) as any[])
-    .filter((o: any) => !hiddenOrders.has(o.order_id ?? o.id))
+    .filter((o: any) => !hidden.has(o.id))
     .map((o: any) => ({
-      orderId: o.order_id ?? o.id,
-      usdcRecipient: o.usdc_recipient,
+      orderId: o.id,
+      owner: o.owner,
       usdcPerInterval: o.usdc_per_interval,
       intervalSeconds: Number(o.interval_seconds),
-      executionsTotal: Number(o.executions_total),
-      executionsLeft: Number(o.executions_left),
-      nextExecution: Number(o.next_execution),
+      totalIntervals: Number(o.total_intervals),
+      totalUsdcDeposited: o.total_usdc_deposited,
+      executedIntervals: Number(o.executed_intervals),
+      isActive: Boolean(o.is_active),
+      lastExecution: Number(o.last_execution),
       createdTxHash: o.created_tx_hash,
       lastExecutedAtBlock: o.last_executed_at_block
         ? Number(o.last_executed_at_block)
         : undefined,
     }));
 
-  // ── Execution history for expanded order ──────────────────────────────────
+  // ── Execution history ─────────────────────────────────────────────────────
   const { data: execData, loading: execLoading } = useQuery(
     GET_DCA_EXECUTIONS,
     {
-      variables: { orderId: expandedOrderId ?? "" },
-      skip: !expandedOrderId,
+      variables: { orderId: expandedId ?? "" },
+      skip: !expandedId,
       fetchPolicy: "network-only",
     },
   );
-
-  const executions_history: DcaExecution[] = (
+  const execHistory: DcaExecution[] = (
     (execData?.dcaexecutions ?? []) as any[]
   ).map((e: any) => ({
-    executionNumber: Number(e.execution_number),
+    executedIntervals: Number(e.executed_intervals),
     usdcSpent: e.usdc_spent,
     wbtcReceived: e.wbtc_received,
-    btcPriceUsd: e.btc_price_usd,
+    keeper: e.keeper,
     executedTimestamp: Number(e.executed_timestamp),
     executedTxHash: e.executed_tx_hash,
   }));
 
-  // ── BTC/USD preview ────────────────────────────────────────────────────────
-  const { data: btcPriceRaw } = useReadContract({
+  // ── Oracle price — get_btc_usd_price() returns (u128 price, u32 decimals) ──
+  const { data: btcPriceData } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
     functionName: "get_btc_usd_price",
     args: [],
     watch: true,
-    refetchInterval: 30000,
+    refetchInterval: 30_000,
   });
-  const btcUsd = btcPriceRaw ? Number((btcPriceRaw as any)[0]) / 1e8 : null;
+  // Returns tuple: [price_u128, decimals_u32]
+  const btcPrice = btcPriceData ? Number((btcPriceData as any)[0]) : null;
+  const btcDecimals = btcPriceData ? Number((btcPriceData as any)[1]) : 8;
+  const btcUsd = btcPrice ? btcPrice / Math.pow(10, btcDecimals) : null;
 
-  // ── USDC address lookup ────────────────────────────────────────────────────
+  // ── preview_wbtc_for_usdc — use contract view for accurate wBTC preview ───
+  const usdcRawForPreview =
+    usdcAmount && Number(usdcAmount) > 0
+      ? BigInt(Math.round(Number(usdcAmount) * 1e6))
+      : null;
+  const { data: wbtcPreviewData } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "preview_wbtc_for_usdc",
+    args: usdcRawForPreview
+      ? [uint256.bnToUint256(usdcRawForPreview)]
+      : [uint256.bnToUint256(0)],
+    enabled: !!usdcRawForPreview,
+    watch: false,
+  });
+  const wbtcPreviewSats = wbtcPreviewData
+    ? Number(toDecimal((wbtcPreviewData as any).toString()))
+    : null;
+
+  // ── USDC token address ─────────────────────────────────────────────────────
   const { data: usdcAddressRaw } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -187,56 +260,54 @@ export default function DcaTab() {
   });
 
   const now = Math.floor(Date.now() / 1000);
-  const effectiveInterval = customInterval
-    ? Number(customInterval)
-    : intervalSecs;
-  const effectiveExecs = customExec ? Number(customExec) : executions;
-  const totalUsdcNeeded = usdcAmount
-    ? (Number(usdcAmount) * effectiveExecs).toFixed(2)
-    : null;
-  const wbtcPreview =
-    btcUsd && usdcAmount
-      ? ((Number(usdcAmount) / btcUsd) * 1e8).toFixed(0) + " sat"
-      : null;
+  const effHours = customHours ? Number(customHours) : intervalHours;
+  const effExecs = customExec ? Number(customExec) : numExecs;
+  const totalUsdc = usdcAmount ? Number(usdcAmount) * effExecs : null;
 
-  // ── Approve USDC ──────────────────────────────────────────────────────────
+  // reset approve gate whenever the amount or exec count changes
+  const handleAmountChange = (v: string) => {
+    setUsdcAmount(v);
+    setApproveOk(false);
+  };
+  const handleExecChange = (n: number, custom = "") => {
+    setNumExecs(n);
+    setCustomExec(custom);
+    setApproveOk(false);
+  };
+
+  // ── Step 1: Approve USDC ───────────────────────────────────────────────────
+  // Contract pulls usdc_per_interval * total_intervals in create_dca_order().
+  // Must approve that exact amount before calling.
   const handleApprove = async () => {
-    if (!account || !address || !usdcAddressRaw) {
-      toast.error("Connect wallet first.");
-      return;
-    }
-    if (!usdcAmount || Number(usdcAmount) <= 0) {
-      toast.error("Enter USDC amount per interval.");
-      return;
-    }
+    if (!account || !address) return toast.error("Connect wallet first.");
+    if (!usdcAddressRaw) return toast.error("Could not read USDC address.");
+    if (!usdcAmount || Number(usdcAmount) < 1)
+      return toast.error("Minimum 1 USDC.");
 
-    setApproving(true);
     const toastId = toast.loading("Approving USDC…");
+    setApproving(true);
     try {
       const usdcAddr = "0x" + BigInt(usdcAddressRaw.toString()).toString(16);
-      // Approve total needed: usdcPerInterval * executions + 1% buffer
-      const totalRaw = BigInt(
-        Math.ceil(Number(usdcAmount) * effectiveExecs * 1e6),
-      );
-      const withBuffer = totalRaw + totalRaw / 100n;
-      const amountU256 = uint256.bnToUint256(withBuffer);
+      // Approve exactly usdc_per_interval * total_intervals (no buffer needed —
+      // contract checks allowance >= total exactly).
+      const totalRaw = BigInt(Math.round(Number(usdcAmount) * effExecs * 1e6));
+      const amtU256 = uint256.bnToUint256(totalRaw);
 
-      const allowanceResult = await account.callContract({
+      // Skip approve tx if existing allowance is sufficient
+      const alwRes = await account.callContract({
         contractAddress: usdcAddr,
         entrypoint: "allowance",
         calldata: CallData.compile([address, CONTRACT_ADDRESS]),
       });
-      const currentAllowance = uint256.uint256ToBN({
-        low: allowanceResult[0],
-        high: allowanceResult[1],
-      });
-      if (currentAllowance >= withBuffer) {
+      const existing = uint256.uint256ToBN({ low: alwRes[0], high: alwRes[1] });
+      if (existing >= totalRaw) {
         toast.update(toastId, {
           render: "Allowance already sufficient.",
           isLoading: false,
           type: "info",
           autoClose: 3000,
         });
+        setApproveOk(true);
         return;
       }
 
@@ -244,7 +315,7 @@ export default function DcaTab() {
         {
           contractAddress: usdcAddr,
           entrypoint: "approve",
-          calldata: CallData.compile([CONTRACT_ADDRESS, amountU256]),
+          calldata: CallData.compile([CONTRACT_ADDRESS, amtU256]),
         } as Call,
       ]);
       await account.waitForTransaction(tx.transaction_hash);
@@ -254,6 +325,7 @@ export default function DcaTab() {
         type: "success",
         autoClose: 4000,
       });
+      setApproveOk(true);
     } catch (err: any) {
       const msg =
         err?.baseError?.data?.execution_error?.error ??
@@ -270,26 +342,40 @@ export default function DcaTab() {
     }
   };
 
-  // ── Create DCA order ──────────────────────────────────────────────────────
+  // ── Step 2: create_dca_order(usdc_per_interval, interval_hours, total_intervals) ──
+  //
+  // Signature from contract:
+  //   fn create_dca_order(usdc_per_interval: u256, interval_hours: u64, total_intervals: u32)
+  //
+  // IMPORTANT:
+  //   - No recipient argument — wBTC always goes to get_caller_address() (order.owner)
+  //   - interval_hours NOT seconds — contract multiplies by 3600 internally
+  //   - total_intervals must be 1–1000
+  //   - interval_hours must be 1–720
+  //   - usdc_per_interval >= 1_000_000 (1 USDC minimum)
   const handleCreate = async () => {
     if (!account || !contract || !address)
       return toast.error("Connect wallet.");
-    if (!usdcAmount || Number(usdcAmount) <= 0)
-      return toast.error("Enter USDC amount.");
-    if (!recipient.trim()) return toast.error("Enter wBTC recipient address.");
+    if (!usdcAmount || Number(usdcAmount) < 1)
+      return toast.error("Minimum 1 USDC per execution.");
+    if (effHours < 1 || effHours > 720)
+      return toast.error("Interval must be 1–720 hours.");
+    if (effExecs < 1 || effExecs > 1000)
+      return toast.error("Executions must be 1–1000.");
+    if (!approveOk) return toast.error("Complete step 1 first.");
 
-    setCreating(true);
     const toastId = toast.loading("Creating DCA order…");
+    setCreating(true);
     try {
       const usdcRaw = uint256.bnToUint256(
         BigInt(Math.round(Number(usdcAmount) * 1e6)),
       );
 
-      const populate = contract.populate("start_dca", [
-        usdcRaw,
-        recipient.trim(),
-        effectiveInterval,
-        effectiveExecs,
+      // create_dca_order(usdc_per_interval: u256, interval_hours: u64, total_intervals: u32)
+      const populate = contract.populate("create_dca_order", [
+        usdcRaw, // u256 → low, high
+        effHours, // u64
+        effExecs, // u32
       ]);
 
       await account.estimateInvokeFee([populate]);
@@ -297,19 +383,21 @@ export default function DcaTab() {
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
 
+      const satsLabel = wbtcPreviewSats
+        ? wbtcPreviewSats.toLocaleString() + " sat"
+        : "wBTC";
       toast.update(toastId, {
-        render: `DCA order created! Buying ~${wbtcPreview ?? "wBTC"} every ${fmtInterval(effectiveInterval)} × ${effectiveExecs}`,
+        render: `DCA order created! ~${satsLabel} every ${fmtHours(effHours)} × ${effExecs}`,
         isLoading: false,
         type: "success",
         autoClose: 6000,
       });
 
-      // Reset form
       setUsdcAmount("");
-      setRecipient("");
-      setCustomInterval("");
+      setCustomHours("");
       setCustomExec("");
-      refetchOrders();
+      setApproveOk(false);
+      refetch();
     } catch (err: any) {
       const msg =
         err?.baseError?.data?.execution_error?.error ??
@@ -326,26 +414,28 @@ export default function DcaTab() {
     }
   };
 
-  // ── Cancel DCA order ──────────────────────────────────────────────────────
+  // ── cancel_dca(order_id: u256) ────────────────────────────────────────────
+  // Only callable by order.owner. Refunds remaining unspent USDC.
   const handleCancel = async (orderId: string) => {
     if (!account || !contract) return;
     setCancelling(orderId);
-    const toastId = toast.loading("Cancelling DCA order…");
+    const toastId = toast.loading("Cancelling order…");
     try {
-      const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
-      const populate = contract.populate("cancel_dca", [orderIdU256]);
+      const populate = contract.populate("cancel_dca", [
+        uint256.bnToUint256(BigInt(orderId)),
+      ]);
       await account.estimateInvokeFee([populate]);
       const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
       toast.update(toastId, {
-        render: "DCA order cancelled.",
+        render: "Order cancelled. Unspent USDC refunded.",
         isLoading: false,
         type: "success",
-        autoClose: 4000,
+        autoClose: 5000,
       });
-      setHiddenOrders((prev) => new Set([...prev, orderId]));
-      if (expandedOrderId === orderId) setExpandedOrderId(null);
+      setHidden((p) => new Set([...p, orderId]));
+      if (expandedId === orderId) setExpandedId(null);
     } catch (err: any) {
       const msg =
         err?.baseError?.data?.execution_error?.error ??
@@ -362,16 +452,22 @@ export default function DcaTab() {
     }
   };
 
+  const canApprove =
+    !!address && !!usdcAmount && Number(usdcAmount) >= 1 && !approving;
   const canCreate =
     !!address &&
     !!usdcAmount &&
-    Number(usdcAmount) > 0 &&
-    !!recipient.trim() &&
-    !creating;
+    Number(usdcAmount) >= 1 &&
+    approveOk &&
+    !creating &&
+    effHours >= 1 &&
+    effHours <= 720 &&
+    effExecs >= 1 &&
+    effExecs <= 1000;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      {/* Info banner */}
+      {/* Banner */}
       <div style={infoBox}>
         <RiLoopLeftLine
           size={14}
@@ -379,10 +475,10 @@ export default function DcaTab() {
           style={{ flexShrink: 0, marginTop: 2 }}
         />
         <div style={{ fontSize: "0.68rem", color: "#555", lineHeight: 1.8 }}>
-          Schedule recurring USDC → wBTC purchases at the live oracle price. A
-          keeper calls <span style={{ color: "#ffc800" }}>execute_dca</span> on
-          your behalf each interval. Remaining USDC stays in the contract until
-          the next execution.
+          Schedule recurring USDC → wBTC purchases at the live oracle price.
+          Full USDC is deposited upfront. A keeper calls{" "}
+          <span style={{ color: "#ffc800" }}>execute_dca</span> each interval.
+          wBTC is delivered directly to your wallet every execution.
         </div>
       </div>
 
@@ -390,34 +486,21 @@ export default function DcaTab() {
       <div style={section}>
         <div style={sectionLabel}>New DCA order</div>
 
-        {/* USDC per interval */}
+        {/* USDC per execution */}
         <div>
           <div style={fieldLabel}>USDC per execution</div>
           <div style={{ position: "relative" }}>
             <input
               value={usdcAmount}
-              onChange={(e) => setUsdcAmount(e.target.value)}
-              placeholder="e.g. 10"
+              onChange={(e) => handleAmountChange(e.target.value)}
+              placeholder="Min 1 USDC"
               type="number"
-              min="0"
-              style={{ ...inputStyle, paddingRight: "3rem" }}
+              min="1"
+              style={{ ...inputStyle, paddingRight: "3.5rem" }}
             />
-            <span
-              style={{
-                position: "absolute",
-                right: "0.9rem",
-                top: "50%",
-                transform: "translateY(-50%)",
-                color: "#3a3a4a",
-                fontSize: "0.7rem",
-                fontFamily: "'DM Mono', monospace",
-                pointerEvents: "none",
-              }}
-            >
-              USDC
-            </span>
+            <span style={suffix}>USDC</span>
           </div>
-          {wbtcPreview && (
+          {wbtcPreviewSats !== null && (
             <div
               style={{
                 color: "#3a3a4a",
@@ -425,41 +508,62 @@ export default function DcaTab() {
                 marginTop: "0.3rem",
               }}
             >
-              ≈ <span style={{ color: "#ffc800" }}>{wbtcPreview}</span> at
-              current BTC price (
-              {btcUsd ? fmtPrice((btcUsd * 1e8).toFixed(0)) : "—"})
+              ≈{" "}
+              <span style={{ color: "#ffc800" }}>
+                {wbtcPreviewSats.toLocaleString()} sat
+              </span>
+              {btcPrice
+                ? ` at ${fmtBtcPrice(btcPrice, btcDecimals)} / BTC`
+                : ""}{" "}
+              (oracle)
             </div>
           )}
         </div>
 
-        {/* Interval */}
+        {/* Interval (hours — contract takes u64 interval_hours, NOT seconds) */}
         <div>
           <div style={fieldLabel}>Interval</div>
           <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-            {INTERVAL_PRESETS.map(({ label, secs }) => (
+            {HOUR_PRESETS.map(({ label, hours }) => (
               <button
-                key={secs}
+                key={hours}
                 onClick={() => {
-                  setIntervalSecs(secs);
-                  setCustomInterval("");
+                  setIntervalHours(hours);
+                  setCustomHours("");
                 }}
-                style={chip(effectiveInterval === secs && !customInterval)}
+                style={chip(effHours === hours && !customHours)}
               >
                 {label}
               </button>
             ))}
-            <input
-              value={customInterval}
-              onChange={(e) => setCustomInterval(e.target.value)}
-              placeholder="Custom (s)"
-              type="number"
-              style={{
-                ...inputStyle,
-                width: 110,
-                padding: "0.4rem 0.7rem",
-                fontSize: "0.7rem",
-              }}
-            />
+            <div style={{ position: "relative" }}>
+              <input
+                value={customHours}
+                onChange={(e) => setCustomHours(e.target.value)}
+                placeholder="Custom"
+                type="number"
+                min="1"
+                max="720"
+                style={{
+                  ...inputStyle,
+                  width: 100,
+                  padding: "0.4rem 2.4rem 0.4rem 0.7rem",
+                  fontSize: "0.7rem",
+                }}
+              />
+              <span style={{ ...suffix, right: "0.5rem", fontSize: "0.6rem" }}>
+                h
+              </span>
+            </div>
+          </div>
+          <div
+            style={{
+              color: "#2a2a3a",
+              fontSize: "0.6rem",
+              marginTop: "0.25rem",
+            }}
+          >
+            1–720 hours (max 30 days)
           </div>
         </div>
 
@@ -474,23 +578,22 @@ export default function DcaTab() {
               alignItems: "center",
             }}
           >
-            {EXECUTIONS_PRESETS.map((n) => (
+            {EXEC_PRESETS.map((n) => (
               <button
                 key={n}
-                onClick={() => {
-                  setExecutions(n);
-                  setCustomExec("");
-                }}
-                style={chip(effectiveExecs === n && !customExec)}
+                onClick={() => handleExecChange(n)}
+                style={chip(effExecs === n && !customExec)}
               >
                 {n}×
               </button>
             ))}
             <input
               value={customExec}
-              onChange={(e) => setCustomExec(e.target.value)}
+              onChange={(e) => handleExecChange(numExecs, e.target.value)}
               placeholder="Custom"
               type="number"
+              min="1"
+              max="1000"
               style={{
                 ...inputStyle,
                 width: 90,
@@ -499,70 +602,50 @@ export default function DcaTab() {
               }}
             />
           </div>
-          {totalUsdcNeeded && (
-            <div
-              style={{
-                color: "#3a3a4a",
-                fontSize: "0.62rem",
-                marginTop: "0.3rem",
-              }}
-            >
-              Total USDC to approve:{" "}
-              <span style={{ color: "#aaa" }}>${totalUsdcNeeded}</span>
-            </div>
-          )}
-        </div>
-
-        {/* wBTC recipient */}
-        <div>
-          <div style={fieldLabel}>wBTC recipient</div>
-          <input
-            value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
-            placeholder="0x… address to receive wBTC"
-            style={inputStyle}
-          />
-          {address && !recipient && (
-            <button
-              onClick={() => setRecipient(address)}
-              style={{ ...btnGhost, marginTop: "0.4rem" }}
-            >
-              Use connected wallet
-            </button>
-          )}
+          <div
+            style={{
+              color: "#2a2a3a",
+              fontSize: "0.6rem",
+              marginTop: "0.25rem",
+            }}
+          >
+            1–1000 executions
+          </div>
         </div>
 
         {/* Summary */}
-        {usdcAmount && Number(usdcAmount) > 0 && (
-          <div
-            style={{
-              background: "#0a0a0f",
-              border: "1px solid #1e1e2e",
-              borderRadius: 8,
-              padding: "0.85rem 1rem",
-              display: "flex",
-              flexDirection: "column",
-              gap: "0.35rem",
-            }}
-          >
+        {usdcAmount && Number(usdcAmount) >= 1 && (
+          <div style={summaryBox}>
             <SummaryRow
-              label="Spend"
-              value={`${fmtUsdc((Number(usdcAmount) * 1e6).toFixed(0))} every ${fmtInterval(effectiveInterval)}`}
+              label="Per execution"
+              value={`${fmtUsdc((Number(usdcAmount) * 1e6).toFixed(0))} → ~${wbtcPreviewSats?.toLocaleString() ?? "?"} sat`}
             />
-            <SummaryRow label="Executions" value={`${effectiveExecs}×`} />
+            <SummaryRow label="Interval" value={fmtHours(effHours)} />
+            <SummaryRow label="Executions" value={`${effExecs}×`} />
             <SummaryRow
               label="Duration"
-              value={fmtInterval(effectiveInterval * effectiveExecs)}
+              value={fmtHours(effHours * effExecs)}
             />
             <SummaryRow
-              label="Total USDC"
-              value={`$${totalUsdcNeeded}`}
+              label="Total USDC deposited"
+              value={totalUsdc ? `$${totalUsdc.toFixed(2)}` : "—"}
               highlight
             />
+            <div
+              style={{
+                fontSize: "0.6rem",
+                color: "#2a2a3a",
+                marginTop: "0.3rem",
+                lineHeight: 1.7,
+              }}
+            >
+              wBTC is delivered to your connected wallet after each execution.
+              Full USDC amount is pulled upfront in step 2.
+            </div>
           </div>
         )}
 
-        {/* Approve + Create buttons */}
+        {/* Step 1 → Step 2 */}
         <div
           style={{
             display: "grid",
@@ -572,8 +655,8 @@ export default function DcaTab() {
         >
           <button
             onClick={handleApprove}
-            disabled={approving || !address || !usdcAmount}
-            style={btnPrimary(!approving && !!address && !!usdcAmount)}
+            disabled={!canApprove}
+            style={{ ...btnPrimary(canApprove), opacity: approveOk ? 0.5 : 1 }}
           >
             {approving ? (
               <>
@@ -583,6 +666,8 @@ export default function DcaTab() {
                 />{" "}
                 Approving…
               </>
+            ) : approveOk ? (
+              "✓ Approved"
             ) : (
               "1. Approve USDC"
             )}
@@ -620,7 +705,7 @@ export default function DcaTab() {
         >
           <div style={sectionLabel}>Your active orders</div>
           <button
-            onClick={() => refetchOrders()}
+            onClick={() => refetch()}
             disabled={ordersLoading}
             style={{
               ...btnGhost,
@@ -666,10 +751,13 @@ export default function DcaTab() {
         )}
 
         {orders.map((order) => {
-          const isExpanded = expandedOrderId === order.orderId;
-          const isDone = order.executionsLeft === 0;
-          const isReady = order.nextExecution <= now;
-          const isCancellingThis = cancelling === order.orderId;
+          const isExpanded = expandedId === order.orderId;
+          const isCancelling = cancelling === order.orderId;
+          const remaining = order.totalIntervals - order.executedIntervals;
+          const nextDueTs = order.lastExecution + order.intervalSeconds;
+          const isReady = nextDueTs <= now;
+          const progress =
+            (order.executedIntervals / order.totalIntervals) * 100;
 
           return (
             <div
@@ -681,11 +769,9 @@ export default function DcaTab() {
                 transition: "border-color 0.15s",
               }}
             >
-              {/* Order header row */}
+              {/* Header */}
               <div
-                onClick={() =>
-                  setExpandedOrderId(isExpanded ? null : order.orderId)
-                }
+                onClick={() => setExpandedId(isExpanded ? null : order.orderId)}
                 style={{
                   background: isExpanded ? "rgba(255,200,0,0.04)" : "#0a0a0f",
                   padding: "0.85rem 1rem",
@@ -723,14 +809,13 @@ export default function DcaTab() {
                     </span>
                   </div>
                   <div style={{ color: "#3a3a4a", fontSize: "0.6rem" }}>
-                    {order.executionsLeft}/{order.executionsTotal} remaining ·
-                    next:{" "}
+                    {order.executedIntervals}/{order.totalIntervals} done
+                    {" · next: "}
                     <span style={{ color: isReady ? "#22c55e" : "#555" }}>
-                      {isReady ? "now" : fmtCountdown(order.nextExecution, now)}
+                      {isReady ? "now" : fmtCountdown(nextDueTs, now)}
                     </span>
                   </div>
                 </div>
-
                 <div
                   style={{
                     display: "flex",
@@ -738,7 +823,6 @@ export default function DcaTab() {
                     gap: "0.6rem",
                   }}
                 >
-                  {/* Progress bar */}
                   <div
                     style={{
                       width: 60,
@@ -751,7 +835,7 @@ export default function DcaTab() {
                     <div
                       style={{
                         height: "100%",
-                        width: `${((order.executionsTotal - order.executionsLeft) / order.executionsTotal) * 100}%`,
+                        width: `${progress}%`,
                         background: "#ffc800",
                         borderRadius: 2,
                         transition: "width 0.3s",
@@ -769,7 +853,7 @@ export default function DcaTab() {
                 </div>
               </div>
 
-              {/* Expanded details */}
+              {/* Expanded */}
               {isExpanded && (
                 <div
                   style={{
@@ -780,7 +864,6 @@ export default function DcaTab() {
                     gap: "0.7rem",
                   }}
                 >
-                  {/* Details grid */}
                   <div
                     style={{
                       display: "flex",
@@ -794,41 +877,39 @@ export default function DcaTab() {
                     />
                     <DetailRow
                       label="wBTC recipient"
-                      value={
-                        order.usdcRecipient.slice(0, 10) +
-                        "…" +
-                        order.usdcRecipient.slice(-6)
-                      }
+                      value={shortenAddr(order.owner)}
                     />
                     <DetailRow
                       label="Interval"
                       value={fmtInterval(order.intervalSeconds)}
                     />
                     <DetailRow
-                      label="Next execution"
-                      value={
-                        order.nextExecution <= now
-                          ? "Ready for keeper"
-                          : fmtDate(order.nextExecution)
-                      }
+                      label="Remaining"
+                      value={`${remaining} of ${order.totalIntervals}`}
                     />
-                    {wbtcPreview && (
+                    <DetailRow
+                      label="Next execution"
+                      value={isReady ? "Ready for keeper" : fmtDate(nextDueTs)}
+                    />
+                    <DetailRow
+                      label="Total deposited"
+                      value={fmtUsdc(order.totalUsdcDeposited)}
+                    />
+                    {btcUsd && (
                       <DetailRow
-                        label="≈ wBTC/exec"
+                        label="≈ wBTC / exec"
                         value={
-                          btcUsd
-                            ? (
-                                (Number(order.usdcPerInterval) / 1e6 / btcUsd) *
-                                1e8
-                              ).toFixed(0) + " sat"
-                            : "—"
+                          Math.floor(
+                            (Number(order.usdcPerInterval) / 1e6 / btcUsd) *
+                              1e8,
+                          ).toLocaleString() + " sat (est.)"
                         }
                       />
                     )}
                   </div>
 
                   {/* Execution history */}
-                  {execLoading && expandedOrderId === order.orderId && (
+                  {execLoading && expandedId === order.orderId && (
                     <div
                       style={{
                         display: "flex",
@@ -846,152 +927,150 @@ export default function DcaTab() {
                     </div>
                   )}
 
-                  {executions_history.length > 0 &&
-                    expandedOrderId === order.orderId && (
-                      <div>
-                        <div style={{ ...fieldLabel, marginBottom: "0.5rem" }}>
-                          Execution history
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "0.3rem",
-                          }}
-                        >
-                          {executions_history.map((e) => (
-                            <div
-                              key={e.executionNumber}
-                              style={{
-                                background: "#0a0a0f",
-                                border: "1px solid #1e1e2e",
-                                borderRadius: 6,
-                                padding: "0.6rem 0.8rem",
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                              }}
-                            >
-                              <div>
-                                <div
-                                  style={{
-                                    color: "#aaa",
-                                    fontSize: "0.7rem",
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  #{e.executionNumber} —{" "}
-                                  {fmtSats(e.wbtcReceived)}
-                                </div>
-                                <div
-                                  style={{
-                                    color: "#3a3a4a",
-                                    fontSize: "0.6rem",
-                                    marginTop: "0.1rem",
-                                  }}
-                                >
-                                  {fmtUsdc(e.usdcSpent)} spent · BTC @{" "}
-                                  {fmtPrice(e.btcPriceUsd)}
-                                </div>
+                  {execHistory.length > 0 && expandedId === order.orderId && (
+                    <div>
+                      <div style={{ ...fieldLabel, marginBottom: "0.5rem" }}>
+                        Execution history
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "0.3rem",
+                        }}
+                      >
+                        {execHistory.map((e) => (
+                          <div
+                            key={e.executedIntervals}
+                            style={{
+                              background: "#0a0a0f",
+                              border: "1px solid #1e1e2e",
+                              borderRadius: 6,
+                              padding: "0.6rem 0.8rem",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                            }}
+                          >
+                            <div>
+                              <div
+                                style={{
+                                  color: "#aaa",
+                                  fontSize: "0.7rem",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                #{e.executedIntervals} —{" "}
+                                {fmtSats(e.wbtcReceived)}
                               </div>
                               <div
                                 style={{
-                                  color: "#2a2a3a",
+                                  color: "#3a3a4a",
                                   fontSize: "0.6rem",
-                                  textAlign: "right",
+                                  marginTop: "0.1rem",
                                 }}
                               >
-                                {e.executedTimestamp
-                                  ? fmtDate(e.executedTimestamp)
-                                  : "—"}
+                                {fmtUsdc(e.usdcSpent)} spent · keeper{" "}
+                                {shortenAddr(e.keeper)}
                               </div>
                             </div>
-                          ))}
-                        </div>
-
-                        {/* Avg cost basis */}
-                        {executions_history.length > 1 &&
-                          (() => {
-                            const totalUsdc = executions_history.reduce(
-                              (a, e) => a + Number(e.usdcSpent),
-                              0,
-                            );
-                            const totalSats = executions_history.reduce(
-                              (a, e) => a + Number(e.wbtcReceived),
-                              0,
-                            );
-                            const avgPrice =
-                              totalSats > 0
-                                ? totalUsdc / 1e6 / (totalSats / 1e8)
-                                : null;
-                            return avgPrice ? (
-                              <div
-                                style={{
-                                  background: "rgba(255,200,0,0.04)",
-                                  border: "1px solid rgba(255,200,0,0.12)",
-                                  borderRadius: 6,
-                                  padding: "0.6rem 0.8rem",
-                                  fontSize: "0.65rem",
-                                  color: "#555",
-                                  marginTop: "0.25rem",
-                                }}
-                              >
-                                Avg cost basis:{" "}
-                                <span
-                                  style={{ color: "#ffc800", fontWeight: 700 }}
-                                >
-                                  $
-                                  {avgPrice.toLocaleString(undefined, {
-                                    maximumFractionDigits: 0,
-                                  })}{" "}
-                                  / BTC
-                                </span>
-                              </div>
-                            ) : null;
-                          })()}
+                            <div
+                              style={{
+                                color: "#2a2a3a",
+                                fontSize: "0.6rem",
+                                textAlign: "right",
+                              }}
+                            >
+                              {e.executedTimestamp
+                                ? fmtDate(e.executedTimestamp)
+                                : "—"}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    )}
 
-                  {/* Cancel button */}
-                  {!isDone && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCancel(order.orderId);
-                      }}
-                      disabled={isCancellingThis}
-                      style={{
-                        background: "transparent",
-                        color: isCancellingThis ? "#2a2a3a" : "#f87171",
-                        border: `1px solid ${isCancellingThis ? "#1e1e2e" : "rgba(248,113,113,0.3)"}`,
-                        borderRadius: 7,
-                        padding: "0.6rem",
-                        fontSize: "0.68rem",
-                        fontFamily: "'DM Mono', monospace",
-                        cursor: isCancellingThis ? "not-allowed" : "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "0.4rem",
-                        transition: "all 0.15s",
-                        width: "100%",
-                      }}
-                    >
-                      {isCancellingThis ? (
-                        <>
-                          <FaSpinner
-                            size={11}
-                            style={{ animation: "spin 1s linear infinite" }}
-                          />{" "}
-                          Cancelling…
-                        </>
-                      ) : (
-                        <>
-                          <RiCloseLine size={13} /> Cancel order
-                        </>
-                      )}
-                    </button>
+                      {/* Avg cost basis */}
+                      {execHistory.length > 1 &&
+                        (() => {
+                          const totalUsdcRaw = execHistory.reduce(
+                            (a, e) => a + Number(e.usdcSpent),
+                            0,
+                          );
+                          const totalSats = execHistory.reduce(
+                            (a, e) => a + Number(e.wbtcReceived),
+                            0,
+                          );
+                          const avg =
+                            totalSats > 0
+                              ? totalUsdcRaw / 1e6 / (totalSats / 1e8)
+                              : null;
+                          return avg ? (
+                            <div
+                              style={{
+                                background: "rgba(255,200,0,0.04)",
+                                border: "1px solid rgba(255,200,0,0.12)",
+                                borderRadius: 6,
+                                padding: "0.6rem 0.8rem",
+                                fontSize: "0.65rem",
+                                color: "#555",
+                                marginTop: "0.25rem",
+                              }}
+                            >
+                              Avg cost basis:{" "}
+                              <span
+                                style={{ color: "#ffc800", fontWeight: 700 }}
+                              >
+                                $
+                                {avg.toLocaleString(undefined, {
+                                  maximumFractionDigits: 0,
+                                })}{" "}
+                                / BTC
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
+                    </div>
                   )}
+
+                  {/* Cancel */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCancel(order.orderId);
+                    }}
+                    disabled={isCancelling}
+                    style={{
+                      background: "transparent",
+                      color: isCancelling ? "#2a2a3a" : "#f87171",
+                      border: `1px solid ${isCancelling ? "#1e1e2e" : "rgba(248,113,113,0.3)"}`,
+                      borderRadius: 7,
+                      padding: "0.6rem",
+                      fontSize: "0.68rem",
+                      fontFamily: "'DM Mono', monospace",
+                      cursor: isCancelling ? "not-allowed" : "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "0.4rem",
+                      transition: "all 0.15s",
+                      width: "100%",
+                    }}
+                  >
+                    {isCancelling ? (
+                      <>
+                        <FaSpinner
+                          size={11}
+                          style={{ animation: "spin 1s linear infinite" }}
+                        />{" "}
+                        Cancelling…
+                      </>
+                    ) : (
+                      <>
+                        <RiCloseLine size={13} /> Cancel &amp; refund remaining
+                        USDC
+                      </>
+                    )}
+                  </button>
                 </div>
               )}
             </div>
@@ -1010,7 +1089,7 @@ function SummaryRow({
   highlight,
 }: {
   label: string;
-  value: string | null;
+  value: string;
   highlight?: boolean;
 }) {
   return (
@@ -1044,6 +1123,12 @@ function DetailRow({ label, value }: { label: string; value: string }) {
       </span>
     </div>
   );
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+function toDecimal(value: string | bigint | number): string {
+  return BigInt(value).toString();
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -1085,6 +1170,25 @@ const infoBox: React.CSSProperties = {
   border: "1px solid rgba(255,200,0,0.1)",
   borderRadius: 10,
   padding: "1rem",
+};
+const summaryBox: React.CSSProperties = {
+  background: "#0a0a0f",
+  border: "1px solid #1e1e2e",
+  borderRadius: 8,
+  padding: "0.85rem 1rem",
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.35rem",
+};
+const suffix: React.CSSProperties = {
+  position: "absolute",
+  right: "0.9rem",
+  top: "50%",
+  transform: "translateY(-50%)",
+  color: "#3a3a4a",
+  fontSize: "0.7rem",
+  fontFamily: "'DM Mono', monospace",
+  pointerEvents: "none",
 };
 const chip = (active: boolean): React.CSSProperties => ({
   background: active ? "#ffc800" : "transparent",
