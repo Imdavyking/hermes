@@ -55,22 +55,25 @@ const fmtUsdc = (raw: string | number) =>
 
 const fmtSats = (raw: string) => (Number(raw) / 1e8).toFixed(8) + " wBTC";
 
+const fmtStrk = (raw: bigint | number) =>
+  (Number(raw) / 1e18).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }) + " STRK";
+
 // BTC price comes from get_btc_usd_price() which returns (u128 price, u32 decimals).
-// price / 10^decimals = USD.
 const fmtBtcPrice = (price: number, decimals: number) =>
   "$" +
   (price / Math.pow(10, decimals)).toLocaleString(undefined, {
     maximumFractionDigits: 0,
   });
 
-// interval_seconds → human label
 const fmtInterval = (secs: number) => {
   if (secs < 3600) return `${secs / 60}m`;
   if (secs < 86400) return `${secs / 3600}h`;
   return `${Math.round(secs / 86400)}d`;
 };
 
-// interval_hours form value → human label
 const fmtHours = (h: number) => {
   if (h < 24) return `${h}h`;
   if (h % 168 === 0) return `${h / 168}w`;
@@ -101,7 +104,6 @@ const toHexAddr = (raw: string) =>
 const shortenAddr = (addr: string) => addr.slice(0, 8) + "…" + addr.slice(-6);
 
 // ── Presets ───────────────────────────────────────────────────────────────────
-// Contract: interval_hours must be 1–720 (DCA_MAX_INTERVAL_HOURS = 720)
 
 const HOUR_PRESETS = [
   { label: "1h", hours: 1 },
@@ -112,7 +114,6 @@ const HOUR_PRESETS = [
 
 const EXEC_PRESETS = [3, 6, 12, 24, 52];
 
-// Minimal ERC-20 ABI for balance_of — avoids importing the full token ABI.
 const ERC20_BALANCE_ABI = [
   {
     name: "balance_of",
@@ -136,12 +137,12 @@ export default function DcaTab() {
 
   // ── Form ──────────────────────────────────────────────────────────────────
   const [usdcAmount, setUsdcAmount] = useState("");
-  const [intervalHours, setIntervalHours] = useState(24); // sent to contract
+  const [intervalHours, setIntervalHours] = useState(24);
   const [customHours, setCustomHours] = useState("");
   const [numExecs, setNumExecs] = useState(12);
   const [customExec, setCustomExec] = useState("");
   const [approving, setApproving] = useState(false);
-  const [approveOk, setApproveOk] = useState(false); // gate step 2
+  const [approveOk, setApproveOk] = useState(false);
   const [creating, setCreating] = useState(false);
   const [minting, setMinting] = useState(false);
 
@@ -200,7 +201,7 @@ export default function DcaTab() {
     executedTxHash: e.executed_tx_hash,
   }));
 
-  // ── Oracle price — get_btc_usd_price() returns (u128 price, u32 decimals) ──
+  // ── Oracle price ──────────────────────────────────────────────────────────
   const { data: btcPriceData } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -219,17 +220,54 @@ export default function DcaTab() {
   });
 
   const { chain } = useNetwork();
-
   const isTestnet =
     chain?.name?.toLowerCase().includes("sepolia") ||
     chain?.name?.toLowerCase().includes("test");
 
-  // Returns tuple: [price_u128, decimals_u32]
   const btcPrice = btcPriceData ? Number((btcPriceData as any)[0]) : null;
   const btcDecimals = btcPriceData ? Number((btcPriceData as any)[1]) : 8;
   const btcUsd = btcPrice ? btcPrice / Math.pow(10, btcDecimals) : null;
 
-  // ── preview_wbtc_for_usdc — use contract view for accurate wBTC preview ───
+  // ── Keeper fee — keeper_fee_strk() returns u256 (18-dec STRK) ─────────────
+  // Read once on mount; this is a contract constant so no polling needed.
+  const { data: keeperFeeData } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "keeper_fee_strk",
+    args: [],
+  });
+  // keeper_fee_strk returns a u256 {low, high}; extract as bigint
+  const keeperFeePerExec: bigint = keeperFeeData
+    ? BigInt((keeperFeeData as any).toString())
+    : BigInt(500_000_000_000_000_000); // fallback: 0.5 STRK
+
+  // ── STRK token address ────────────────────────────────────────────────────
+  const { data: strkAddressRaw } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "strk_address",
+    args: [],
+  });
+  const strkAddr = strkAddressRaw
+    ? (`0x${BigInt(strkAddressRaw.toString()).toString(16)}` as `0x${string}`)
+    : undefined;
+
+  // ── STRK balance ──────────────────────────────────────────────────────────
+  const { data: strkBalanceData } = useReadContract({
+    abi: ERC20_BALANCE_ABI,
+    address: strkAddr,
+    functionName: "balance_of",
+    args: address ? [address] : undefined,
+    enabled: !!strkAddr && !!address,
+    watch: true,
+    refetchInterval: 15_000,
+  });
+  const strkBalance: bigint =
+    strkBalanceData !== undefined && strkBalanceData !== null
+      ? BigInt((strkBalanceData as any).toString())
+      : BigInt(0);
+
+  // ── wBTC preview ──────────────────────────────────────────────────────────
   const usdcRawForPreview =
     usdcAmount && Number(usdcAmount) > 0
       ? BigInt(Math.round(Number(usdcAmount) * 1e6))
@@ -248,19 +286,17 @@ export default function DcaTab() {
     ? Number(toDecimal((wbtcPreviewData as any).toString()))
     : null;
 
-  // ── USDC token address ─────────────────────────────────────────────────────
+  // ── USDC token address + balance ──────────────────────────────────────────
   const { data: usdcAddressRaw } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
     functionName: "usdc_address",
     args: [],
   });
-
   const usdcAddr = usdcAddressRaw
     ? (`0x${BigInt(usdcAddressRaw.toString()).toString(16)}` as `0x${string}`)
     : undefined;
 
-  // ── USDC balance ───────────────────────────────────────────────────────────
   const { data: usdcBalanceData } = useReadContract({
     abi: ERC20_BALANCE_ABI,
     address: usdcAddr,
@@ -270,20 +306,28 @@ export default function DcaTab() {
     watch: true,
     refetchInterval: 15_000,
   });
-
   const usdcBalance =
     usdcBalanceData !== undefined && usdcBalanceData !== null
       ? Number(BigInt((usdcBalanceData as any).toString())) / 1e6
       : null;
 
+  // ── Derived totals ────────────────────────────────────────────────────────
   const now = Math.floor(Date.now() / 1000);
   const effHours = customHours ? Number(customHours) : intervalHours;
   const effExecs = customExec ? Number(customExec) : numExecs;
   const totalUsdc = usdcAmount ? Number(usdcAmount) * effExecs : null;
-  const insufficientBalance =
-    totalUsdc !== null && usdcBalance !== null && totalUsdc > usdcBalance;
 
-  // reset approve gate whenever the amount or exec count changes
+  // Total STRK keeper fee the user must pre-fund
+  const totalStrkFee: bigint = keeperFeePerExec * BigInt(effExecs);
+
+  const insufficientUsdcBalance =
+    totalUsdc !== null && usdcBalance !== null && totalUsdc > usdcBalance;
+  const insufficientStrkBalance =
+    strkAddr !== undefined && strkBalance < totalStrkFee;
+  const insufficientBalance =
+    insufficientUsdcBalance || insufficientStrkBalance;
+
+  // Reset approve gate whenever anything that affects the approval amount changes
   const handleAmountChange = (v: string) => {
     setUsdcAmount(v);
     setApproveOk(false);
@@ -294,39 +338,71 @@ export default function DcaTab() {
     setApproveOk(false);
   };
 
-  // ── Step 1: Approve USDC ───────────────────────────────────────────────────
-  // Contract pulls usdc_per_interval * total_intervals in create_dca_order().
-  // Must approve that exact amount before calling.
+  // ── Step 1: Approve USDC + STRK in a single multicall ─────────────────────
+  //
+  // The contract now requires two pull transfers in create_dca_order():
+  //   1. USDC: usdc_per_interval * total_intervals  (swap budget)
+  //   2. STRK: KEEPER_FEE_STRK * total_intervals    (keeper fee reserve)
+  //
+  // We batch both approve calls into one wallet signature for UX simplicity.
+  // Existing allowances are checked first — if both are already sufficient
+  // we skip the tx entirely.
   const handleApprove = async () => {
     if (!account || !address) return toast.error("Connect wallet first.");
     if (!usdcAddressRaw) return toast.error("Could not read USDC address.");
+    if (!strkAddr) return toast.error("Could not read STRK address.");
     if (!usdcAmount || Number(usdcAmount) < 1)
       return toast.error("Minimum 1 USDC.");
-    if (insufficientBalance)
+    if (insufficientUsdcBalance)
       return toast.error(
-        `Insufficient balance — you have $${usdcBalance!.toFixed(2)} USDC`,
+        `Insufficient USDC — you have $${usdcBalance!.toFixed(2)}`,
+      );
+    if (insufficientStrkBalance)
+      return toast.error(
+        `Insufficient STRK for keeper fee — need ${fmtStrk(totalStrkFee)}, have ${fmtStrk(strkBalance)}`,
       );
 
-    const toastId = toast.loading("Approving USDC…");
+    const toastId = toast.loading("Approving USDC + STRK…");
     setApproving(true);
     try {
       const usdcAddrHex = "0x" + BigInt(usdcAddressRaw.toString()).toString(16);
+      const strkAddrHex = "0x" + BigInt(strkAddr).toString(16);
 
-      // Approve exactly usdc_per_interval * total_intervals (no buffer needed —
-      // contract checks allowance >= total exactly).
-      const totalRaw = BigInt(Math.round(Number(usdcAmount) * effExecs * 1e6));
-      const amtU256 = uint256.bnToUint256(totalRaw);
+      const totalUsdcRaw = BigInt(
+        Math.round(Number(usdcAmount) * effExecs * 1e6),
+      );
+      const usdcU256 = uint256.bnToUint256(totalUsdcRaw);
+      const strkU256 = uint256.bnToUint256(totalStrkFee);
 
-      // Skip approve tx if existing allowance is sufficient
-      const alwRes = await account.callContract({
-        contractAddress: usdcAddrHex,
-        entrypoint: "allowance",
-        calldata: CallData.compile([address, CONTRACT_ADDRESS]),
+      // Check existing allowances — skip approve tx if both are already sufficient
+      const [usdcAlwRes, strkAlwRes] = await Promise.all([
+        account.callContract({
+          contractAddress: usdcAddrHex,
+          entrypoint: "allowance",
+          calldata: CallData.compile([address, CONTRACT_ADDRESS]),
+        }),
+        account.callContract({
+          contractAddress: strkAddrHex,
+          entrypoint: "allowance",
+          calldata: CallData.compile([address, CONTRACT_ADDRESS]),
+        }),
+      ]);
+
+      const existingUsdc = uint256.uint256ToBN({
+        low: usdcAlwRes[0],
+        high: usdcAlwRes[1],
       });
-      const existing = uint256.uint256ToBN({ low: alwRes[0], high: alwRes[1] });
-      if (existing >= totalRaw) {
+      const existingStrk = uint256.uint256ToBN({
+        low: strkAlwRes[0],
+        high: strkAlwRes[1],
+      });
+
+      const needsUsdcApprove = existingUsdc < totalUsdcRaw;
+      const needsStrkApprove = existingStrk < totalStrkFee;
+
+      if (!needsUsdcApprove && !needsStrkApprove) {
         toast.update(toastId, {
-          render: "Allowance already sufficient.",
+          render: "Allowances already sufficient.",
           isLoading: false,
           type: "info",
           autoClose: 3000,
@@ -335,16 +411,35 @@ export default function DcaTab() {
         return;
       }
 
-      const tx = await account.execute([
-        {
+      // Build approve calls — only include the ones that are needed
+      const calls: Call[] = [];
+      if (needsUsdcApprove) {
+        calls.push({
           contractAddress: usdcAddrHex,
           entrypoint: "approve",
-          calldata: CallData.compile([CONTRACT_ADDRESS, amtU256]),
-        } as Call,
-      ]);
+          calldata: CallData.compile([CONTRACT_ADDRESS, usdcU256]),
+        });
+      }
+      if (needsStrkApprove) {
+        calls.push({
+          contractAddress: strkAddrHex,
+          entrypoint: "approve",
+          calldata: CallData.compile([CONTRACT_ADDRESS, strkU256]),
+        });
+      }
+
+      const tx = await account.execute(calls);
       await account.waitForTransaction(tx.transaction_hash);
+
+      const approvedLabel = [
+        needsUsdcApprove && `$${(Number(totalUsdcRaw) / 1e6).toFixed(2)} USDC`,
+        needsStrkApprove && fmtStrk(totalStrkFee),
+      ]
+        .filter(Boolean)
+        .join(" + ");
+
       toast.update(toastId, {
-        render: "USDC approved!",
+        render: `Approved ${approvedLabel}`,
         isLoading: false,
         type: "success",
         autoClose: 4000,
@@ -366,17 +461,7 @@ export default function DcaTab() {
     }
   };
 
-  // ── Step 2: create_dca_order(usdc_per_interval, interval_hours, total_intervals) ──
-  //
-  // Signature from contract:
-  //   fn create_dca_order(usdc_per_interval: u256, interval_hours: u64, total_intervals: u32)
-  //
-  // IMPORTANT:
-  //   - No recipient argument — wBTC always goes to get_caller_address() (order.owner)
-  //   - interval_hours NOT seconds — contract multiplies by 3600 internally
-  //   - total_intervals must be 1–1000
-  //   - interval_hours must be 1–720
-  //   - usdc_per_interval >= 1_000_000 (1 USDC minimum)
+  // ── Step 2: create_dca_order ───────────────────────────────────────────────
   const handleCreate = async () => {
     if (!account || !contract || !address)
       return toast.error("Connect wallet.");
@@ -395,11 +480,10 @@ export default function DcaTab() {
         BigInt(Math.round(Number(usdcAmount) * 1e6)),
       );
 
-      // create_dca_order(usdc_per_interval: u256, interval_hours: u64, total_intervals: u32)
       const populate = contract.populate("create_dca_order", [
-        usdcRaw, // u256 → low, high
-        effHours, // u64
-        effExecs, // u32
+        usdcRaw,
+        effHours,
+        effExecs,
       ]);
 
       await account.estimateInvokeFee([populate]);
@@ -438,8 +522,7 @@ export default function DcaTab() {
     }
   };
 
-  // ── cancel_dca(order_id: u256) ────────────────────────────────────────────
-  // Only callable by order.owner. Refunds remaining unspent USDC.
+  // ── cancel_dca ────────────────────────────────────────────────────────────
   const handleCancel = async (orderId: string) => {
     if (!account || !contract) return;
     setCancelling(orderId);
@@ -453,7 +536,7 @@ export default function DcaTab() {
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
       toast.update(toastId, {
-        render: "Order cancelled. Unspent USDC refunded.",
+        render: "Order cancelled. Unspent USDC + STRK fee reserve refunded.",
         isLoading: false,
         type: "success",
         autoClose: 5000,
@@ -480,22 +563,17 @@ export default function DcaTab() {
     if (!account || !address) return toast.error("Connect wallet first.");
     if (!USDT_ADDRESS) return toast.error("Mock USDT address not configured.");
     const mintAmount = 10_000;
-
     const toastId = toast.loading("Minting test USDT…");
     setMinting(true);
-
     try {
       const amountRaw = BigInt(Math.round(mintAmount * 1e6));
       const u256Amount = uint256.bnToUint256(amountRaw);
-
       const tx = await account.execute({
         contractAddress: "0x" + BigInt(USDT_ADDRESS).toString(16),
         entrypoint: "mint",
         calldata: CallData.compile([address, u256Amount]),
       });
-
       await account.waitForTransaction(tx.transaction_hash);
-
       toast.update(toastId, {
         render: `Minted $${mintAmount.toLocaleString()} test USDT successfully!`,
         isLoading: false,
@@ -544,7 +622,8 @@ export default function DcaTab() {
         />
         <div style={{ fontSize: "0.68rem", color: "#555", lineHeight: 1.8 }}>
           Schedule recurring USDC → wBTC purchases at the live oracle price.
-          Full USDC is deposited upfront. A keeper calls{" "}
+          Full USDC is deposited upfront along with a small STRK keeper fee
+          reserve. A keeper calls{" "}
           <span style={{ color: "#ffc800" }}>execute_dca</span> each interval.
           wBTC is delivered directly to your wallet every execution.
         </div>
@@ -562,7 +641,6 @@ export default function DcaTab() {
           >
             Mint test USDT to fund your DCA orders (Sepolia only)
           </div>
-
           <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
             <button
               onClick={handleMintTestUsdt}
@@ -586,7 +664,6 @@ export default function DcaTab() {
               )}
             </button>
           </div>
-
           <div
             style={{ fontSize: "0.62rem", color: "#555", marginTop: "0.5rem" }}
           >
@@ -615,7 +692,9 @@ export default function DcaTab() {
               <div style={{ fontSize: "0.6rem", color: "#555" }}>
                 Balance:{" "}
                 <span
-                  style={{ color: insufficientBalance ? "#f87171" : "#aaa" }}
+                  style={{
+                    color: insufficientUsdcBalance ? "#f87171" : "#aaa",
+                  }}
                 >
                   $
                   {usdcBalance.toLocaleString(undefined, {
@@ -636,7 +715,7 @@ export default function DcaTab() {
               style={{
                 ...inputStyle,
                 paddingRight: "3.5rem",
-                borderColor: insufficientBalance
+                borderColor: insufficientUsdcBalance
                   ? "rgba(248,113,113,0.4)"
                   : undefined,
               }}
@@ -663,7 +742,7 @@ export default function DcaTab() {
           )}
         </div>
 
-        {/* Interval (hours — contract takes u64 interval_hours, NOT seconds) */}
+        {/* Interval */}
         <div>
           <div style={fieldLabel}>Interval</div>
           <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
@@ -774,25 +853,38 @@ export default function DcaTab() {
               value={totalUsdc ? `$${totalUsdc.toFixed(2)}` : "—"}
               highlight
             />
-            {insufficientBalance && (
-              <div
-                style={{
-                  fontSize: "0.62rem",
-                  color: "#f87171",
-                  marginTop: "0.15rem",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.3rem",
-                }}
-              >
-                ⚠ Insufficient balance — you have $
+            {/* Keeper fee reserve — new field */}
+            <SummaryRow
+              label="Keeper fee reserve"
+              value={fmtStrk(totalStrkFee)}
+              tooltip="Pre-funded STRK paid to keepers on each execution. Refunded if you cancel."
+            />
+            <div
+              style={{ borderTop: "1px solid #1e1e2e", margin: "0.2rem 0" }}
+            />
+            {/* Per-execution fee breakdown */}
+            <SummaryRow
+              label="Fee per execution"
+              value={fmtStrk(keeperFeePerExec)}
+            />
+
+            {/* Balance warnings */}
+            {insufficientUsdcBalance && (
+              <div style={warningText}>
+                ⚠ Insufficient USDC — you have $
                 {usdcBalance!.toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
-                })}{" "}
-                USDC
+                })}
               </div>
             )}
+            {insufficientStrkBalance && (
+              <div style={warningText}>
+                ⚠ Insufficient STRK for keeper fee — you have{" "}
+                {fmtStrk(strkBalance)}, need {fmtStrk(totalStrkFee)}
+              </div>
+            )}
+
             <div
               style={{
                 fontSize: "0.6rem",
@@ -801,8 +893,9 @@ export default function DcaTab() {
                 lineHeight: 1.7,
               }}
             >
-              wBTC is delivered to your connected wallet after each execution.
-              Full USDC amount is pulled upfront in step 2.
+              wBTC is delivered to your wallet each execution. USDC + STRK fee
+              are both pulled upfront in step 1. Unspent amounts are refunded on
+              cancel.
             </div>
           </div>
         )}
@@ -831,7 +924,7 @@ export default function DcaTab() {
             ) : approveOk ? (
               "✓ Approved"
             ) : (
-              "1. Approve USDC"
+              "1. Approve USDC + STRK"
             )}
           </button>
           <button
@@ -920,6 +1013,8 @@ export default function DcaTab() {
           const isReady = nextDueTs <= now;
           const progress =
             (order.executedIntervals / order.totalIntervals) * 100;
+          // Estimated STRK refund if cancelled now
+          const strkRefundEst = keeperFeePerExec * BigInt(remaining);
 
           return (
             <div
@@ -1057,6 +1152,11 @@ export default function DcaTab() {
                       label="Total deposited"
                       value={fmtUsdc(order.totalUsdcDeposited)}
                     />
+                    {/* STRK fee reserve remaining */}
+                    <DetailRow
+                      label="STRK fee reserve left"
+                      value={fmtStrk(strkRefundEst)}
+                    />
                     {btcUsd && (
                       <DetailRow
                         label="≈ wBTC / exec"
@@ -1134,6 +1234,10 @@ export default function DcaTab() {
                               >
                                 {fmtUsdc(e.usdcSpent)} spent · keeper{" "}
                                 {shortenAddr(e.keeper)}
+                                {" · "}
+                                <span style={{ color: "#2a2a3a" }}>
+                                  fee {fmtStrk(keeperFeePerExec)}
+                                </span>
                               </div>
                             </div>
                             <div
@@ -1194,7 +1298,7 @@ export default function DcaTab() {
                     </div>
                   )}
 
-                  {/* Cancel */}
+                  {/* Cancel — note both USDC + STRK are refunded */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -1228,8 +1332,9 @@ export default function DcaTab() {
                       </>
                     ) : (
                       <>
-                        <RiCloseLine size={13} /> Cancel &amp; refund remaining
-                        USDC
+                        <RiCloseLine size={13} />
+                        Cancel &amp; refund remaining USDC +{" "}
+                        {fmtStrk(strkRefundEst)} STRK
                       </>
                     )}
                   </button>
@@ -1249,14 +1354,51 @@ function SummaryRow({
   label,
   value,
   highlight,
+  tooltip,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  tooltip?: string;
 }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between" }}>
-      <span style={{ color: "#2a2a3a", fontSize: "0.62rem" }}>{label}</span>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+      }}
+    >
+      <span
+        style={{
+          color: "#2a2a3a",
+          fontSize: "0.62rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.3rem",
+        }}
+      >
+        {label}
+        {tooltip && (
+          <span
+            title={tooltip}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 12,
+              height: 12,
+              borderRadius: "50%",
+              border: "1px solid #2a2a3a",
+              fontSize: "0.5rem",
+              color: "#2a2a3a",
+              cursor: "help",
+            }}
+          >
+            ?
+          </span>
+        )}
+      </span>
       <span
         style={{
           color: highlight ? "#ffc800" : "#555",
@@ -1351,6 +1493,14 @@ const suffix: React.CSSProperties = {
   fontSize: "0.7rem",
   fontFamily: "'DM Mono', monospace",
   pointerEvents: "none",
+};
+const warningText: React.CSSProperties = {
+  fontSize: "0.62rem",
+  color: "#f87171",
+  marginTop: "0.15rem",
+  display: "flex",
+  alignItems: "center",
+  gap: "0.3rem",
 };
 const chip = (active: boolean): React.CSSProperties => ({
   background: active ? "#ffc800" : "transparent",
