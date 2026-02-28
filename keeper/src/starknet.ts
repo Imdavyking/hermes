@@ -1,4 +1,4 @@
-import { Account, Contract, RpcProvider, uint256 } from "starknet";
+import { Account, constants, Contract, RpcProvider, uint256 } from "starknet";
 import { config } from "./config";
 import abi from "./abis/private_swap.abi.json";
 
@@ -15,6 +15,8 @@ export const account = new Account(
   provider,
   config.keeperAddress,
   config.keeperPrivateKey,
+  undefined, // cairo version (leave default)
+  constants.TRANSACTION_VERSION.V3,
 );
 
 // ── Contract ──────────────────────────────────────────────────────────────────
