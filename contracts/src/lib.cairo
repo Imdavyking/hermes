@@ -2,6 +2,7 @@ use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_con
 mod field;
 mod incremental_merkle_tree;
 use crate::poseidon2lib::Poseidon2Trait;
+use crate::field::FieldTrait;
 mod poseidon2;
 mod poseidon2lib;
 
@@ -484,7 +485,9 @@ mod PrivateSwap {
                 FieldTrait::from_address(recipient),
             );
 
-            assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
+            assert(
+                computed_recipient_hash.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT,
+            );
 
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
             // Nullifier must not be spent already
@@ -575,7 +578,7 @@ mod PrivateSwap {
                 FieldTrait::from_address(recipient),
             );
 
-            assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
+            assert(computed_recipient_hash.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
 
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
@@ -620,7 +623,7 @@ mod PrivateSwap {
                 FieldTrait::from_address(alice_strk_destination),
             );
 
-            assert(computed_recipient_hash == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
+            assert(computed_recipient_hash.inner() == recipient_hash, Errors::NOT_INTENDED_RECIPIENT);
             assert(self.imt.is_known_root(root), Errors::UNKNOWN_ROOT);
             assert(!self.nullifier_hashes.read(nullifier_hash), Errors::NULLIFIER_USED);
             self.nullifier_hashes.write(nullifier_hash, true);
