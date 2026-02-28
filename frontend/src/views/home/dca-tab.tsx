@@ -248,7 +248,7 @@ export default function DcaTab() {
     setApproving(true);
     try {
       const usdcAddr = "0x" + BigInt(usdcAddressRaw.toString()).toString(16);
-    console.log({ usdcAddr });
+
       // Approve exactly usdc_per_interval * total_intervals (no buffer needed —
       // contract checks allowance >= total exactly).
       const totalRaw = BigInt(Math.round(Number(usdcAmount) * effExecs * 1e6));

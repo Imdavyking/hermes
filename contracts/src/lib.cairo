@@ -4,7 +4,6 @@ mod field;
 mod incremental_merkle_tree;
 mod poseidon2;
 mod poseidon2lib;
-
 use crate::field::FieldTrait;
 use crate::poseidon2lib::Poseidon2Trait;
 
@@ -15,8 +14,7 @@ use crate::poseidon2lib::Poseidon2Trait;
 #[starknet::interface]
 trait IVerifier<TContractState> {
     fn verify_ultra_keccak_zk_honk_proof(
-        self: @TContractState,
-        full_proof_with_hints: Span<felt252>,
+        self: @TContractState, full_proof_with_hints: Span<felt252>,
     ) -> Result<Span<u256>, felt252>;
 }
 
@@ -40,10 +38,7 @@ trait IResolver<TContractState> {
 trait IVToken<TContractState> {
     fn deposit(ref self: TContractState, assets: u256, receiver: ContractAddress) -> u256;
     fn redeem(
-        ref self: TContractState,
-        shares: u256,
-        receiver: ContractAddress,
-        owner: ContractAddress,
+        ref self: TContractState, shares: u256, receiver: ContractAddress, owner: ContractAddress,
     ) -> u256;
     fn convert_to_assets(self: @TContractState, shares: u256) -> u256;
 }
@@ -134,13 +129,13 @@ struct StrkOrder {
 // with price — that variability is exactly the point of DCA.
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct DCAOrder {
-    owner: ContractAddress,    // receives wBTC each interval
-    usdc_per_interval: u256,   // exact USDC spent per execution (6 decimals)
-    interval_seconds: u64,     // minimum gap between executions
-    last_execution: u64,       // timestamp of last execution (or order creation)
-    total_intervals: u32,      // total number of purchases to execute
-    executed_intervals: u32,   // purchases completed so far
-    is_active: bool,           // false once fully executed or cancelled
+    owner: ContractAddress, // receives wBTC each interval
+    usdc_per_interval: u256, // exact USDC spent per execution (6 decimals)
+    interval_seconds: u64, // minimum gap between executions
+    last_execution: u64, // timestamp of last execution (or order creation)
+    total_intervals: u32, // total number of purchases to execute
+    executed_intervals: u32, // purchases completed so far
+    is_active: bool // false once fully executed or cancelled
 }
 
 // -------------------------------------------------------
@@ -151,9 +146,7 @@ struct DCAOrder {
 trait IPrivateSwap<TContractState> {
     // --- Core pool ---
     fn deposit(ref self: TContractState, commitment: u256);
-    fn zk_withdraw_wbtc(
-        ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress,
-    );
+    fn zk_withdraw_wbtc(ref self: TContractState, proof: Span<felt252>, recipient: ContractAddress);
 
     // --- Yield (Vesu) ---
     // start_earning() consumes the note — unusable in zk_withdraw_wbtc or
@@ -216,7 +209,7 @@ trait IPrivateSwap<TContractState> {
     fn owner(self: @TContractState) -> ContractAddress;
 
     // --- Admin ---
-    fn set_mock_wbtc(ref self: TContractState, wbtc: ContractAddress);
+    fn set_wbtc(ref self: TContractState, wbtc: ContractAddress);
     fn set_vesu_vtoken(ref self: TContractState, vtoken: ContractAddress);
     fn set_usdc(ref self: TContractState, usdc: ContractAddress);
     fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
@@ -261,15 +254,14 @@ mod PrivateSwap {
     // 1000 satoshis = 0.00001 BTC. DCA does NOT use this constant.
     const BTC_DENOMINATION: u256 = 1_000;
 
-    const WBTC_PRECISION: u256 = 100_000_000;                // 8 decimals
-    const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;  // 18 decimals
-    const USDC_PRECISION: u256 = 1_000_000;                  // 6 decimals
+    const WBTC_PRECISION: u256 = 100_000_000; // 8 decimals
+    const STRK_PRECISION: u256 = 1_000_000_000_000_000_000; // 18 decimals
+    const USDC_PRECISION: u256 = 1_000_000; // 6 decimals
 
     const TREE_DEPTH: u32 = 10;
 
     // Pragma oracle feeds — Starknet Sepolia
-    const BTC_USD_FEED: felt252 =
-        0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
+    const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
     const STRK_USD_FEED: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
 
@@ -281,7 +273,7 @@ mod PrivateSwap {
     const MIN_EXPIRY_DURATION_SECS: u64 = 3_600;
     const RATE_VALID_FOR_SECS: u64 = 3_600;
 
-    const MIN_SLIPPAGE_BPS: u256 = 10;    // 0.1%
+    const MIN_SLIPPAGE_BPS: u256 = 10; // 0.1%
     const MAX_SLIPPAGE_BPS: u256 = 1_000; // 10%
     const BPS_DENOMINATOR: u256 = 10_000;
 
@@ -382,26 +374,21 @@ mod PrivateSwap {
         imt: IncrementalMerkleTreeComponent::Storage,
         commitments: Map<u256, bool>,
         nullifier_hashes: Map<u256, bool>,
-
         // HTLC orders
         wbtc_orders: Map<u256, WbtcOrder>,
         strk_orders: Map<u256, StrkOrder>,
-
         // Yield state (Vesu)
         nullifier_earning: Map<u256, bool>,
         nullifier_shares: Map<u256, u256>,
         nullifier_recipient: Map<u256, ContractAddress>,
-
         // DCA orders
         dca_orders: Map<u256, DCAOrder>,
         dca_order_count: u256,
-
         // Token addresses
         wBTC: ContractAddress,
         strk: ContractAddress,
         usdc: ContractAddress,
         vesu_vtoken: ContractAddress,
-
         verifier: ContractAddress,
         owner: ContractAddress,
     }
@@ -536,10 +523,10 @@ mod PrivateSwap {
         #[key]
         order_id: u256,
         owner: ContractAddress,
-        usdc_per_interval: u256,    // exact USDC spent each execution
+        usdc_per_interval: u256, // exact USDC spent each execution
         interval_seconds: u64,
         total_intervals: u32,
-        total_usdc_deposited: u256, // usdc_per_interval * total_intervals
+        total_usdc_deposited: u256 // usdc_per_interval * total_intervals
     }
 
     // Emitted on every successful DCA execution.
@@ -562,7 +549,7 @@ mod PrivateSwap {
         #[key]
         order_id: u256,
         owner: ContractAddress,
-        usdc_refunded: u256, // remaining unspent USDC returned to owner
+        usdc_refunded: u256 // remaining unspent USDC returned to owner
     }
 
     // -------------------------------------------------------
@@ -578,9 +565,8 @@ mod PrivateSwap {
         self.usdc.write(USDC_ADDRESS.try_into().unwrap());
         self.vesu_vtoken.write(VESU_VTOKEN_ADDRESS.try_into().unwrap());
 
-        let (verifier_address, _) = deploy_syscall(
-            verifier_class_hash, 0, array![].span(), false,
-        ).unwrap_syscall();
+        let (verifier_address, _) = deploy_syscall(verifier_class_hash, 0, array![].span(), false)
+            .unwrap_syscall();
         self.verifier.write(verifier_address);
 
         self.imt.initializer(TREE_DEPTH);
@@ -597,7 +583,6 @@ mod PrivateSwap {
 
     #[abi(embed_v0)]
     impl PrivateSwapImpl of super::IPrivateSwap<ContractState> {
-
         // ---------------------------------------------------
         // DEPOSIT
         //
@@ -609,9 +594,8 @@ mod PrivateSwap {
             assert(!self.commitments.read(commitment), Errors::COMMITMENT_USED);
 
             let wbtc = IERC20Dispatcher { contract_address: self.wBTC.read() };
-            let ok = wbtc.transfer_from(
-                get_caller_address(), get_contract_address(), BTC_DENOMINATION,
-            );
+            let ok = wbtc
+                .transfer_from(get_caller_address(), get_contract_address(), BTC_DENOMINATION);
             assert(ok, Errors::WBTC_TRANSFER_FAILED);
 
             let leaf_index = self.imt._insert(commitment);
@@ -723,36 +707,41 @@ mod PrivateSwap {
 
             let rate_expiry = now + RATE_VALID_FOR_SECS;
 
-            self.wbtc_orders.write(
-                nullifier_hash,
-                WbtcOrder {
-                    wbtc_seller: get_caller_address(),
-                    wbtc_buyer: ZERO_ADDRESS,
-                    alice_strk_destination,
-                    hashlock,
-                    wbtc_amount: BTC_DENOMINATION,
-                    quoted_strk_amount,
-                    slippage_tolerance_bps,
-                    expiry,
-                    rate_expiry,
-                    is_filled: false,
-                    is_withdrawn: false,
-                    is_refunded: false,
-                    swap_initiated: false,
-                    secret: 0,
-                },
-            );
+            self
+                .wbtc_orders
+                .write(
+                    nullifier_hash,
+                    WbtcOrder {
+                        wbtc_seller: get_caller_address(),
+                        wbtc_buyer: ZERO_ADDRESS,
+                        alice_strk_destination,
+                        hashlock,
+                        wbtc_amount: BTC_DENOMINATION,
+                        quoted_strk_amount,
+                        slippage_tolerance_bps,
+                        expiry,
+                        rate_expiry,
+                        is_filled: false,
+                        is_withdrawn: false,
+                        is_refunded: false,
+                        swap_initiated: false,
+                        secret: 0,
+                    },
+                );
 
-            self.emit(WbtcOrderPosted {
-                order_id: nullifier_hash,
-                wbtc_seller: get_caller_address(),
-                alice_strk_destination,
-                wbtc_amount: BTC_DENOMINATION,
-                quoted_strk_amount,
-                hashlock,
-                expiry,
-                rate_expiry,
-            });
+            self
+                .emit(
+                    WbtcOrderPosted {
+                        order_id: nullifier_hash,
+                        wbtc_seller: get_caller_address(),
+                        alice_strk_destination,
+                        wbtc_amount: BTC_DENOMINATION,
+                        quoted_strk_amount,
+                        hashlock,
+                        expiry,
+                        rate_expiry,
+                    },
+                );
         }
 
         // ---------------------------------------------------
@@ -794,27 +783,32 @@ mod PrivateSwap {
             self.wbtc_orders.write(wbtc_order_id, order);
 
             let strk_order_id: u256 = pedersen(order.hashlock, 'fill').into();
-            self.strk_orders.write(
-                strk_order_id,
-                StrkOrder {
-                    strk_seller: bob,
-                    strk_buyer: order.alice_strk_destination,
-                    hashlock: order.hashlock,
-                    strk_amount: live_strk_amount,
-                    expiry: bob_expiry,
-                    is_withdrawn: false,
-                    is_refunded: false,
-                    wbtc_order_id,
-                },
-            );
+            self
+                .strk_orders
+                .write(
+                    strk_order_id,
+                    StrkOrder {
+                        strk_seller: bob,
+                        strk_buyer: order.alice_strk_destination,
+                        hashlock: order.hashlock,
+                        strk_amount: live_strk_amount,
+                        expiry: bob_expiry,
+                        is_withdrawn: false,
+                        is_refunded: false,
+                        wbtc_order_id,
+                    },
+                );
 
-            self.emit(WbtcOrderFilled {
-                wbtc_order_id,
-                strk_order_id,
-                bob,
-                strk_amount_locked: live_strk_amount,
-                bob_expiry,
-            });
+            self
+                .emit(
+                    WbtcOrderFilled {
+                        wbtc_order_id,
+                        strk_order_id,
+                        bob,
+                        strk_amount_locked: live_strk_amount,
+                        bob_expiry,
+                    },
+                );
         }
 
         // ---------------------------------------------------
@@ -832,8 +826,7 @@ mod PrivateSwap {
             assert(order.wbtc_buyer == caller, Errors::NOT_THE_BUYER);
             assert(order.secret != 0, Errors::SECRET_UNKNOWN);
             assert(
-                get_block_timestamp() < order.expiry || order.swap_initiated,
-                Errors::ORDER_EXPIRED,
+                get_block_timestamp() < order.expiry || order.swap_initiated, Errors::ORDER_EXPIRED,
             );
             assert(pedersen(0, order.secret) == order.hashlock, Errors::INVALID_SECRET);
 
@@ -961,27 +954,32 @@ mod PrivateSwap {
 
             let interval_seconds: u64 = interval_hours * 3_600;
 
-            self.dca_orders.write(
-                order_id,
-                DCAOrder {
-                    owner: caller,
-                    usdc_per_interval,
-                    interval_seconds,
-                    last_execution: get_block_timestamp(),
-                    total_intervals,
-                    executed_intervals: 0,
-                    is_active: true,
-                },
-            );
+            self
+                .dca_orders
+                .write(
+                    order_id,
+                    DCAOrder {
+                        owner: caller,
+                        usdc_per_interval,
+                        interval_seconds,
+                        last_execution: get_block_timestamp(),
+                        total_intervals,
+                        executed_intervals: 0,
+                        is_active: true,
+                    },
+                );
 
-            self.emit(DCAOrderCreated {
-                order_id,
-                owner: caller,
-                usdc_per_interval,
-                interval_seconds,
-                total_intervals,
-                total_usdc_deposited: total_usdc,
-            });
+            self
+                .emit(
+                    DCAOrderCreated {
+                        order_id,
+                        owner: caller,
+                        usdc_per_interval,
+                        interval_seconds,
+                        total_intervals,
+                        total_usdc_deposited: total_usdc,
+                    },
+                );
 
             order_id
         }
@@ -1023,14 +1021,17 @@ mod PrivateSwap {
             }
             self.dca_orders.write(order_id, order);
 
-            self.emit(DCAExecuted {
-                order_id,
-                owner: order.owner,
-                usdc_spent: order.usdc_per_interval,
-                wbtc_received: wbtc_amount,
-                executed_intervals: order.executed_intervals,
-                keeper,
-            });
+            self
+                .emit(
+                    DCAExecuted {
+                        order_id,
+                        owner: order.owner,
+                        usdc_spent: order.usdc_per_interval,
+                        wbtc_received: wbtc_amount,
+                        executed_intervals: order.executed_intervals,
+                        keeper,
+                    },
+                );
         }
 
         // ---------------------------------------------------
@@ -1071,7 +1072,8 @@ mod PrivateSwap {
 
             let can_exec = order.is_active
                 && order.executed_intervals < order.total_intervals
-                && now >= order.last_execution + order.interval_seconds;
+                && now >= order.last_execution
+                + order.interval_seconds;
 
             let payload = ExecPayload {
                 target: get_contract_address(),
@@ -1185,7 +1187,7 @@ mod PrivateSwap {
         // Admin
         // ---------------------------------------------------
 
-        fn set_mock_wbtc(ref self: ContractState, wbtc: ContractAddress) {
+        fn set_wbtc(ref self: ContractState, wbtc: ContractAddress) {
             self.assert_only_owner();
             let meta = IERC20MetadataDispatcher { contract_address: wbtc };
             assert(meta.decimals() == 8, 'mock wBTC must have 8 decimals');
@@ -1219,7 +1221,6 @@ mod PrivateSwap {
 
     #[generate_trait]
     impl Private of PrivateTrait {
-
         fn assert_only_owner(self: @ContractState) {
             assert(get_caller_address() == self.owner.read(), Errors::NOT_OWNER);
         }
@@ -1229,9 +1230,7 @@ mod PrivateSwap {
         // the recipient hash, and marks the nullifier as spent.
         // Returns the nullifier_hash for the caller to use as a key.
         fn verify_proof_and_consume(
-            ref self: ContractState,
-            proof: Span<felt252>,
-            recipient: ContractAddress,
+            ref self: ContractState, proof: Span<felt252>, recipient: ContractAddress,
         ) -> u256 {
             let verifier = IVerifierDispatcher { contract_address: self.verifier.read() };
             let result = verifier.verify_ultra_keccak_zk_honk_proof(proof);
@@ -1297,7 +1296,9 @@ mod PrivateSwap {
         //        ≈ 1_052 satoshis  (~0.00001052 BTC ≈ $0.999)
         fn wbtc_for_usdc(self: @ContractState, usdc_amount: u256) -> u256 {
             let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD_FEED);
-            usdc_amount * WBTC_PRECISION * self.pow10(btc_dec.into())
+            usdc_amount
+                * WBTC_PRECISION
+                * self.pow10(btc_dec.into())
                 / (btc_usd.into() * USDC_PRECISION)
         }
 
@@ -1316,32 +1317,31 @@ mod PrivateSwap {
         fn _acquire_wbtc(
             ref self: ContractState,
             recipient: ContractAddress,
-            usdc_spent: u256,   // passed through for mainnet; unused on testnet
+            usdc_spent: u256, // passed through for mainnet; unused on testnet
             wbtc_amount: u256,
         ) {
             // TESTNET ONLY — replace with Ekubo swap on mainnet
-            IMockWBTCDispatcher { contract_address: self.wBTC.read() }
-                .mint(recipient, wbtc_amount);
+            IMockWBTCDispatcher { contract_address: self.wBTC.read() }.mint(recipient, wbtc_amount);
         }
 
         // Integer power-of-10 lookup for oracle decimal normalisation.
         fn pow10(self: @ContractState, n: u256) -> u256 {
             match n {
-                0  => 1,
-                1  => 10,
-                2  => 100,
-                3  => 1_000,
-                4  => 10_000,
-                5  => 100_000,
-                6  => 1_000_000,
-                7  => 10_000_000,
-                8  => 100_000_000,
-                9  => 1_000_000_000,
+                0 => 1,
+                1 => 10,
+                2 => 100,
+                3 => 1_000,
+                4 => 10_000,
+                5 => 100_000,
+                6 => 1_000_000,
+                7 => 10_000_000,
+                8 => 100_000_000,
+                9 => 1_000_000_000,
                 10 => 10_000_000_000,
                 11 => 100_000_000_000,
                 12 => 1_000_000_000_000,
                 18 => 1_000_000_000_000_000_000,
-                _  => {
+                _ => {
                     let mut result: u256 = 1;
                     let mut i: u256 = 0;
                     while i < n {
