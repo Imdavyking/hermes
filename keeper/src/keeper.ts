@@ -82,6 +82,8 @@ export async function runKeeper(): Promise<void> {
     console.log(`  Batch ${i + 1}/${chunks.length}: ${chunk.length} call(s)`);
 
     try {
+      console.log({ chunk });
+      await account.estimateInvokeFee(chunk);
       const tx = await account.execute(chunk);
       console.log(`  Batch ${i + 1} submitted: ${tx.transaction_hash}`);
 
@@ -93,8 +95,14 @@ export async function runKeeper(): Promise<void> {
         // Log and continue — the next tick will retry any still-due orders.
         console.error(`  Batch ${i + 1} reverted. Receipt:`, receipt);
       }
-    } catch (err) {
-      console.error(`  Batch ${i + 1} failed to submit:`, err);
+    } catch (err: any) {
+      const executionError =
+        err?.baseError?.data?.execution_error?.error?.error?.error ??
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        err?.error?.error ??
+        String(err);
+      console.error(`  Batch ${i + 1} failed to submit:`, executionError);
       // Do not rethrow — a single failed batch should not stop the keeper loop.
     }
   }

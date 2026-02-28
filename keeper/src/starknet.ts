@@ -42,7 +42,7 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
       blockIdentifier: "latest",
     })) as unknown as [
       boolean,
-      { target: bigint; selector: bigint; calldata: bigint[] },
+      { target: bigint; selector: string; calldata: bigint[] },
     ];
 
     console.log({ result });
@@ -54,7 +54,7 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
 
     return {
       contractAddress: `0x${payload.target.toString(16)}`,
-      entrypoint: `0x${payload.selector.toString(16)}`,
+      entrypoint: payload.selector,
       calldata: payload.calldata,
     };
   } catch (err) {
