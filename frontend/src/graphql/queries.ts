@@ -128,26 +128,26 @@ export const GET_REFUNDABLE_STRK_ORDERS = gql`
 export const GET_ACTIVE_DCA_ORDERS = gql`
   query GetActiveDcaOrders($owner: String!) {
     dcaorders(
-      where: { owner: $owner, is_cancelled: false, executions_left_gt: "0" }
+      where: { owner: $owner, is_active: true }
       orderBy: created_at_block
       orderDirection: desc
     ) {
       id
-      order_id
-      usdc_recipient
+      owner
       usdc_per_interval
       interval_seconds
-      executions_total
-      executions_left
-      next_execution
-      is_cancelled
+      total_intervals
+      total_usdc_deposited
+      executed_intervals
+      is_active
+      last_execution
       created_at_block
       created_tx_hash
+      last_executed_at_block
     }
   }
 `;
 
-// ── All DCA orders (incl. completed + cancelled) for history view ─────────────
 // ── All DCA orders (incl. completed + cancelled) for history view ─────────────
 
 export const GET_ALL_DCA_ORDERS = gql`
