@@ -44,6 +44,24 @@
   },
   {
     "type": "struct",
+    "name": "contracts::ExecPayload",
+    "members": [
+      {
+        "name": "target",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "selector",
+        "type": "core::felt252"
+      },
+      {
+        "name": "calldata",
+        "type": "core::array::Array::<core::felt252>"
+      }
+    ]
+  },
+  {
+    "type": "struct",
     "name": "contracts::WbtcOrder",
     "members": [
       {
@@ -143,6 +161,40 @@
     ]
   },
   {
+    "type": "struct",
+    "name": "contracts::DCAOrder",
+    "members": [
+      {
+        "name": "owner",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "usdc_per_interval",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "interval_seconds",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "last_execution",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "total_intervals",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "executed_intervals",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "is_active",
+        "type": "core::bool"
+      }
+    ]
+  },
+  {
     "type": "interface",
     "name": "contracts::IPrivateSwap",
     "items": [
@@ -230,6 +282,22 @@
         "outputs": [
           {
             "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_yield_recipient",
+        "inputs": [
+          {
+            "name": "nullifier_hash",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
           }
         ],
         "state_mutability": "view"
@@ -332,6 +400,70 @@
       },
       {
         "type": "function",
+        "name": "create_dca_order",
+        "inputs": [
+          {
+            "name": "usdc_per_interval",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "interval_hours",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "total_intervals",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "execute_dca",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "cancel_dca",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "checker",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "(core::bool, contracts::ExecPayload)"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "get_wbtc_order",
         "inputs": [
           {
@@ -358,6 +490,82 @@
         "outputs": [
           {
             "type": "contracts::StrkOrder"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_dca_order",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "contracts::DCAOrder"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_btc_usd_price",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "(core::integer::u128, core::integer::u32)"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_strk_usd_price",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "(core::integer::u128, core::integer::u32)"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_btc_strk_rate",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_quoted_strk_amount",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "preview_wbtc_for_usdc",
+        "inputs": [
+          {
+            "name": "usdc_amount",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
           }
         ],
         "state_mutability": "view"
@@ -424,6 +632,17 @@
       },
       {
         "type": "function",
+        "name": "usdc_address",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "vesu_vtoken_address",
         "inputs": [],
         "outputs": [
@@ -446,68 +665,8 @@
       },
       {
         "type": "function",
-        "name": "get_btc_usd_price",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "(core::integer::u128, core::integer::u32)"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "get_strk_usd_price",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "(core::integer::u128, core::integer::u32)"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "get_btc_strk_rate",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::integer::u256"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
         "name": "owner",
         "inputs": [],
-        "outputs": [
-          {
-            "type": "core::starknet::contract_address::ContractAddress"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "get_quoted_strk_amount",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::integer::u256"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "get_yield_recipient",
-        "inputs": [
-          {
-            "name": "nullifier_hash",
-            "type": "core::integer::u256"
-          }
-        ],
         "outputs": [
           {
             "type": "core::starknet::contract_address::ContractAddress"
@@ -533,6 +692,18 @@
         "inputs": [
           {
             "name": "vtoken",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_usdc",
+        "inputs": [
+          {
+            "name": "usdc",
             "type": "core::starknet::contract_address::ContractAddress"
           }
         ],
@@ -845,6 +1016,102 @@
   },
   {
     "type": "event",
+    "name": "contracts::PrivateSwap::DCAOrderCreated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "order_id",
+        "type": "core::integer::u256",
+        "kind": "key"
+      },
+      {
+        "name": "owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "usdc_per_interval",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "interval_seconds",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "total_intervals",
+        "type": "core::integer::u32",
+        "kind": "data"
+      },
+      {
+        "name": "total_usdc_deposited",
+        "type": "core::integer::u256",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "contracts::PrivateSwap::DCAExecuted",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "order_id",
+        "type": "core::integer::u256",
+        "kind": "key"
+      },
+      {
+        "name": "owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "usdc_spent",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "wbtc_received",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "executed_intervals",
+        "type": "core::integer::u32",
+        "kind": "data"
+      },
+      {
+        "name": "keeper",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "contracts::PrivateSwap::DCACancelled",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "order_id",
+        "type": "core::integer::u256",
+        "kind": "key"
+      },
+      {
+        "name": "owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "usdc_refunded",
+        "type": "core::integer::u256",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "contracts::PrivateSwap::Event",
     "kind": "enum",
     "variants": [
@@ -911,6 +1178,21 @@
       {
         "name": "OwnershipTransferred",
         "type": "contracts::PrivateSwap::OwnershipTransferred",
+        "kind": "nested"
+      },
+      {
+        "name": "DCAOrderCreated",
+        "type": "contracts::PrivateSwap::DCAOrderCreated",
+        "kind": "nested"
+      },
+      {
+        "name": "DCAExecuted",
+        "type": "contracts::PrivateSwap::DCAExecuted",
+        "kind": "nested"
+      },
+      {
+        "name": "DCACancelled",
+        "type": "contracts::PrivateSwap::DCACancelled",
         "kind": "nested"
       }
     ]
