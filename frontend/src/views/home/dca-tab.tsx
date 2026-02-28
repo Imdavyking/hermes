@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { toast } from "react-toastify";
-import { useAccount, useContract, useReadContract } from "@starknet-react/core";
+import {
+  useAccount,
+  useContract,
+  useNetwork,
+  useReadContract,
+} from "@starknet-react/core";
 import { CallData, uint256, type Call } from "starknet";
 import { FaSpinner, FaBitcoin, FaSync, FaChevronDown } from "react-icons/fa";
 import { RiLoopLeftLine, RiCloseLine, RiAddLine } from "react-icons/ri";
@@ -122,6 +127,7 @@ export default function DcaTab() {
   const [approving, setApproving] = useState(false);
   const [approveOk, setApproveOk] = useState(false); // gate step 2
   const [creating, setCreating] = useState(false);
+  const [minting, setMinting] = useState(false);
 
   // ── List ──────────────────────────────────────────────────────────────────
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -187,6 +193,20 @@ export default function DcaTab() {
     watch: true,
     refetchInterval: 30_000,
   });
+  const { data: MOCK_USDT_ADDRESS } = useReadContract({
+    abi,
+    address: CONTRACT_ADDRESS,
+    functionName: "usdc_address",
+    args: [],
+    watch: true,
+    refetchInterval: 30_000,
+  });
+
+  const { chain } = useNetwork();
+
+  const isTestnet =
+    chain?.name?.toLowerCase().includes("sepolia") ||
+    chain?.name?.toLowerCase().includes("test");
   // Returns tuple: [price_u128, decimals_u32]
   const btcPrice = btcPriceData ? Number((btcPriceData as any)[0]) : null;
   const btcDecimals = btcPriceData ? Number((btcPriceData as any)[1]) : 8;
@@ -413,6 +433,48 @@ export default function DcaTab() {
     }
   };
 
+  const handleMintTestUsdt = async () => {
+    if (!account || !address) return toast.error("Connect wallet first.");
+    if (!MOCK_USDT_ADDRESS)
+      return toast.error("Mock USDT address not configured.");
+    const mintAmount = 10_000 * 10 ** 6;
+    if (!mintAmount || Number(mintAmount) < 1)
+      return toast.error("Enter amount ≥ 1 USDT.");
+
+    const toastId = toast.loading("Minting test USDT…");
+    setMinting(true);
+
+    try {
+      const amountRaw = BigInt(Math.round(Number(mintAmount) * 1e6));
+      const u256Amount = uint256.bnToUint256(amountRaw);
+
+      const tx = await account.execute({
+        contractAddress: MOCK_USDT_ADDRESS,
+        entrypoint: "mint",
+        calldata: CallData.compile([address, u256Amount]),
+      });
+
+      await account.waitForTransaction(tx.transaction_hash);
+
+      toast.update(toastId, {
+        render: `Minted ${mintAmount} test USDT successfully!`,
+        isLoading: false,
+        type: "success",
+        autoClose: 4000,
+      });
+    } catch (err: any) {
+      const msg = err?.message || err?.toString() || "Mint failed";
+      toast.update(toastId, {
+        render: msg,
+        isLoading: false,
+        type: "error",
+        autoClose: 5000,
+      });
+    } finally {
+      setMinting(false);
+    }
+  };
+
   const canApprove =
     !!address && !!usdcAmount && Number(usdcAmount) >= 1 && !approving;
   const canCreate =
@@ -442,6 +504,52 @@ export default function DcaTab() {
           wBTC is delivered directly to your wallet every execution.
         </div>
       </div>
+
+      {isTestnet && (
+        <div style={section}>
+          <div style={sectionLabel}>Testnet Tools</div>
+          <div
+            style={{
+              fontSize: "0.68rem",
+              color: "#888",
+              marginBottom: "0.8rem",
+            }}
+          >
+            Mint test USDT to fund your DCA orders (Sepolia only)
+          </div>
+
+          <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
+            <button
+              onClick={handleMintTestUsdt}
+              disabled={!isTestnet}
+              style={{
+                ...btnPrimary(isTestnet),
+                minWidth: "120px",
+                padding: "0.5rem 1rem",
+              }}
+            >
+              {minting ? (
+                <>
+                  <FaSpinner
+                    size={12}
+                    style={{ animation: "spin 1s linear infinite" }}
+                  />{" "}
+                  Minting…
+                </>
+              ) : (
+                "Mint Test USDT"
+              )}
+            </button>
+          </div>
+
+          <div
+            style={{ fontSize: "0.62rem", color: "#555", marginTop: "0.5rem" }}
+          >
+            Tokens are minted directly to your wallet. Use them to approve and
+            create DCA orders.
+          </div>
+        </div>
+      )}
 
       {/* ── Create form ─────────────────────────────────────────────────── */}
       <div style={section}>
