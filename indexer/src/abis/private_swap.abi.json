@@ -676,7 +676,7 @@
       },
       {
         "type": "function",
-        "name": "set_mock_wbtc",
+        "name": "set_wbtc",
         "inputs": [
           {
             "name": "wbtc",

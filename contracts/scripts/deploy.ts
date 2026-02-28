@@ -65,6 +65,47 @@ async function main() {
   console.log("✅ PrivateSwap deployed at:", privateSwapContract.address);
   console.log("wBTC address:", await privateSwapContract.wBTC_address());
   console.log("STRK address:", await privateSwapContract.strk_address());
+  // --- MOCKING
+  // Also load MockUSDT
+  // contract is identical in structure (ERC20 + mint), just configured
+  // as usdt (6 decimals, name "usdt") in its constructor.
+  const { sierraCode: mockUSDTSierra, casmCode: mockUSDTCasm } =
+    await getCompiledCode("contracts_MockUSDT");
+  const mockUSDTDeployResponse = await account.declareAndDeploy({
+    contract: mockUSDTSierra,
+    casm: mockUSDTCasm,
+    salt: stark.randomAddress(),
+  });
+  await provider.waitForTransaction(
+    mockUSDTDeployResponse.deploy.transaction_hash,
+  );
+
+  const mockUSDTAddress = mockUSDTDeployResponse.deploy.contract_address;
+  console.log("✅ MockUSDT deployed at:", mockUSDTAddress);
+
+  // 5. Register MockUSDT on PrivateSwap via set_mock_usdt (owner-only)
+  console.log("\n--- Calling set_mock_usdt ---");
+  const setMockTx = await privateSwapContract.set_usdc(mockUSDTAddress);
+  await provider.waitForTransaction(setMockTx.transaction_hash);
+  console.log("✅ set_mock_usdt confirmed, tx:", setMockTx.transaction_hash);
+
+  // Mint some MockUSDT to the deployer address for testing
+  const mockUSDTContract = new Contract({
+    abi: mockUSDTSierra.abi,
+    address: mockUSDTAddress,
+    providerOrAccount: account,
+  });
+
+  const usdtDecimals = await mockUSDTContract.decimals();
+  const mintAmount = BigInt(10_000 * 10 ** usdtDecimals); // 10k USDT
+  const mintTx = await mockUSDTContract.mint(account.address, mintAmount);
+  await provider.waitForTransaction(mintTx.transaction_hash);
+  console.log(
+    `✅ Minted ${mintAmount} MockUSDT to deployer, tx:`,
+    mintTx.transaction_hash,
+  );
+
+  //// --- END OF MOCK DEPLOYMENT ---
 }
 
 main()
