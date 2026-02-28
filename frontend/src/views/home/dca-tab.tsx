@@ -5,12 +5,11 @@ import { CallData, uint256, type Call } from "starknet";
 import { FaSpinner, FaBitcoin, FaSync, FaChevronDown } from "react-icons/fa";
 import { RiLoopLeftLine, RiCloseLine, RiAddLine } from "react-icons/ri";
 import { useQuery } from "@apollo/client";
-import { gql } from "@apollo/client";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
 import { assertReceiptSuccess } from "../../utils/helpers";
-import { GET_ACTIVE_DCA_ORDERS, GET_DCA_EXECUTIONS } from "@/graphql/queries";
+import { GET_ACTIVE_DCA_ORDERS, GET_DCA_EXECUTIONS } from "../../graphql/queries";
 
 // ── GraphQL ───────────────────────────────────────────────────────────────────
 
