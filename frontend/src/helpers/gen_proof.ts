@@ -29,7 +29,7 @@ export function useZkVerifier() {
       const response = await fetch(vkUrl);
       const buffer = await response.arrayBuffer();
       setVk(new Uint8Array(buffer));
-      console.log("✅ VVerifying key loaded");
+      console.log("✅ Verifying key loaded");
     };
 
     initWasm();
