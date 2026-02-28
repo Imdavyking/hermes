@@ -90,10 +90,16 @@ export default function WithdrawTab() {
         isLoading: false,
         type: "success",
       });
+
       toast.dismiss(toastId);
-      const tx = await account.execute([
-        contract.populate("zk_withdraw_wbtc", [callData.slice(1), recipient]),
+      //  "0x004F57d3a568B903C6271D1D793eb989c85A8CeEe812B7C1E35f6b5A02AB73c2",
+      const populate = contract.populate("zk_withdraw_wbtc", [
+        callData.slice(1),
+        recipient,
       ]);
+
+      await account.estimateInvokeFee([populate]);
+      const tx = await account.execute([populate]);
 
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
@@ -101,7 +107,11 @@ export default function WithdrawTab() {
       setWithdrawNote("");
       setRecipient("");
     } catch (err: any) {
-      const msg = err?.message ?? String(err);
+      const msg =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+      toast.error(msg);
       setWithdrawError(msg);
       toast.error("Withdrawal failed.");
     } finally {

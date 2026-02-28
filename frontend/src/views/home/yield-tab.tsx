@@ -143,9 +143,12 @@ export default function YieldTab() {
 
       // start_earning(proof, recipient) — recipient is locked on-chain.
       // The nullifier is marked spent here; use stop_earning to withdraw later.
-      const tx = await account.execute([
-        contract.populate("start_earning", [callData.slice(1), address]),
+      const populate = contract.populate("start_earning", [
+        callData.slice(1),
+        address,
       ]);
+      await account.estimateInvokeFee([populate]);
+      const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
 
@@ -160,8 +163,12 @@ export default function YieldTab() {
         autoClose: 6000,
       });
     } catch (err: any) {
+      const msg =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
       toast.update(toastId, {
-        render: err?.message ?? String(err),
+        render: msg,
         isLoading: false,
         type: "error",
         autoClose: 5000,
@@ -181,10 +188,9 @@ export default function YieldTab() {
     const toastId = toast.loading("Redeeming Vesu position…");
     try {
       const nullHashU256 = uint256.bnToUint256(BigInt(nullifierHash));
-
-      const tx = await account.execute([
-        contract.populate("stop_earning", [nullHashU256]),
-      ]);
+      const populate = contract.populate("stop_earning", [nullHashU256]);
+      await account.estimateInvokeFee([populate]);
+      const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
 
@@ -198,8 +204,12 @@ export default function YieldTab() {
         autoClose: 5000,
       });
     } catch (err: any) {
+      const msg =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
       toast.update(toastId, {
-        render: err?.message ?? String(err),
+        render: msg,
         isLoading: false,
         type: "error",
         autoClose: 5000,

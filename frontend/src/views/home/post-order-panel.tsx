@@ -162,15 +162,15 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       const expiry = now + expirySeconds;
       const slippage = customSlippage ? parseInt(customSlippage) : slippageBps;
 
-      const tx = await account.execute([
-        contract.populate("post_wbtc_order", [
-          callData.slice(1),
-          strkDestination,
-          swapHashlock,
-          expiry,
-          slippage,
-        ]),
+      const populate = contract.populate("post_wbtc_order", [
+        callData.slice(1),
+        strkDestination,
+        swapHashlock,
+        expiry,
+        slippage,
       ]);
+      await account.estimateInvokeFee([populate]);
+      const tx = await account.execute([populate]);
 
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
@@ -178,7 +178,11 @@ export default function PostOrderPanel({ onOrderPosted }: PostOrderPanelProps) {
       setStep(3);
       onOrderPosted?.(swapHashlock);
     } catch (err: any) {
-      toast.error(err?.message ?? String(err));
+      const executionError =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+      toast.error(executionError);
     } finally {
       setLoading(false);
     }

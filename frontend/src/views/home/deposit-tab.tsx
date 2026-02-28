@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract, useReadContract } from "@starknet-react/core";
-import { CallData, uint256 } from "starknet";
+import { CallData, uint256, type Call } from "starknet";
 import { FaSpinner, FaBitcoin, FaDownload, FaFaucet } from "react-icons/fa";
 import { RiShieldKeyholeFill, RiEyeOffFill } from "react-icons/ri";
 import { poseidon2Hash } from "@zkpassport/poseidon2";
@@ -97,16 +97,18 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     const toastId = toast.loading("Minting test wBTC…");
     try {
       const amountU256 = uint256.bnToUint256(MINT_AMOUNT);
-      const tx = await account.execute(
-        [
-          {
-            contractAddress: VESU_WBTC,
-            entrypoint: "mint",
-            calldata: CallData.compile([address, amountU256]),
-          },
-        ],
-        { maxFee: 1_000_000_000_000_000n },
-      );
+      const callData = CallData.compile([address, amountU256]);
+
+      const contractData: Call = {
+        contractAddress: VESU_WBTC,
+        entrypoint: "mint",
+        calldata: callData,
+      };
+
+      await account.estimateInvokeFee(contractData);
+      const tx = await account.execute([contractData], {
+        maxFee: 1_000_000_000_000_000n,
+      });
 
       await account.waitForTransaction(tx.transaction_hash);
       toast.update(toastId, {
@@ -116,8 +118,13 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         autoClose: 5000,
       });
     } catch (err: any) {
+      const executionError =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+
       toast.update(toastId, {
-        render: "Mint failed: " + (err?.message ?? String(err)),
+        render: executionError,
         isLoading: false,
         type: "error",
         autoClose: 5000,
@@ -147,13 +154,17 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
         setStep(3);
         return;
       }
-      const approveTx = await account.execute([
-        {
-          contractAddress: wBTCAddress.toString(),
-          entrypoint: "approve",
-          calldata: [CONTRACT_ADDRESS, BTCDenomination, 0],
-        },
-      ]);
+
+      const callData = [CONTRACT_ADDRESS, BTCDenomination, 0];
+
+      const contractData: Call = {
+        contractAddress: wBTCAddress.toString(),
+        entrypoint: "approve",
+        calldata: callData,
+      };
+
+      await account.estimateInvokeFee(contractData);
+      const approveTx = await account.execute([contractData]);
       const receipt = await account.waitForTransaction(
         approveTx.transaction_hash,
       );
@@ -161,7 +172,11 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
       toast.success("wBTC approved!");
       setStep(3);
     } catch (err: any) {
-      toast.error("Approve failed: " + (err?.message ?? err));
+      const executionError =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+      toast.error(executionError);
     } finally {
       setApproveLoading(false);
     }
@@ -172,19 +187,21 @@ export default function DepositTab({ payoutDisplay }: DepositTabProps) {
     setDepositLoading(true);
     try {
       const commitData = uint256.bnToUint256(BigInt(commitment));
-      const tx = await account.execute([
-        contract.populate("deposit", [commitData]),
-      ]);
+
+      const populate = contract.populate("deposit", [commitData]);
+
+      await account.estimateInvokeFee([populate]);
+      const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
       toast.success("Deposited into Umbra pool!");
       setStep(4);
     } catch (err: any) {
-      toast.error(
+      const executionError =
         err?.baseError?.data?.execution_error?.error ??
-          err?.message ??
-          String(err),
-      );
+        err?.message ??
+        String(err);
+      toast.error(executionError);
     } finally {
       setDepositLoading(false);
     }

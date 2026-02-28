@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract } from "@starknet-react/core";
-import { CallData, uint256 } from "starknet";
+import { CallData, uint256, type Call } from "starknet";
 import { FaSpinner, FaSearch, FaSync } from "react-icons/fa";
 import { RiTimeLine, RiExchangeLine } from "react-icons/ri";
 import { useQuery } from "@apollo/client";
@@ -120,19 +120,26 @@ export default function FillOrderPanel() {
         return;
       }
 
-      const tx = await account.execute([
-        {
-          contractAddress: strkAddress.toString(),
-          entrypoint: "approve",
-          calldata: [CONTRACT_ADDRESS, required.toString(), "0"],
-        },
-      ]);
+      const callData = [CONTRACT_ADDRESS, required.toString(), "0"];
+
+      const contractData: Call = {
+        contractAddress: strkAddress.toString(),
+        entrypoint: "approve",
+        calldata: callData,
+      };
+
+      await account.estimateInvokeFee(contractData);
+      const tx = await account.execute([contractData]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
       toast.success("STRK approved!");
       setFillStep("fill");
     } catch (err: any) {
-      toast.error("Approve failed: " + err?.message);
+      const executionError =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+      toast.error(executionError);
     } finally {
       setApproveLoading(false);
     }
@@ -146,9 +153,14 @@ export default function FillOrderPanel() {
       const bobExpiry = nowTs + bobExpirySeconds;
       const orderIdU256 = uint256.bnToUint256(BigInt(selectedOrder.orderId));
 
-      const tx = await account.execute([
-        contract.populate("fill_wbtc_order", [orderIdU256, bobExpiry]),
+      const populate = contract.populate("fill_wbtc_order", [
+        orderIdU256,
+        bobExpiry,
       ]);
+
+      await account.estimateInvokeFee([populate]);
+
+      const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
       toast.success(

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { toast } from "react-toastify";
 import { useAccount, useContract } from "@starknet-react/core";
-import { hash, uint256 } from "starknet";
+import { hash, uint256, type Call } from "starknet";
 import { FaSpinner, FaUpload, FaSync } from "react-icons/fa";
 import {
   RiArrowRightLine,
@@ -743,13 +743,14 @@ export default function ManageOrdersPanel() {
 
   // ── Tx helpers ───────────────────────────────────────────────────────────────
   const exec = async (
-    populate: any,
+    populate: Call,
     onSuccess: () => void,
     successMsg: string,
   ) => {
     if (!account || !contract) return;
     setActionLoading(true);
     try {
+      await account.estimateInvokeFee([populate]);
       const tx = await account.execute([populate], {
         maxFee: U128_MAX,
         version: "0x3",
@@ -768,7 +769,11 @@ export default function ManageOrdersPanel() {
       );
       onSuccess();
     } catch (err: any) {
-      toast.error(err?.message ?? String(err));
+      const executionError =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+      toast.error(executionError);
     } finally {
       setActionLoading(false);
     }
