@@ -1,17 +1,16 @@
 import { useEffect, useState } from "react";
 import { useAccount, useReadContract, useContract } from "@starknet-react/core";
-import {
-  RiShieldKeyholeFill,
-} from "react-icons/ri";
+import { RiShieldKeyholeFill } from "react-icons/ri";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import abi from "../../assets/json/abi";
 import { StatCard, hexRoot, shortenAddress } from "./shared";
 import DepositTab from "./deposit-tab";
+import DCATab from "./dca-tab";
 import WithdrawTab from "./withdraw-tab";
 import SwapTab from "./swap-tab";
 import YieldTab from "./yield-tab";
 
-type AppTab = "deposit" | "withdraw" | "swap" | "yield";
+type AppTab = "deposit" | "withdraw" | "swap" | "yield" | "dca";
 
 const erc20Abi = [
   {
@@ -343,6 +342,7 @@ export default function UmbraHome() {
 
         {/* Tab content */}
         {tab === "deposit" && <DepositTab payoutDisplay={payoutDisplay} />}
+        {tab === "dca" && <DCATab />}
         {tab === "withdraw" && <WithdrawTab />}
         {tab === "swap" && <SwapTab />}
         {tab === "yield" && <YieldTab />}
