@@ -34,7 +34,7 @@ mod MockUSDT {
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState, minter: ContractAddress) {
+    fn constructor(ref self: ContractState) {
         self.erc20.initializer("USDT", "USDT");
     }
 
