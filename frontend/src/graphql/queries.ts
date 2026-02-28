@@ -148,6 +148,7 @@ export const GET_ACTIVE_DCA_ORDERS = gql`
 `;
 
 // ── All DCA orders (incl. completed + cancelled) for history view ─────────────
+// ── All DCA orders (incl. completed + cancelled) for history view ─────────────
 
 export const GET_ALL_DCA_ORDERS = gql`
   query GetAllDcaOrders($owner: String!) {
@@ -156,16 +157,17 @@ export const GET_ALL_DCA_ORDERS = gql`
       orderBy: created_at_block
       orderDirection: desc
     ) {
-      id
-      order_id
-      usdc_recipient
+      id # this is the order_id (as string)
+      owner
       usdc_per_interval
       interval_seconds
-      executions_total
-      executions_left
-      next_execution
-      is_cancelled
+      total_intervals
+      executed_intervals
+      is_active
+      last_execution
+      usdc_refunded
       created_at_block
+      created_tx_hash
       last_executed_at_block
       cancelled_at_block
     }
@@ -179,14 +181,15 @@ export const GET_DCA_EXECUTIONS = gql`
   query GetDcaExecutions($orderId: String!) {
     dcaexecutions(
       where: { order_id: $orderId }
-      orderBy: execution_number
+      orderBy: executed_intervals # using the real field
       orderDirection: asc
     ) {
       id
-      execution_number
+      order_id
+      executed_intervals # 1, 2, 3… (post-increment)
       usdc_spent
       wbtc_received
-      btc_price_usd
+      keeper
       executed_at_block
       executed_tx_hash
       executed_timestamp
@@ -200,15 +203,14 @@ export const GET_DCA_ORDER = gql`
   query GetDcaOrder($orderId: String!) {
     dcaorder(id: $orderId) {
       id
-      order_id
       owner
-      usdc_recipient
       usdc_per_interval
       interval_seconds
-      executions_total
-      executions_left
-      next_execution
-      is_cancelled
+      total_intervals
+      executed_intervals
+      is_active
+      last_execution
+      usdc_refunded
       created_at_block
       created_tx_hash
       last_executed_at_block
