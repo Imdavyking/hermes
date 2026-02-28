@@ -340,9 +340,9 @@ export default function DcaTab() {
     if (!usdcAmount || Number(usdcAmount) < 1)
       return toast.error("Minimum 1 USDC per execution.");
     if (effHours < 1 || effHours > 720)
-      return toast.error("Interval must be 1–720 hours.");
+      return toast.error("Interval must be 1-720 hours.");
     if (effExecs < 1 || effExecs > 1000)
-      return toast.error("Executions must be 1–1000.");
+      return toast.error("Executions must be 1-1000.");
     if (!approveOk) return toast.error("Complete step 1 first.");
 
     const toastId = toast.loading("Creating DCA order…");
