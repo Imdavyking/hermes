@@ -74,6 +74,7 @@ async function main() {
   const mockUSDTDeployResponse = await account.declareAndDeploy({
     contract: mockUSDTSierra,
     casm: mockUSDTCasm,
+    constructorCalldata: [],
     salt: stark.randomAddress(),
   });
   await provider.waitForTransaction(
