@@ -98,7 +98,7 @@ async function main() {
   });
 
   const usdtDecimals = await mockUSDTContract.decimals();
-  const mintAmount = BigInt(10_000 * 10 ** usdtDecimals); // 10k USDT
+  const mintAmount = BigInt(10_000 * 10 ** Number(usdtDecimals)); // 10k USDT
   const mintTx = await mockUSDTContract.mint(account.address, mintAmount);
   await provider.waitForTransaction(mintTx.transaction_hash);
   console.log(
