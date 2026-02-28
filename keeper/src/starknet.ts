@@ -35,6 +35,7 @@ import { Call } from "starknet";
 // the keeper fires it blindly with zero protocol-specific knowledge.
 export async function getExecutePayload(orderId: string): Promise<Call | null> {
   try {
+    console.log({ orderId });
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
 
     const result = (await contract.call("checker", [orderIdU256], {
@@ -44,10 +45,12 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
       { target: bigint; selector: bigint; calldata: bigint[] },
     ];
 
+    console.log({ result });
+
     const canExec = result[0];
     const payload = result[1];
 
-    if (!canExec) return null;
+    // if (!canExec) return null;
 
     return {
       contractAddress: `0x${payload.target.toString(16)}`,

@@ -37,7 +37,7 @@ export async function runKeeper(): Promise<void> {
 
   // 2. Filter to those whose interval has elapsed (cheap, off-chain).
   //    This avoids hitting the RPC for every single active order on every tick.
-  const candidates = allOrders.filter((o) => isDue(o, now));
+  const candidates = allOrders.filter((o) => isDue(o, now) || true);
   console.log(`  Candidates due for execution: ${candidates.length}`);
 
   const call = await getExecutePayload("1");

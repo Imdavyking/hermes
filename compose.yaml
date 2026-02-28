@@ -23,7 +23,8 @@ services:
       context: ./keeper
     restart: unless-stopped
     depends_on:
-      - indexer # needs GraphQL to be up first
+      indexer:
+        condition: service_healthy
     networks:
       - app-network
     env_file:
