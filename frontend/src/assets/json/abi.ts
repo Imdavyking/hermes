@@ -1,4 +1,5 @@
 import { type Abi } from "@starknet-react/core";
+
 const contractAbi = [
   {
     type: "impl",
@@ -104,7 +105,20 @@ const contractAbi = [
       {
         type: "function",
         name: "start_earning",
-        inputs: [{ name: "proof", type: "core::array::Span::<core::felt252>" }],
+        inputs: [
+          { name: "proof", type: "core::array::Span::<core::felt252>" },
+          {
+            name: "recipient",
+            type: "core::starknet::contract_address::ContractAddress",
+          },
+        ],
+        outputs: [],
+        state_mutability: "external",
+      },
+      {
+        type: "function",
+        name: "stop_earning",
+        inputs: [{ name: "nullifier_hash", type: "core::integer::u256" }],
         outputs: [],
         state_mutability: "external",
       },
@@ -287,6 +301,15 @@ const contractAbi = [
       },
       {
         type: "function",
+        name: "get_yield_recipient",
+        inputs: [{ name: "nullifier_hash", type: "core::integer::u256" }],
+        outputs: [
+          { type: "core::starknet::contract_address::ContractAddress" },
+        ],
+        state_mutability: "view",
+      },
+      {
+        type: "function",
         name: "set_mock_wbtc",
         inputs: [
           {
@@ -359,11 +382,7 @@ const contractAbi = [
         type: "core::starknet::contract_address::ContractAddress",
         kind: "key",
       },
-      {
-        name: "nullifier_hash",
-        type: "core::integer::u256",
-        kind: "key",
-      },
+      { name: "nullifier_hash", type: "core::integer::u256", kind: "key" },
       { name: "amount", type: "core::integer::u256", kind: "data" },
     ],
   },
@@ -372,12 +391,27 @@ const contractAbi = [
     name: "contracts::PrivateSwap::YieldStarted",
     kind: "struct",
     members: [
+      { name: "nullifier_hash", type: "core::integer::u256", kind: "key" },
       {
-        name: "nullifier_hash",
-        type: "core::integer::u256",
-        kind: "key",
+        name: "recipient",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
       },
       { name: "shares", type: "core::integer::u256", kind: "data" },
+    ],
+  },
+  {
+    type: "event",
+    name: "contracts::PrivateSwap::YieldStopped",
+    kind: "struct",
+    members: [
+      { name: "nullifier_hash", type: "core::integer::u256", kind: "key" },
+      {
+        name: "recipient",
+        type: "core::starknet::contract_address::ContractAddress",
+        kind: "data",
+      },
+      { name: "amount", type: "core::integer::u256", kind: "data" },
     ],
   },
   {
@@ -385,17 +419,9 @@ const contractAbi = [
     name: "contracts::PrivateSwap::YieldRedeemed",
     kind: "struct",
     members: [
-      {
-        name: "nullifier_hash",
-        type: "core::integer::u256",
-        kind: "key",
-      },
+      { name: "nullifier_hash", type: "core::integer::u256", kind: "key" },
       { name: "shares", type: "core::integer::u256", kind: "data" },
-      {
-        name: "wbtc_returned",
-        type: "core::integer::u256",
-        kind: "data",
-      },
+      { name: "wbtc_returned", type: "core::integer::u256", kind: "data" },
     ],
   },
   {
@@ -414,16 +440,8 @@ const contractAbi = [
         type: "core::starknet::contract_address::ContractAddress",
         kind: "data",
       },
-      {
-        name: "wbtc_amount",
-        type: "core::integer::u256",
-        kind: "data",
-      },
-      {
-        name: "quoted_strk_amount",
-        type: "core::integer::u256",
-        kind: "data",
-      },
+      { name: "wbtc_amount", type: "core::integer::u256", kind: "data" },
+      { name: "quoted_strk_amount", type: "core::integer::u256", kind: "data" },
       { name: "hashlock", type: "core::felt252", kind: "data" },
       { name: "expiry", type: "core::integer::u64", kind: "data" },
       { name: "rate_expiry", type: "core::integer::u64", kind: "data" },
@@ -434,26 +452,14 @@ const contractAbi = [
     name: "contracts::PrivateSwap::WbtcOrderFilled",
     kind: "struct",
     members: [
-      {
-        name: "wbtc_order_id",
-        type: "core::integer::u256",
-        kind: "key",
-      },
-      {
-        name: "strk_order_id",
-        type: "core::integer::u256",
-        kind: "key",
-      },
+      { name: "wbtc_order_id", type: "core::integer::u256", kind: "key" },
+      { name: "strk_order_id", type: "core::integer::u256", kind: "key" },
       {
         name: "bob",
         type: "core::starknet::contract_address::ContractAddress",
         kind: "data",
       },
-      {
-        name: "strk_amount_locked",
-        type: "core::integer::u256",
-        kind: "data",
-      },
+      { name: "strk_amount_locked", type: "core::integer::u256", kind: "data" },
       { name: "bob_expiry", type: "core::integer::u64", kind: "data" },
     ],
   },
@@ -549,6 +555,11 @@ const contractAbi = [
       {
         name: "YieldStarted",
         type: "contracts::PrivateSwap::YieldStarted",
+        kind: "nested",
+      },
+      {
+        name: "YieldStopped",
+        type: "contracts::PrivateSwap::YieldStopped",
         kind: "nested",
       },
       {

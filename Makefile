@@ -54,20 +54,19 @@ gen-verifier:
 
 build-verifier:
 	cd contracts/verifier && scarb build
+	cd contracts && scarb build
 
-declare-verifier:
-	cd contracts && sncast declare --contract-name UltraKeccakZKHonkVerifier
+deploy-contract:
+	cd contracts && yarn deploy
 
-deploy-verifier:
-	# TODO: use class hash from the result of the `make declare-verifier` step
-	cd contracts && sncast deploy --salt 0x00 --class-hash 0x061dac032f228abef9c6626f995015233097ae253a7f72d68552db02f2971b8f
 
 artifacts:
 	cp ./circuit/target/circuit.json ./frontend/src/assets/circuit.json
 	cp ./circuit/target/vk ./frontend/src/assets/vk.bin
+	jq '"import { type Abi } from \"@starknet-react/core\";\n\nconst contractAbi = \(.abi | tojson) as const satisfies Abi;\n\nexport default contractAbi;"' -r ./contracts/target/dev/contracts_PrivateSwap.contract_class.json > ./frontend/src/assets/json/abi.ts
 
 run-app:
-	cd app && bun run dev
+	cd app && yarn dev
 
 # ── Docker stack ─────────────────────────────────────────────────────────────
 
