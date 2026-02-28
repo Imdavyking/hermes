@@ -70,7 +70,7 @@ struct Round {
 #[derive(Drop, Serde)]
 struct ExecPayload {
     target: ContractAddress,
-    selector: felt252,
+selector: ByteArray,
     calldata: Array<felt252>,
 }
 
@@ -1078,7 +1078,7 @@ mod PrivateSwap {
 
             let payload = ExecPayload {
                 target: get_contract_address(),
-                selector: selector!("execute_dca"),
+                selector: "execute_dca",
                 calldata: array![order_id.low.into(), order_id.high.into()],
             };
 

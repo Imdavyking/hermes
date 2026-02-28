@@ -4,8 +4,10 @@ import abi from "./abis/private_swap.abi.json";
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
-export const provider = new RpcProvider({ nodeUrl: config.rpcUrl });
-
+export const provider = new RpcProvider({
+  nodeUrl: config.rpcUrl,
+  blockIdentifier: "latest",
+});
 // ── Keeper account ────────────────────────────────────────────────────────────
 // This wallet only needs STRK for gas. It holds no user funds.
 
@@ -34,12 +36,12 @@ import { Call } from "starknet";
 export async function getExecutePayload(orderId: string): Promise<Call | null> {
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
-    console.log({ orderId });
+
     const result = (await contract.call("checker", [orderIdU256], {
       blockIdentifier: "latest",
     })) as unknown as [
       boolean,
-      { target: string; selector: string; calldata: string[] },
+      { target: bigint; selector: bigint; calldata: bigint[] },
     ];
 
     const canExec = result[0];
@@ -48,8 +50,8 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
     if (!canExec) return null;
 
     return {
-      contractAddress: payload.target,
-      entrypoint: payload.selector,
+      contractAddress: `0x${payload.target.toString(16)}`,
+      entrypoint: `0x${payload.selector.toString(16)}`,
       calldata: payload.calldata,
     };
   } catch (err) {
