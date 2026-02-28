@@ -8,6 +8,8 @@ import {
 } from "starknet";
 import * as dotenv from "dotenv";
 import { getCompiledCode } from "./utils";
+import * as fs from "fs";
+import * as path from "path";
 dotenv.config();
 
 async function main() {
@@ -105,6 +107,35 @@ async function main() {
     `✅ Minted ${mintAmount} MockUSDT to deployer, tx:`,
     mintTx.transaction_hash,
   );
+
+  function updateEnvFile(filePath: string, key: string, value: string) {
+    const fullPath = path.resolve(filePath);
+    if (!fs.existsSync(fullPath)) {
+      console.warn(`  Skipped (not found): ${fullPath}`);
+      return;
+    }
+    let content = fs.readFileSync(fullPath, "utf8");
+    const regex = new RegExp(`^${key}=.*$`, "m");
+    if (regex.test(content)) {
+      content = content.replace(regex, `${key}=${value}`);
+    } else {
+      content += `\n${key}=${value}`;
+    }
+    fs.writeFileSync(fullPath, content);
+    console.log(`  Updated ${filePath}`);
+  }
+
+  const contractAddress = privateSwapContract.address;
+
+  console.log("\n--- Updating .env files ---");
+  updateEnvFile(
+    "../../frontend/.env",
+    "VITE_CONTRACT_ADDRESS",
+    contractAddress,
+  );
+  updateEnvFile("../../indexer/.env", "CONTRACT_ADDRESS", contractAddress);
+  updateEnvFile("../../keeper/.env", "CONTRACT_ADDRESS", contractAddress);
+  console.log("✅ All .env files updated with:", contractAddress);
 
   //// --- END OF MOCK DEPLOYMENT ---
 }
