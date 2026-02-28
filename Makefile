@@ -67,7 +67,7 @@ artifacts:
 	jq '"import { type Abi } from \"@starknet-react/core\";\n\nconst contractAbi = \(.abi | tojson) as const satisfies Abi;\n\nexport default contractAbi;"' -r ./contracts/target/dev/contracts_PrivateSwap.contract_class.json > ./frontend/src/assets/json/abi.ts
 
 run-app:
-	cd app && yarn dev
+	cd frontend && yarn dev
 
 # ── Docker stack ─────────────────────────────────────────────────────────────
 
