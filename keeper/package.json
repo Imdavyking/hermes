@@ -1,0 +1,24 @@
+{
+  "name": "umbra-keeper",
+  "version": "1.0.0",
+  "description": "DCA order keeper for Umbra protocol",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@apollo/client": "^3.9.0",
+    "cross-fetch": "^4.0.0",
+    "dotenv": "^16.4.0",
+    "graphql": "^16.8.0",
+    "starknet": "^6.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.4.0"
+  }
+}

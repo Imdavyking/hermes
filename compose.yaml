@@ -17,3 +17,14 @@ services:
     depends_on:
       indexer:
         condition: service_healthy
+
+  keeper:
+    build:
+      context: ./keeper
+    restart: unless-stopped
+    depends_on:
+      - indexer # needs GraphQL to be up first
+    networks:
+      - app-network
+    env_file:
+      - ./keeper/.env

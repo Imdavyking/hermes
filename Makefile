@@ -64,6 +64,7 @@ artifacts:
 	cp ./circuit/target/circuit.json ./frontend/src/assets/circuit.json
 	cp ./circuit/target/vk ./frontend/src/assets/vk.bin
 	jq .abi ./contracts/target/dev/contracts_PrivateSwap.contract_class.json > ./indexer/src/abis/private_swap.abi.json
+	jq .abi ./contracts/target/dev/contracts_PrivateSwap.contract_class.json > ./keeper/abis/private_swap.abi.json
 	jq '"import { type Abi } from \"@starknet-react/core\";\n\nconst contractAbi = \(.abi | tojson) as const satisfies Abi;\n\nexport default contractAbi;"' -r ./contracts/target/dev/contracts_PrivateSwap.contract_class.json > ./frontend/src/assets/json/abi.ts
 
 run-app:
