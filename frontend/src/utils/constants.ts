@@ -3,7 +3,6 @@ import { constants } from "starknet";
 
 export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS;
 export const GRAPH_QL_ENDPOINT = import.meta.env.VITE_GRAPH_QL_ENDPOINT;
-export const DEPLOY_BLOCK = import.meta.env.VITE_DEPLOY_BLOCK;
 export const NATIVE_TOKEN =
   "0x4718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 export const CHAIN_ID = constants.NetworkName.SN_SEPOLIA;

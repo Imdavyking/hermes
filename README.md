@@ -358,7 +358,6 @@ PORT=5100
 
 ```env
 VITE_CONTRACT_ADDRESS=0x...
-VITE_DEPLOY_BLOCK=0
 VITE_GRAPH_QL_ENDPOINT=http://localhost:5100/graphql
 ```
 
