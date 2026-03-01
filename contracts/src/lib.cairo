@@ -1037,15 +1037,16 @@ mod PrivateSwap {
         // ---------------------------------------------------
         // EXECUTE DCA
         //
-        // Permissionless — any keeper can call this when an interval is due.
-        // Keeper needs zero capital and zero approvals.
+        // Permissionless — any address can call this when an interval is due.
+        // The order owner always receives their wBTC regardless of caller.
         //
         // On each execution the contract:
         //   1. Validates the interval has elapsed and the order is still active.
         //   2. Calculates wBTC from the live BTC/USD oracle price.
-        //   3. Acquires and delivers wBTC to the order owner.
-        //   4. Pays KEEPER_FEE_STRK from the pre-funded reserve to the caller.
-        //   5. Updates state (CEI — all external calls after state writes).
+        //   3. Updates state (CEI — all state writes before external calls).
+        //   4. Acquires and delivers wBTC to the order owner.
+        //   5. If the caller is a registered keeper, pays KEEPER_FEE_STRK from
+        //      the pre-funded reserve. Unregistered callers earn nothing.
         //
         // TESTNET: _acquire_wbtc() mints wBTC directly (no DEX needed).
         // MAINNET: replace _acquire_wbtc() with an Ekubo USDC → wBTC swap.
@@ -1173,7 +1174,8 @@ mod PrivateSwap {
             let can_exec = order.is_active
                 && order.executed_intervals < order.total_intervals
                 && now >= order.last_execution
-                + order.interval_seconds;
+                + order.interval_seconds
+                    && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
 
             let payload = ExecPayload {
                 target: get_contract_address(),
