@@ -11,17 +11,19 @@ export const provider = new RpcProvider({
 // ── Keeper account ────────────────────────────────────────────────────────────
 // This wallet only needs STRK for gas. It holds no user funds.
 
-export const account = new Account(
+export const account = new Account({
   provider,
-  config.keeperAddress,
-  config.keeperPrivateKey,
-  undefined, // cairo version (leave default)
-  constants.TRANSACTION_VERSION.V3,
-);
+  address: config.keeperAddress,
+  signer: config.keeperPrivateKey,
+});
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
-export const contract = new Contract(abi, config.contractAddress, provider);
+export const contract = new Contract({
+  abi,
+  address: config.contractAddress,
+  providerOrAccount: provider,
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

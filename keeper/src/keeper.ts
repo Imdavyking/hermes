@@ -80,10 +80,7 @@ export async function runKeeper(): Promise<void> {
 
     try {
       const feeEstimate = await account.estimateInvokeFee(chunk);
-      const tx = await account.execute(chunk, {
-        version: 3,
-        resourceBounds: feeEstimate.resourceBounds, // V3 uses resourceBounds, not maxFee
-      });
+      const tx = await account.execute(chunk);
       console.log(`  Batch ${i + 1} submitted: ${tx.transaction_hash}`);
 
       const receipt = await account.waitForTransaction(tx.transaction_hash);
