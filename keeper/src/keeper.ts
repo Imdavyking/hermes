@@ -33,8 +33,6 @@ export async function runKeeper(): Promise<void> {
     return;
   }
 
-  console.log({ allOrders });
-
   console.log(`  Active orders in indexer: ${allOrders.length}`);
 
   // 2. Filter to those whose interval has elapsed (cheap, off-chain).
