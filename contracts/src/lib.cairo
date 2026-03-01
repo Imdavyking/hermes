@@ -2,7 +2,7 @@ use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_con
 
 mod field;
 mod incremental_merkle_tree;
-mod mockUSDT;
+mod mockUSDC;
 mod poseidon2;
 mod poseidon2lib;
 use crate::field::FieldTrait;

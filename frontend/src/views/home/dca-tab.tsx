@@ -210,7 +210,7 @@ export default function DcaTab() {
     watch: true,
     refetchInterval: 30_000,
   });
-  const { data: USDT_ADDRESS } = useReadContract({
+  const { data: USDC_ADDRESS } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
     functionName: "usdc_address",
@@ -559,23 +559,23 @@ export default function DcaTab() {
     }
   };
 
-  const handleMintTestUsdt = async () => {
+  const handleMintTestUsdc = async () => {
     if (!account || !address) return toast.error("Connect wallet first.");
-    if (!USDT_ADDRESS) return toast.error("Mock USDT address not configured.");
+    if (!USDC_ADDRESS) return toast.error("Mock USDC address not configured.");
     const mintAmount = 10_000;
-    const toastId = toast.loading("Minting test USDT…");
+    const toastId = toast.loading("Minting test USDC");
     setMinting(true);
     try {
       const amountRaw = BigInt(Math.round(mintAmount * 1e6));
       const u256Amount = uint256.bnToUint256(amountRaw);
       const tx = await account.execute({
-        contractAddress: "0x" + BigInt(USDT_ADDRESS).toString(16),
+        contractAddress: "0x" + BigInt(USDC_ADDRESS).toString(16),
         entrypoint: "mint",
         calldata: CallData.compile([address, u256Amount]),
       });
       await account.waitForTransaction(tx.transaction_hash);
       toast.update(toastId, {
-        render: `Minted $${mintAmount.toLocaleString()} test USDT successfully!`,
+        render: `Minted $${mintAmount.toLocaleString()} test USDC successfully!`,
         isLoading: false,
         type: "success",
         autoClose: 4000,
@@ -639,11 +639,11 @@ export default function DcaTab() {
               marginBottom: "0.8rem",
             }}
           >
-            Mint test USDT to fund your DCA orders (Sepolia only)
+            Mint test USDC to fund your DCA orders (Sepolia only)
           </div>
           <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
             <button
-              onClick={handleMintTestUsdt}
+              onClick={handleMintTestUsdc}
               disabled={!isTestnet}
               style={{
                 ...btnPrimary(isTestnet),
@@ -660,7 +660,7 @@ export default function DcaTab() {
                   Minting…
                 </>
               ) : (
-                "Mint Test USDT"
+                "Mint Test USDC"
               )}
             </button>
           </div>
