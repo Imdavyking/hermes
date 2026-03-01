@@ -590,6 +590,33 @@
       },
       {
         "type": "function",
+        "name": "get_dca_strk_reserved",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "keeper_fee_strk",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "current_root",
         "inputs": [],
         "outputs": [
@@ -1066,6 +1093,11 @@
         "name": "total_usdc_deposited",
         "type": "core::integer::u256",
         "kind": "data"
+      },
+      {
+        "name": "total_strk_fee_deposited",
+        "type": "core::integer::u256",
+        "kind": "data"
       }
     ]
   },
@@ -1103,6 +1135,11 @@
         "name": "keeper",
         "type": "core::starknet::contract_address::ContractAddress",
         "kind": "data"
+      },
+      {
+        "name": "keeper_fee_paid",
+        "type": "core::integer::u256",
+        "kind": "data"
       }
     ]
   },
@@ -1123,6 +1160,11 @@
       },
       {
         "name": "usdc_refunded",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "strk_fee_refunded",
         "type": "core::integer::u256",
         "kind": "data"
       }

@@ -128,28 +128,16 @@ async function main() {
   const contractAddress = privateSwapContract.address;
 
   console.log("\n--- Updating .env files ---");
+  updateEnvFile("../frontend/.env", "VITE_CONTRACT_ADDRESS", contractAddress);
   updateEnvFile(
-    "../../frontend/.env",
+    "../frontend/.env.example",
     "VITE_CONTRACT_ADDRESS",
     contractAddress,
   );
-  updateEnvFile(
-    "../../frontend/.env.example",
-    "VITE_CONTRACT_ADDRESS",
-    contractAddress,
-  );
-  updateEnvFile("../../indexer/.env", "CONTRACT_ADDRESS", contractAddress);
-  updateEnvFile(
-    "../../indexer/.env.example",
-    "CONTRACT_ADDRESS",
-    contractAddress,
-  );
-  updateEnvFile("../../keeper/.env", "CONTRACT_ADDRESS", contractAddress);
-  updateEnvFile(
-    "../../keeper/.env.example",
-    "CONTRACT_ADDRESS",
-    contractAddress,
-  );
+  updateEnvFile("../indexer/.env", "CONTRACT_ADDRESS", contractAddress);
+  updateEnvFile("../indexer/.env.example", "CONTRACT_ADDRESS", contractAddress);
+  updateEnvFile("../keeper/.env", "CONTRACT_ADDRESS", contractAddress);
+  updateEnvFile("../keeper/.env.example", "CONTRACT_ADDRESS", contractAddress);
   console.log("✅ All .env files updated with:", contractAddress);
 
   //// --- END OF MOCK DEPLOYMENT ---
