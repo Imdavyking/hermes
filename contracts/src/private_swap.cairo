@@ -1,7 +1,7 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
 
 mod field;
-mod mockUSDT;
+mod mockUSDC;
 mod incremental_merkle_tree;
 mod poseidon2;
 mod poseidon2lib;

@@ -1,5 +1,5 @@
 #[starknet::contract]
-mod MockUSDT {
+mod MockUSDC {
     use openzeppelin::token::erc20::{ERC20Component, ERC20HooksEmptyImpl};
     use starknet::ContractAddress;
 
