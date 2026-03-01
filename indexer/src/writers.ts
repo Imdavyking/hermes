@@ -472,7 +472,7 @@ export function createWriters(ctx: Context) {
     //    id = "{orderId}-{executedIntervals}" (1-based, post-increment matches contract)
     const exec = new DcaExecution(
       `${orderId}-${executedIntervals}`,
-      ctx.indexerName
+      ctx.indexerName,
     );
     exec.order_id = orderId;
     exec.executed_intervals = executedIntervals;

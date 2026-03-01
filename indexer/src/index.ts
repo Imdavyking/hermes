@@ -19,7 +19,7 @@ const schemaFile = path.join(__dirname, `${dir}../src/schema.gql`);
 const schema = fs.readFileSync(schemaFile, "utf8");
 
 const checkpoint = new Checkpoint(schema, {
-  logLevel: LogLevel.Info,
+  logLevel: LogLevel.Debug,
   prettifyLogs: true,
   dbConnection: process.env.DATABASE_URL,
   overridesConfig: overrides,
