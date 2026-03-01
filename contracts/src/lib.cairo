@@ -221,6 +221,8 @@ trait IPrivateSwap<TContractState> {
     fn set_vesu_vtoken(ref self: TContractState, vtoken: ContractAddress);
     fn set_usdc(ref self: TContractState, usdc: ContractAddress);
     fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
+    fn add_keeper(ref self: TContractState, keeper: ContractAddress);
+    fn remove_keeper(ref self: TContractState, keeper: ContractAddress);
 }
 
 // -------------------------------------------------------
@@ -389,6 +391,7 @@ mod PrivateSwap {
         imt: IncrementalMerkleTreeComponent::Storage,
         commitments: Map<u256, bool>,
         nullifier_hashes: Map<u256, bool>,
+        registered_keepers: Map<ContractAddress, bool>,
         // HTLC orders
         wbtc_orders: Map<u256, WbtcOrder>,
         strk_orders: Map<u256, StrkOrder>,
@@ -1062,16 +1065,13 @@ mod PrivateSwap {
 
             // ── Update state first (CEI)
             // ───────────────────────────────────
-            order.last_execution = now;
+            // Anchor to the scheduled due time, not now, to prevent cumulative drift.
+            order.last_execution = order.last_execution + order.interval_seconds;
             order.executed_intervals += 1;
             if order.executed_intervals == order.total_intervals {
                 order.is_active = false;
             }
             self.dca_orders.write(order_id, order);
-
-            // Decrement the reserved STRK balance.
-            let reserved = self.dca_strk_reserved.read(order_id);
-            self.dca_strk_reserved.write(order_id, reserved - KEEPER_FEE_STRK);
 
             // ── External calls after state is finalised
             // ───────────────────
@@ -1079,10 +1079,20 @@ mod PrivateSwap {
             // Deliver wBTC to the order owner.
             self._acquire_wbtc(order.owner, order.usdc_per_interval, wbtc_amount);
 
-            // Pay the keeper from the pre-funded STRK reserve.
-            let ok = IERC20Dispatcher { contract_address: self.strk.read() }
-                .transfer(keeper, KEEPER_FEE_STRK);
-            assert(ok, Errors::STRK_TRANSFER_FAILED);
+            // Only registered keepers earn the fee.
+            // Unregistered callers can still execute — the user gets their wBTC either
+            // way — but the fee reserve is only decremented when it is actually paid out.
+            let keeper_fee_paid = if self.registered_keepers.read(keeper) {
+                let reserved = self.dca_strk_reserved.read(order_id);
+                assert(reserved >= KEEPER_FEE_STRK, 'insufficient keeper fee reserve');
+                self.dca_strk_reserved.write(order_id, reserved - KEEPER_FEE_STRK);
+                let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                    .transfer(keeper, KEEPER_FEE_STRK);
+                assert(ok, Errors::STRK_TRANSFER_FAILED);
+                KEEPER_FEE_STRK
+            } else {
+                0
+            };
 
             self
                 .emit(
@@ -1093,7 +1103,7 @@ mod PrivateSwap {
                         wbtc_received: wbtc_amount,
                         executed_intervals: order.executed_intervals,
                         keeper,
-                        keeper_fee_paid: KEEPER_FEE_STRK,
+                        keeper_fee_paid,
                     },
                 );
         }
@@ -1300,6 +1310,17 @@ mod PrivateSwap {
             let meta = IERC20MetadataDispatcher { contract_address: usdc };
             assert(meta.decimals() == 6, 'USDC must have 6 decimals');
             self.usdc.write(usdc);
+        }
+
+        // Admin functions
+        fn add_keeper(ref self: ContractState, keeper: ContractAddress) {
+            self.assert_only_owner();
+            self.registered_keepers.write(keeper, true);
+        }
+
+        fn remove_keeper(ref self: ContractState, keeper: ContractAddress) {
+            self.assert_only_owner();
+            self.registered_keepers.write(keeper, false);
         }
 
         fn transfer_ownership(ref self: ContractState, new_owner: ContractAddress) {
