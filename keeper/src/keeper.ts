@@ -79,7 +79,7 @@ export async function runKeeper(): Promise<void> {
     console.log(`  Batch ${i + 1}/${chunks.length}: ${chunk.length} call(s)`);
 
     try {
-      const feeEstimate = await account.estimateInvokeFee(chunk);
+      await account.estimateInvokeFee(chunk);
       const tx = await account.execute(chunk);
       console.log(`  Batch ${i + 1} submitted: ${tx.transaction_hash}`);
 
