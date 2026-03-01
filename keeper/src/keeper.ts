@@ -15,8 +15,6 @@ function isDue(order: ActiveDcaOrder, now: number): boolean {
   // before hitting the RPC checker.
   if (executedIntervals >= totalIntervals) return false;
 
-  console.log({ now, exec: lastExecution + intervalSeconds });
-
   return now >= lastExecution + intervalSeconds;
 }
 
