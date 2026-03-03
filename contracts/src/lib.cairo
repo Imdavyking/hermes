@@ -44,38 +44,18 @@ trait IMockWBTC<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
-// EscrowExecution is needed for the success_action field in EscrowDataFull
+// EscrowExecution is needed for the success_action field in EscrowData
 // which is passed to IAtomiqEscrowStorage::get_state.
-#[derive(Drop, Serde)]
+#[derive(Drop, Serde, Copy, starknet::Store)]
 struct EscrowExecution {
     hash: felt252,
     expiry: u64,
     fee: u256,
 }
 
-// EscrowData is the stripped struct stored on-chain (no success_action).
-// success_action is always None when we initialize an escrow, so we omit it
-// from storage to keep Store derivation simple.
+
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct EscrowData {
-    offerer: ContractAddress,
-    claimer: ContractAddress,
-    token: ContractAddress,
-    refund_handler: ContractAddress,
-    claim_handler: ContractAddress,
-    flags: u128,
-    claim_data: felt252,
-    refund_data: felt252,
-    amount: u256,
-    fee_token: ContractAddress,
-    security_deposit: u256,
-    claimer_bounty: u256,
-}
-
-// EscrowDataFull matches the Atomiq escrow manager ABI exactly.
-// Used only when calling get_state — we always pass success_action = None.
-#[derive(Drop, Serde)]
-struct EscrowDataFull {
     offerer: ContractAddress,
     claimer: ContractAddress,
     token: ContractAddress,
@@ -108,17 +88,17 @@ struct EscrowState {
 trait IAtomiqEscrow<TContractState> {
     fn initialize(
         ref self: TContractState,
-        escrow: EscrowDataFull,
+        escrow: EscrowData,
         signature: Array<felt252>,
         timeout: u64,
         extra_data: Span<felt252>,
     );
-    fn refund(ref self: TContractState, escrow: EscrowDataFull, witness: Array<felt252>);
+    fn refund(ref self: TContractState, escrow: EscrowData, witness: Array<felt252>);
 }
 
 #[starknet::interface]
 trait IAtomiqEscrowStorage<TContractState> {
-    fn get_state(self: @TContractState, escrow: EscrowDataFull) -> EscrowState;
+    fn get_state(self: @TContractState, escrow: EscrowData) -> EscrowState;
 }
 
 // -------------------------------------------------------
@@ -239,11 +219,10 @@ trait IPrivateSwap<TContractState> {
     fn execute_dca(
         ref self: TContractState,
         order_id: u256,
-        strk_amount: u256,
-        payment_hash: felt252,
-        expiry: u64,
-        flags: u128,
+        escrow: EscrowData,
         signature: Array<felt252>,
+        timeout: u64,
+        extra_data: Span<felt252>,
     );
     // Called by anyone after an Atomiq escrow has settled.
     // If the LP claimed (state=3): clears the pending flag so the next
@@ -311,12 +290,12 @@ mod PrivateSwap {
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
     use super::{
-        ContractAddress, DCAOrder, EscrowData, EscrowDataFull, ExecPayload, FieldTrait,
-        IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher,
-        IAtomiqEscrowDispatcherTrait, IAtomiqEscrowStorageDispatcher,
-        IAtomiqEscrowStorageDispatcherTrait, IMockWBTCDispatcherTrait, IVTokenDispatcher,
-        IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait, Poseidon2Trait,
-        StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address, get_contract_address,
+        ContractAddress, DCAOrder, EscrowData, ExecPayload, FieldTrait, IAggregatorProxyDispatcher,
+        IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher, IAtomiqEscrowDispatcherTrait,
+        IAtomiqEscrowStorageDispatcher, IAtomiqEscrowStorageDispatcherTrait,
+        IMockWBTCDispatcherTrait, IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher,
+        IVerifierDispatcherTrait, Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp,
+        get_caller_address, get_contract_address,
     };
 
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
@@ -1071,11 +1050,10 @@ mod PrivateSwap {
         fn execute_dca(
             ref self: ContractState,
             order_id: u256,
-            strk_amount: u256,
-            payment_hash: felt252,
-            expiry: u64,
-            flags: u128,
+            escrow: EscrowData,
             signature: Array<felt252>,
+            timeout: u64,
+            extra_data: Span<felt252>,
         ) {
             let mut order = self.dca_orders.read(order_id);
             let now = get_block_timestamp();
@@ -1104,7 +1082,7 @@ mod PrivateSwap {
                 * (BPS_DENOMINATOR + STRK_TOLERANCE_BPS)
                 / BPS_DENOMINATOR;
             assert(
-                strk_amount >= lower_bound && strk_amount <= upper_bound,
+                escrow.amount >= lower_bound && escrow.amount <= upper_bound,
                 Errors::DCA_STRK_AMOUNT_OUT_OF_RANGE,
             );
 
@@ -1116,28 +1094,12 @@ mod PrivateSwap {
             }
             self.dca_orders.write(order_id, order);
 
-            let this = get_contract_address();
-            let pending_escrow = EscrowData {
-                offerer: this,
-                claimer: ATOMIQ_LP.try_into().unwrap(),
-                token: REAL_STRK_ADDRESS.try_into().unwrap(),
-                refund_handler: ATOMIQ_REFUND_HANDLER.try_into().unwrap(),
-                claim_handler: ATOMIQ_CLAIM_HANDLER.try_into().unwrap(),
-                flags,
-                claim_data: payment_hash,
-                refund_data: expiry.into(),
-                amount: strk_amount,
-                fee_token: REAL_STRK_ADDRESS.try_into().unwrap(),
-                security_deposit: 0,
-                claimer_bounty: 0,
-            };
-
             let escrow_key: u256 = order_id * ESCROW_KEY_MULTIPLIER + interval_index.into();
-            self.dca_pending_escrows.write(escrow_key, pending_escrow);
+            self.dca_pending_escrows.write(escrow_key, escrow);
             self.dca_pending_interval_index.write(order_id, interval_index);
             self.dca_interval_needs_refund.write(order_id, true);
 
-            self._commit_strk_to_atomiq(strk_amount, payment_hash, expiry, flags, signature);
+            self._commit_strk_to_atomiq(escrow, signature, timeout, extra_data);
 
             if self.registered_keepers.read(keeper) {
                 let reserved = self.dca_strk_reserved.read(order_id);
@@ -1197,23 +1159,7 @@ mod PrivateSwap {
             let escrow_state = IAtomiqEscrowStorageDispatcher {
                 contract_address: ATOMIQ_ESCROW.try_into().unwrap(),
             }
-                .get_state(
-                    EscrowDataFull {
-                        offerer: escrow.offerer,
-                        claimer: escrow.claimer,
-                        token: escrow.token,
-                        refund_handler: escrow.refund_handler,
-                        claim_handler: escrow.claim_handler,
-                        flags: escrow.flags,
-                        claim_data: escrow.claim_data,
-                        refund_data: escrow.refund_data,
-                        amount: escrow.amount,
-                        fee_token: escrow.fee_token,
-                        security_deposit: escrow.security_deposit,
-                        claimer_bounty: escrow.claimer_bounty,
-                        success_action: Option::None,
-                    },
-                );
+                .get_state(escrow);
 
             // Escrow must be settled (claimed or refundable) before we act.
             // States 1 (COMMITED) and 2 (SOFT_CLAIMED) mean still in flight.
@@ -1236,6 +1182,7 @@ mod PrivateSwap {
                 fee_token: ZERO_ADDRESS,
                 security_deposit: 0,
                 claimer_bounty: 0,
+                success_action: Option::None,
             };
 
             self.dca_interval_needs_refund.write(order_id, false);
@@ -1261,7 +1208,7 @@ mod PrivateSwap {
 
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
                 .refund(
-                    EscrowDataFull {
+                    EscrowData {
                         offerer: escrow.offerer,
                         claimer: escrow.claimer,
                         token: escrow.token,
@@ -1546,11 +1493,10 @@ mod PrivateSwap {
 
         fn _commit_strk_to_atomiq(
             ref self: ContractState,
-            amount: u256,
-            payment_hash: felt252,
-            expiry: u64,
-            flags: u128,
+            escrow: EscrowData,
             signature: Array<felt252>,
+            timeout: u64,
+            extra_data: Span<felt252>,
         ) {
             let this = get_contract_address();
             let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
@@ -1558,26 +1504,7 @@ mod PrivateSwap {
             strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), amount);
 
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
-                .initialize(
-                    EscrowDataFull {
-                        offerer: this,
-                        claimer: ATOMIQ_LP.try_into().unwrap(),
-                        token: REAL_STRK_ADDRESS.try_into().unwrap(),
-                        refund_handler: ATOMIQ_REFUND_HANDLER.try_into().unwrap(),
-                        claim_handler: ATOMIQ_CLAIM_HANDLER.try_into().unwrap(),
-                        flags,
-                        claim_data: payment_hash,
-                        refund_data: expiry.into(),
-                        amount,
-                        fee_token: REAL_STRK_ADDRESS.try_into().unwrap(),
-                        security_deposit: 0,
-                        claimer_bounty: 0,
-                        success_action: Option::None,
-                    },
-                    signature,
-                    expiry,
-                    array![].span(),
-                );
+                .initialize(escrow, signature, timeout, extra_data);
         }
 
         fn verify_proof_and_consume(

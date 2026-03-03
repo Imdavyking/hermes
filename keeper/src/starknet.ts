@@ -89,22 +89,24 @@ export function parseAtomiqCalldata(calldata: string[]): any {
   const signature = calldata.slice(sigLenIndex + 1, sigLenIndex + 1 + sigLen);
 
   return {
-    offerer: `0x${BigInt(calldata[0]).toString(16)}`,
-    claimer: `0x${BigInt(calldata[1]).toString(16)}`,
-    token: `0x${BigInt(calldata[2]).toString(16)}`,
-    refund_handler: `0x${BigInt(calldata[3]).toString(16)}`,
-    claim_handler: `0x${BigInt(calldata[4]).toString(16)}`,
-    flags: calldata[5],
-    claim_data: calldata[6],
-    refund_data: calldata[7],
-    amount: { low: calldata[8], high: calldata[9] },
-    fee_token: `0x${BigInt(calldata[10]).toString(16)}`,
-    security_deposit: { low: calldata[11], high: calldata[12] },
-    claimer_bounty: { low: calldata[13], high: calldata[14] },
-    success_action: calldata[15],
+    escrow: {
+      offerer: `0x${BigInt(calldata[0]).toString(16)}`,
+      claimer: `0x${BigInt(calldata[1]).toString(16)}`,
+      token: `0x${BigInt(calldata[2]).toString(16)}`,
+      refund_handler: `0x${BigInt(calldata[3]).toString(16)}`,
+      claim_handler: `0x${BigInt(calldata[4]).toString(16)}`,
+      flags: calldata[5],
+      claim_data: calldata[6],
+      refund_data: calldata[7],
+      amount: { low: calldata[8], high: calldata[9] },
+      fee_token: `0x${BigInt(calldata[10]).toString(16)}`,
+      security_deposit: { low: calldata[11], high: calldata[12] },
+      claimer_bounty: { low: calldata[13], high: calldata[14] },
+      success_action: calldata[15],
+    },
     signature,
-    timeout: calldata[19],
-    extra_data: calldata[20],
+    timeout: calldata[sigLenIndex + sigLen + 1],
+    extra_data: calldata[sigLenIndex + sigLen + 2],
   };
 }
 
@@ -203,33 +205,16 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
 
     const parsed = parseAtomiqCalldata(rawCalldata);
 
-    // 5. Extract the LP signature.
-    const sigLenIndex = parsed.signatureStart;
-    const sigLen = parseInt(rawCalldata[sigLenIndex], 10);
-    const signature = rawCalldata.slice(
-      sigLenIndex + 1,
-      sigLenIndex + 1 + sigLen,
-    );
-
-    // 6. Build the execute_dca calldata.
-    //    Use the amount the SDK actually quoted (parsed from Atomiq calldata)
-    //    rather than strkAmountBn — the SDK may have adjusted it slightly for
-    //    fees or rounding, and the escrow must match exactly.
-    const strkAmountU256 = uint256.bnToUint256(parsed.strkAmount);
-
     return {
       contractAddress: config.contractAddress,
       entrypoint: "execute_dca",
       calldata: [
         orderIdU256.low.toString(),
         orderIdU256.high.toString(),
-        strkAmountU256.low.toString(),
-        strkAmountU256.high.toString(),
-        parsed.paymentHash,
-        parsed.expiry,
-        parsed.flags,
-        sigLen.toString(),
-        ...signature,
+        parsed.escrow,
+        parsed.signature,
+        parsed.timeout,
+        parsed.extra_data,
       ],
     };
   } catch (err) {
