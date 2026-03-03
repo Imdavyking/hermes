@@ -44,6 +44,8 @@ trait IMockWBTC<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
+// EscrowExecution is needed for the success_action field in EscrowDataFull
+// which is passed to IAtomiqEscrowStorage::get_state.
 #[derive(Drop, Serde)]
 struct EscrowExecution {
     hash: felt252,
@@ -51,6 +53,9 @@ struct EscrowExecution {
     fee: u256,
 }
 
+// EscrowData is the stripped struct stored on-chain (no success_action).
+// success_action is always None when we initialize an escrow, so we omit it
+// from storage to keep Store derivation simple.
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct EscrowData {
     offerer: ContractAddress,
@@ -65,28 +70,55 @@ struct EscrowData {
     fee_token: ContractAddress,
     security_deposit: u256,
     claimer_bounty: u256,
-    // NOTE: success_action omitted from stored struct to keep Store derivation simple.
-// The pending escrow stored on-chain always has success_action = None.
+}
+
+// EscrowDataFull matches the Atomiq escrow manager ABI exactly.
+// Used only when calling get_state — we always pass success_action = None.
+#[derive(Drop, Serde)]
+struct EscrowDataFull {
+    offerer: ContractAddress,
+    claimer: ContractAddress,
+    token: ContractAddress,
+    refund_handler: ContractAddress,
+    claim_handler: ContractAddress,
+    flags: u128,
+    claim_data: felt252,
+    refund_data: felt252,
+    amount: u256,
+    fee_token: ContractAddress,
+    security_deposit: u256,
+    claimer_bounty: u256,
+    success_action: Option<EscrowExecution>,
+}
+
+// EscrowState is returned by IAtomiqEscrowStorage::get_state.
+// state values (from Atomiq SDK):
+//   1 = COMMITED    — in flight, not yet claimed or refunded
+//   2 = SOFT_CLAIMED — payment seen off-chain, not yet claimed on-chain
+//   3 = CLAIMED     — LP claimed, BTC was delivered
+//   4 = REFUNDABLE  — LP failed to process, user can refund
+#[derive(Drop, Serde)]
+struct EscrowState {
+    init_blockheight: u64,
+    finish_blockheight: u64,
+    state: u8,
 }
 
 #[starknet::interface]
 trait IAtomiqEscrow<TContractState> {
     fn initialize(
         ref self: TContractState,
-        escrow: EscrowData,
+        escrow: EscrowDataFull,
         signature: Array<felt252>,
         timeout: u64,
         extra_data: Span<felt252>,
     );
-    fn refund(ref self: TContractState, escrow: EscrowData, witness: Array<felt252>);
+    fn refund(ref self: TContractState, escrow: EscrowDataFull, witness: Array<felt252>);
 }
+
 #[starknet::interface]
-trait IAtomiqEscrowRefund<TContractState> {
-    fn refund(self: @TContractState, refund_data: felt252, witness: Array<felt252>) -> bool;
-}
-#[starknet::interface]
-trait IAtomiqEscrowClaim<TContractState> {
-    fn claim(self: @TContractState, claim_data: felt252, witness: Array<felt252>) -> bool;
+trait IAtomiqEscrowStorage<TContractState> {
+    fn get_state(self: @TContractState, escrow: EscrowDataFull) -> EscrowState;
 }
 
 // -------------------------------------------------------
@@ -114,16 +146,12 @@ struct Round {
 //   strk_amount = usdc_per_interval * STRK_PRECISION * 10^strk_dec
 //                 / (strk_usd * USDC_PRECISION)
 //
-// strk_amount is 0 when can_exec is false — the keeper must not use it in
-// that case.
+// strk_amount is 0 when can_exec is false.
 #[derive(Drop, Serde)]
 struct ExecPayload {
     target: ContractAddress,
     selector: ByteArray,
     calldata: Array<felt252>,
-    // Live STRK equivalent of usdc_per_interval at the current oracle price.
-    // Keeper passes this directly to the Atomiq SDK as the exactIn amount.
-    // Zero when can_exec is false.
     strk_amount: u256,
 }
 
@@ -217,14 +245,15 @@ trait IPrivateSwap<TContractState> {
         flags: u128,
         signature: Array<felt252>,
     );
-    // Called by the keeper (or anyone) after an Atomiq escrow has expired
-    // without the LP releasing BTC. Refunds STRK back to this contract and
-    // rolls back the interval counter so the keeper retries automatically.
+    // Called by anyone after an Atomiq escrow has settled.
+    // If the LP claimed (state=3): clears the pending flag so the next
+    // interval can be executed — no rollback.
+    // If refundable (state=4): rolls back the interval counter so the keeper
+    // retries automatically and reclaims STRK from Atomiq.
     fn refund_dca_interval(ref self: TContractState, order_id: u256);
     fn cancel_dca(ref self: TContractState, order_id: u256);
     // checker() returns (can_exec, payload) where payload.strk_amount is the
-    // live oracle-priced STRK equivalent of usdc_per_interval. The keeper reads
-    // strk_amount directly — no off-chain oracle math needed.
+    // live oracle-priced STRK equivalent of usdc_per_interval.
     fn checker(self: @TContractState, order_id: u256) -> (bool, ExecPayload);
 
     // --- Views ---
@@ -281,14 +310,7 @@ mod PrivateSwap {
     use starknet::{SyscallResultTrait, get_tx_info};
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
-    use super::{
-        ContractAddress, DCAOrder, EscrowData, EscrowExecution, ExecPayload, FieldTrait,
-        IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher,
-        IAtomiqEscrowDispatcherTrait, IMockWBTCDispatcher, IMockWBTCDispatcherTrait,
-        IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait,
-        Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address,
-        get_contract_address,
-    };
+    use super::{ContractAddress, DCAOrder, EscrowData, EscrowDataFull, ExecPayload, FieldTrait, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher, IAtomiqEscrowDispatcherTrait, IAtomiqEscrowStorageDispatcher, IAtomiqEscrowStorageDispatcherTrait, IMockWBTCDispatcherTrait, IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait, Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address, get_contract_address};
 
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
@@ -348,10 +370,15 @@ mod PrivateSwap {
     const ESCROW_KEY_MULTIPLIER: u256 = 1_000_000;
 
     // 5% tolerance window for the keeper-supplied strk_amount in execute_dca.
-    // The contract recomputes the expected STRK value of usdc_per_interval at
-    // the current oracle price and rejects any strk_amount that falls outside
-    // [expected * 95/100, expected * 105/100].
-    const STRK_TOLERANCE_BPS: u256 = 500; // 5% = 500 bps
+    const STRK_TOLERANCE_BPS: u256 = 500;
+
+    // Atomiq escrow state values (from SDK):
+    //   1 = COMMITED     — in flight
+    //   2 = SOFT_CLAIMED — payment seen off-chain, not yet claimed on-chain
+    //   3 = CLAIMED      — LP claimed, BTC delivered
+    //   4 = REFUNDABLE   — LP failed, offerer can refund
+    const ESCROW_STATE_CLAIMED: u8 = 3;
+    const ESCROW_STATE_REFUNDABLE: u8 = 4;
 
     // -------------------------------------------------------
     // Errors
@@ -405,7 +432,7 @@ mod PrivateSwap {
         pub const DCA_STRK_FEE_ALLOWANCE: felt252 = 'insufficient STRK fee allowance';
         pub const DCA_INTERVAL_PENDING: felt252 = 'prior escrow still pending';
         pub const DCA_NO_PENDING_ESCROW: felt252 = 'no pending escrow for order';
-        pub const DCA_ESCROW_NOT_EXPIRED: felt252 = 'escrow expiry not reached yet';
+        pub const DCA_ESCROW_NOT_SETTLED: felt252 = 'escrow not yet settled';
         pub const DCA_STRK_AMOUNT_OUT_OF_RANGE: felt252 = 'strk amount out of 5% tolerance';
         pub const NOT_OWNER: felt252 = 'caller is not the owner';
         pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
@@ -466,6 +493,7 @@ mod PrivateSwap {
         DCAExecuted: DCAExecuted,
         DCACancelled: DCACancelled,
         DCAIntervalRefunded: DCAIntervalRefunded,
+        DCAIntervalClaimed: DCAIntervalClaimed,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -600,12 +628,23 @@ mod PrivateSwap {
         strk_fee_refunded: u256,
     }
 
+    // Emitted when the LP failed to deliver BTC and STRK was refunded.
+    // The interval counter is rolled back so the keeper retries.
     #[derive(Drop, starknet::Event)]
     struct DCAIntervalRefunded {
         #[key]
         order_id: u256,
         interval_index: u32,
         strk_returned: u256,
+    }
+
+    // Emitted when the LP successfully claimed (BTC was delivered).
+    // The interval counter is kept and the next interval is unlocked.
+    #[derive(Drop, starknet::Event)]
+    struct DCAIntervalClaimed {
+        #[key]
+        order_id: u256,
+        interval_index: u32,
     }
 
     // -------------------------------------------------------
@@ -1038,13 +1077,10 @@ mod PrivateSwap {
 
             // Validate strk_amount is within 5% of the live oracle value for
             // usdc_per_interval. This prevents the keeper from committing a
-            // wildly wrong STRK amount to Atomiq (e.g. due to a stale quote or
-            // manipulation between checker() and execute_dca()).
+            // wildly wrong STRK amount to Atomiq.
             //
             // expected = usdc_per_interval * STRK_PRECISION * 10^strk_dec
             //            / (strk_usd * USDC_PRECISION)
-            //
-            // (BTC oracle cancels out — same formula as checker().)
             let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
             let expected_strk: u256 = order.usdc_per_interval
                 * STRK_PRECISION
@@ -1119,6 +1155,24 @@ mod PrivateSwap {
 
         // ---------------------------------------------------
         // REFUND DCA INTERVAL
+        //
+        // Callable by anyone once an Atomiq escrow has settled.
+        //
+        // Queries IAtomiqEscrowStorage::get_state to determine the outcome:
+        //
+        //   state == 3 (CLAIMED):
+        //     The LP claimed STRK — BTC was delivered to the user.
+        //     Clear the pending flag so the next interval can execute.
+        //     No rollback of executed_intervals.
+        //
+        //   state == 4 (REFUNDABLE):
+        //     The LP failed to deliver BTC.
+        //     Roll back executed_intervals and last_execution so the keeper
+        //     retries this interval automatically. Then call Atomiq refund
+        //     to reclaim the STRK back to this contract.
+        //
+        //   state == 1 (COMMITED) or 2 (SOFT_CLAIMED):
+        //     Still in flight — reverts with DCA_ESCROW_NOT_SETTLED.
         // ---------------------------------------------------
         fn refund_dca_interval(ref self: ContractState, order_id: u256) {
             assert(self.dca_interval_needs_refund.read(order_id), Errors::DCA_NO_PENDING_ESCROW);
@@ -1127,10 +1181,36 @@ mod PrivateSwap {
             let escrow_key: u256 = order_id * ESCROW_KEY_MULTIPLIER + interval_index.into();
             let escrow = self.dca_pending_escrows.read(escrow_key);
 
-            let can_refund = IAtomiqEscrowRefundDispatcher {
-                contract_address: escrow.refund_handler,
+            // Query the Atomiq escrow contract for the current state of this escrow.
+            // We always initialize with success_action = None.
+            let escrow_state = IAtomiqEscrowStorageDispatcher {
+                contract_address: ATOMIQ_ESCROW.try_into().unwrap(),
             }
-                .refund(escrow.refund_data, array![]);
+                .get_state(
+                    EscrowDataFull {
+                        offerer: escrow.offerer,
+                        claimer: escrow.claimer,
+                        token: escrow.token,
+                        refund_handler: escrow.refund_handler,
+                        claim_handler: escrow.claim_handler,
+                        flags: escrow.flags,
+                        claim_data: escrow.claim_data,
+                        refund_data: escrow.refund_data,
+                        amount: escrow.amount,
+                        fee_token: escrow.fee_token,
+                        security_deposit: escrow.security_deposit,
+                        claimer_bounty: escrow.claimer_bounty,
+                        success_action: Option::None,
+                    },
+                );
+
+            // Escrow must be settled (claimed or refundable) before we act.
+            // States 1 (COMMITED) and 2 (SOFT_CLAIMED) mean still in flight.
+            assert(
+                escrow_state.state == ESCROW_STATE_CLAIMED
+                    || escrow_state.state == ESCROW_STATE_REFUNDABLE,
+                Errors::DCA_ESCROW_NOT_SETTLED,
+            );
 
             let zeroed_escrow = EscrowData {
                 offerer: ZERO_ADDRESS,
@@ -1147,22 +1227,18 @@ mod PrivateSwap {
                 claimer_bounty: 0,
             };
 
-            if !can_refund {
-                // LP already claimed — BTC was delivered successfully.
-                // Just unlock the next interval without rolling back state.
-                self.dca_interval_needs_refund.write(order_id, false);
-                self.dca_pending_interval_index.write(order_id, 0);
-                self.dca_pending_escrows.write(escrow_key, zeroed_escrow);
-                return;
-            }
-
-            // LP did not release BTC — escrow has expired without a claim.
-            // Roll back the interval so the keeper retries it.
-            let strk_returned = escrow.amount;
-
             self.dca_interval_needs_refund.write(order_id, false);
             self.dca_pending_interval_index.write(order_id, 0);
             self.dca_pending_escrows.write(escrow_key, zeroed_escrow);
+
+            if escrow_state.state == ESCROW_STATE_CLAIMED {
+                // LP claimed — BTC was delivered. Interval stands, just unlock.
+                self.emit(DCAIntervalClaimed { order_id, interval_index });
+                return;
+            }
+
+            // REFUNDABLE — LP failed. Roll back interval so keeper retries.
+            let strk_returned = escrow.amount;
 
             let mut order = self.dca_orders.read(order_id);
             order.executed_intervals -= 1;
@@ -1174,7 +1250,7 @@ mod PrivateSwap {
 
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
                 .refund(
-                    EscrowData {
+                    EscrowDataFull {
                         offerer: escrow.offerer,
                         claimer: escrow.claimer,
                         token: escrow.token,
@@ -1187,6 +1263,7 @@ mod PrivateSwap {
                         fee_token: escrow.fee_token,
                         security_deposit: escrow.security_deposit,
                         claimer_bounty: escrow.claimer_bounty,
+                        success_action: Option::None,
                     },
                     array![],
                 );
@@ -1239,23 +1316,14 @@ mod PrivateSwap {
         //
         // Returns (can_exec, payload) where payload.strk_amount is the live
         // STRK equivalent of the order's usdc_per_interval at the current
-        // Pragma oracle price. The keeper reads this field directly and passes
-        // it to the Atomiq SDK as the exactIn amount — no off-chain math needed.
+        // Pragma oracle price.
         //
-        // Derivation — note BTC oracle cancels out entirely:
+        // Derivation — BTC oracle cancels out entirely:
+        //   strk = usdc_per_interval * STRK_PRECISION * 10^strk_dec
+        //          / (strk_usd * USDC_PRECISION)
         //
-        //   wbtc  = usdc_per_interval * WBTC_PRECISION * 10^btc_dec
-        //           / (btc_usd * USDC_PRECISION)
-        //
-        //   strk  = wbtc * btc_strk_rate / WBTC_PRECISION
-        //         = wbtc * (btc_usd * 10^strk_dec * STRK_PRECISION)
-        //                / (strk_usd * 10^btc_dec * WBTC_PRECISION)
-        //
-        //   strk  = usdc_per_interval * STRK_PRECISION * 10^strk_dec
-        //           / (strk_usd * USDC_PRECISION)
-        //
-        // strk_amount is 0 when can_exec is false — oracle call is skipped to
-        // avoid reverting on a stale feed when the order is simply not due yet.
+        // strk_amount is 0 when can_exec is false — oracle call skipped to
+        // avoid reverting on a stale feed when the order is not due.
         // ---------------------------------------------------
         fn checker(self: @ContractState, order_id: u256) -> (bool, ExecPayload) {
             let order = self.dca_orders.read(order_id);
@@ -1266,12 +1334,9 @@ mod PrivateSwap {
             let can_exec = !pending_refund
                 && order.is_active
                 && order.executed_intervals < order.total_intervals
-                && now >= order.last_execution
-                + order.interval_seconds
-                    && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
+                && now >= order.last_execution + order.interval_seconds
+                && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
 
-            // Only hit the oracle when we actually need the STRK amount.
-            // Avoids reverting on a stale feed for orders that are not due.
             let strk_amount: u256 = if can_exec {
                 let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
                 order.usdc_per_interval
@@ -1480,23 +1545,27 @@ mod PrivateSwap {
 
             strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), amount);
 
-            let escrow = EscrowData {
-                offerer: this,
-                claimer: ATOMIQ_LP.try_into().unwrap(),
-                token: REAL_STRK_ADDRESS.try_into().unwrap(),
-                refund_handler: ATOMIQ_REFUND_HANDLER.try_into().unwrap(),
-                claim_handler: ATOMIQ_CLAIM_HANDLER.try_into().unwrap(),
-                flags,
-                claim_data: payment_hash,
-                refund_data: expiry.into(),
-                amount,
-                fee_token: REAL_STRK_ADDRESS.try_into().unwrap(),
-                security_deposit: 0,
-                claimer_bounty: 0,
-            };
-
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
-                .initialize(escrow, signature, expiry, array![].span());
+                .initialize(
+                    EscrowDataFull {
+                        offerer: this,
+                        claimer: ATOMIQ_LP.try_into().unwrap(),
+                        token: REAL_STRK_ADDRESS.try_into().unwrap(),
+                        refund_handler: ATOMIQ_REFUND_HANDLER.try_into().unwrap(),
+                        claim_handler: ATOMIQ_CLAIM_HANDLER.try_into().unwrap(),
+                        flags,
+                        claim_data: payment_hash,
+                        refund_data: expiry.into(),
+                        amount,
+                        fee_token: REAL_STRK_ADDRESS.try_into().unwrap(),
+                        security_deposit: 0,
+                        claimer_bounty: 0,
+                        success_action: Option::None,
+                    },
+                    signature,
+                    expiry,
+                    array![].span(),
+                );
         }
 
         fn verify_proof_and_consume(
@@ -1555,15 +1624,6 @@ mod PrivateSwap {
                 * WBTC_PRECISION
                 * self.pow10(btc_dec.into())
                 / (btc_usd.into() * USDC_PRECISION)
-        }
-
-        fn _acquire_wbtc(
-            ref self: ContractState,
-            recipient: ContractAddress,
-            usdc_spent: u256,
-            wbtc_amount: u256,
-        ) {
-            IMockWBTCDispatcher { contract_address: self.wBTC.read() }.mint(recipient, wbtc_amount);
         }
 
         fn pow10(self: @ContractState, n: u256) -> u256 {

@@ -361,6 +361,7 @@ async function main() {
     console.log("❌ Swap failed or timed out — refunding STRK...");
     try {
       const refundTxId = await swap.refund(starknetSigner);
+      swap.getState();
       console.log(`✅ Refund successful!`);
       console.log(`   Tx ID:    ${refundTxId}`);
       console.log(

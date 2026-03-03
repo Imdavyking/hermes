@@ -10,6 +10,7 @@ import { CallData, uint256, type Call } from "starknet";
 import { FaSpinner, FaBitcoin, FaSync, FaChevronDown } from "react-icons/fa";
 import { RiLoopLeftLine, RiCloseLine, RiAddLine } from "react-icons/ri";
 import { useQuery } from "@apollo/client";
+import { connectXverse } from "../../lib/xverse";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { btnPrimary, btnGhost, inputStyle } from "./shared";
@@ -24,19 +25,19 @@ import {
 interface DcaOrder {
   orderId: string;
   owner: string;
-  usdcPerInterval: string; // decimal string, USDC 6-dec
+  usdcPerInterval: string;
   intervalSeconds: number;
   totalIntervals: number;
   totalUsdcDeposited: string;
-  executedIntervals: number; // post-increment count from contract
+  executedIntervals: number;
   isActive: boolean;
-  lastExecution: number; // unix ts; next due = lastExecution + intervalSeconds
+  lastExecution: number;
   createdTxHash: string;
   lastExecutedAtBlock?: number;
 }
 
 interface DcaExecution {
-  executedIntervals: number; // 1-based
+  executedIntervals: number;
   usdcSpent: string;
   wbtcReceived: string;
   keeper: string;
@@ -61,7 +62,6 @@ const fmtStrk = (raw: bigint | number) =>
     maximumFractionDigits: 4,
   }) + " STRK";
 
-// BTC price comes from get_btc_usd_price() which returns (u128 price, u32 decimals).
 const fmtBtcPrice = (price: number, decimals: number) =>
   "$" +
   (price / Math.pow(10, decimals)).toLocaleString(undefined, {
@@ -136,6 +136,8 @@ export default function DcaTab() {
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
 
   // ── Form ──────────────────────────────────────────────────────────────────
+  const [btcDestination, setBtcDestination] = useState("");
+  const [connectingXverse, setConnectingXverse] = useState(false);
   const [usdcAmount, setUsdcAmount] = useState("");
   const [intervalHours, setIntervalHours] = useState(24);
   const [customHours, setCustomHours] = useState("");
@@ -228,20 +230,18 @@ export default function DcaTab() {
   const btcDecimals = btcPriceData ? Number((btcPriceData as any)[1]) : 8;
   const btcUsd = btcPrice ? btcPrice / Math.pow(10, btcDecimals) : null;
 
-  // ── Keeper fee — keeper_fee_strk() returns u256 (18-dec STRK) ─────────────
-  // Read once on mount; this is a contract constant so no polling needed.
+  // ── Keeper fee ────────────────────────────────────────────────────────────
   const { data: keeperFeeData } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
     functionName: "keeper_fee_strk",
     args: [],
   });
-  // keeper_fee_strk returns a u256 {low, high}; extract as bigint
   const keeperFeePerExec: bigint = keeperFeeData
     ? BigInt((keeperFeeData as any).toString())
-    : BigInt(500_000_000_000_000_000); // fallback: 0.5 STRK
+    : BigInt(500_000_000_000_000_000);
 
-  // ── STRK token address ────────────────────────────────────────────────────
+  // ── STRK token address + balance ──────────────────────────────────────────
   const { data: strkAddressRaw } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -252,7 +252,6 @@ export default function DcaTab() {
     ? (`0x${BigInt(strkAddressRaw.toString()).toString(16)}` as `0x${string}`)
     : undefined;
 
-  // ── STRK balance ──────────────────────────────────────────────────────────
   const { data: strkBalanceData } = useReadContract({
     abi: ERC20_BALANCE_ABI,
     address: strkAddr,
@@ -316,8 +315,6 @@ export default function DcaTab() {
   const effHours = customHours ? Number(customHours) : intervalHours;
   const effExecs = customExec ? Number(customExec) : numExecs;
   const totalUsdc = usdcAmount ? Number(usdcAmount) * effExecs : null;
-
-  // Total STRK keeper fee the user must pre-fund
   const totalStrkFee: bigint = keeperFeePerExec * BigInt(effExecs);
 
   const insufficientUsdcBalance =
@@ -327,30 +324,45 @@ export default function DcaTab() {
   const insufficientBalance =
     insufficientUsdcBalance || insufficientStrkBalance;
 
-  // Reset approve gate whenever anything that affects the approval amount changes
+  // ── Xverse ────────────────────────────────────────────────────────────────
+  const handleConnectXverse = async () => {
+    setConnectingXverse(true);
+    try {
+      const addr = await connectXverse();
+      setBtcDestination(addr);
+      setApproveOk(false);
+      toast.success(`Bitcoin address: ${addr.slice(0, 8)}…${addr.slice(-6)}`);
+    } catch (err: any) {
+      toast.error(err?.message ?? "Xverse connection failed");
+    } finally {
+      setConnectingXverse(false);
+    }
+  };
+
+  const handleBtcDestinationChange = (v: string) => {
+    setBtcDestination(v);
+    setApproveOk(false);
+  };
+
+  // ── Form change helpers ───────────────────────────────────────────────────
   const handleAmountChange = (v: string) => {
     setUsdcAmount(v);
     setApproveOk(false);
   };
+
   const handleExecChange = (n: number, custom = "") => {
     setNumExecs(n);
     setCustomExec(custom);
     setApproveOk(false);
   };
 
-  // ── Step 1: Approve USDC + STRK in a single multicall ─────────────────────
-  //
-  // The contract now requires two pull transfers in create_dca_order():
-  //   1. USDC: usdc_per_interval * total_intervals  (swap budget)
-  //   2. STRK: KEEPER_FEE_STRK * total_intervals    (keeper fee reserve)
-  //
-  // We batch both approve calls into one wallet signature for UX simplicity.
-  // Existing allowances are checked first — if both are already sufficient
-  // we skip the tx entirely.
+  // ── Step 1: Approve USDC + STRK ───────────────────────────────────────────
   const handleApprove = async () => {
     if (!account || !address) return toast.error("Connect wallet first.");
     if (!usdcAddressRaw) return toast.error("Could not read USDC address.");
     if (!strkAddr) return toast.error("Could not read STRK address.");
+    if (!btcDestination)
+      return toast.error("Connect Xverse or enter a Bitcoin address first.");
     if (!usdcAmount || Number(usdcAmount) < 1)
       return toast.error("Minimum 1 USDC.");
     if (insufficientUsdcBalance)
@@ -374,7 +386,6 @@ export default function DcaTab() {
       const usdcU256 = uint256.bnToUint256(totalUsdcRaw);
       const strkU256 = uint256.bnToUint256(totalStrkFee);
 
-      // Check existing allowances — skip approve tx if both are already sufficient
       const [usdcAlwRes, strkAlwRes] = await Promise.all([
         account.callContract({
           contractAddress: usdcAddrHex,
@@ -411,7 +422,6 @@ export default function DcaTab() {
         return;
       }
 
-      // Build approve calls — only include the ones that are needed
       const calls: Call[] = [];
       if (needsUsdcApprove) {
         calls.push({
@@ -465,6 +475,8 @@ export default function DcaTab() {
   const handleCreate = async () => {
     if (!account || !contract || !address)
       return toast.error("Connect wallet.");
+    if (!btcDestination)
+      return toast.error("Connect Xverse or enter a Bitcoin address.");
     if (!usdcAmount || Number(usdcAmount) < 1)
       return toast.error("Minimum 1 USDC per execution.");
     if (effHours < 1 || effHours > 720)
@@ -480,7 +492,9 @@ export default function DcaTab() {
         BigInt(Math.round(Number(usdcAmount) * 1e6)),
       );
 
+      // Cairo signature: create_dca_order(btc_destination, usdc_per_interval, interval_hours, total_intervals)
       const populate = contract.populate("create_dca_order", [
+        btcDestination,
         usdcRaw,
         effHours,
         effExecs,
@@ -501,6 +515,7 @@ export default function DcaTab() {
         autoClose: 6000,
       });
 
+      setBtcDestination("");
       setUsdcAmount("");
       setCustomHours("");
       setCustomExec("");
@@ -595,6 +610,7 @@ export default function DcaTab() {
 
   const canApprove =
     !!address &&
+    !!btcDestination &&
     !!usdcAmount &&
     Number(usdcAmount) >= 1 &&
     !approving &&
@@ -602,6 +618,7 @@ export default function DcaTab() {
 
   const canCreate =
     !!address &&
+    !!btcDestination &&
     !!usdcAmount &&
     Number(usdcAmount) >= 1 &&
     approveOk &&
@@ -625,7 +642,7 @@ export default function DcaTab() {
           Full USDC is deposited upfront along with a small STRK keeper fee
           reserve. A keeper calls{" "}
           <span style={{ color: "#ffc800" }}>execute_dca</span> each interval.
-          wBTC is delivered directly to your wallet every execution.
+          wBTC is delivered directly to your Bitcoin address every execution.
         </div>
       </div>
 
@@ -676,6 +693,64 @@ export default function DcaTab() {
       {/* ── Create form ─────────────────────────────────────────────────── */}
       <div style={section}>
         <div style={sectionLabel}>New DCA order</div>
+
+        {/* BTC destination */}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              marginBottom: "0.35rem",
+            }}
+          >
+            <div style={fieldLabel}>Bitcoin destination</div>
+            {btcDestination && (
+              <div style={{ fontSize: "0.6rem", color: "#22c55e" }}>
+                Connected ✓
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input
+              value={btcDestination}
+              onChange={(e) => handleBtcDestinationChange(e.target.value)}
+              placeholder="tb1… or connect Xverse"
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <button
+              onClick={handleConnectXverse}
+              disabled={connectingXverse}
+              style={{
+                ...btnGhost,
+                width: "auto",
+                padding: "0.5rem 0.9rem",
+                fontSize: "0.65rem",
+                whiteSpace: "nowrap",
+                opacity: connectingXverse ? 0.5 : 1,
+              }}
+            >
+              {connectingXverse ? (
+                <FaSpinner
+                  size={10}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+              ) : (
+                "₿ Xverse"
+              )}
+            </button>
+          </div>
+          <div
+            style={{
+              color: "#2a2a3a",
+              fontSize: "0.6rem",
+              marginTop: "0.25rem",
+            }}
+          >
+            wBTC is delivered here each execution. Connect Xverse or paste
+            manually.
+          </div>
+        </div>
 
         {/* USDC per execution */}
         <div>
@@ -838,6 +913,12 @@ export default function DcaTab() {
         {/* Summary */}
         {usdcAmount && Number(usdcAmount) >= 1 && (
           <div style={summaryBox}>
+            {btcDestination && (
+              <SummaryRow
+                label="BTC destination"
+                value={`${btcDestination.slice(0, 8)}…${btcDestination.slice(-6)}`}
+              />
+            )}
             <SummaryRow
               label="Per execution"
               value={`${fmtUsdc((Number(usdcAmount) * 1e6).toFixed(0))} → ~${wbtcPreviewSats?.toLocaleString() ?? "?"} sat`}
@@ -853,7 +934,6 @@ export default function DcaTab() {
               value={totalUsdc ? `$${totalUsdc.toFixed(2)}` : "—"}
               highlight
             />
-            {/* Keeper fee reserve — new field */}
             <SummaryRow
               label="Keeper fee reserve"
               value={fmtStrk(totalStrkFee)}
@@ -862,13 +942,11 @@ export default function DcaTab() {
             <div
               style={{ borderTop: "1px solid #1e1e2e", margin: "0.2rem 0" }}
             />
-            {/* Per-execution fee breakdown */}
             <SummaryRow
               label="Fee per execution"
               value={fmtStrk(keeperFeePerExec)}
             />
 
-            {/* Balance warnings */}
             {insufficientUsdcBalance && (
               <div style={warningText}>
                 ⚠ Insufficient USDC — you have $
@@ -893,9 +971,9 @@ export default function DcaTab() {
                 lineHeight: 1.7,
               }}
             >
-              wBTC is delivered to your wallet each execution. USDC + STRK fee
-              are both pulled upfront in step 1. Unspent amounts are refunded on
-              cancel.
+              wBTC is delivered to your Bitcoin address each execution. USDC +
+              STRK fee are both pulled upfront in step 1. Unspent amounts are
+              refunded on cancel.
             </div>
           </div>
         )}
@@ -1013,7 +1091,6 @@ export default function DcaTab() {
           const isReady = nextDueTs <= now;
           const progress =
             (order.executedIntervals / order.totalIntervals) * 100;
-          // Estimated STRK refund if cancelled now
           const strkRefundEst = keeperFeePerExec * BigInt(remaining);
 
           return (
@@ -1133,7 +1210,7 @@ export default function DcaTab() {
                       value={order.orderId.slice(0, 14) + "…"}
                     />
                     <DetailRow
-                      label="wBTC recipient"
+                      label="wBTC owner"
                       value={shortenAddr(order.owner)}
                     />
                     <DetailRow
@@ -1152,7 +1229,6 @@ export default function DcaTab() {
                       label="Total deposited"
                       value={fmtUsdc(order.totalUsdcDeposited)}
                     />
-                    {/* STRK fee reserve remaining */}
                     <DetailRow
                       label="STRK fee reserve left"
                       value={fmtStrk(strkRefundEst)}
@@ -1298,7 +1374,7 @@ export default function DcaTab() {
                     </div>
                   )}
 
-                  {/* Cancel — note both USDC + STRK are refunded */}
+                  {/* Cancel */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
