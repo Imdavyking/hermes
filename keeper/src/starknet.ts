@@ -83,13 +83,28 @@ interface ParsedAtomiqCalldata {
   signatureStart: number;
 }
 
-function parseAtomiqCalldata(calldata: string[]): ParsedAtomiqCalldata {
+export function parseAtomiqCalldata(calldata: string[]): any {
+  const sigLenIndex = 16;
+  const sigLen = parseInt(calldata[sigLenIndex], 10);
+  const signature = calldata.slice(sigLenIndex + 1, sigLenIndex + 1 + sigLen);
+
   return {
+    offerer: `0x${BigInt(calldata[0]).toString(16)}`,
+    claimer: `0x${BigInt(calldata[1]).toString(16)}`,
+    token: `0x${BigInt(calldata[2]).toString(16)}`,
+    refund_handler: `0x${BigInt(calldata[3]).toString(16)}`,
+    claim_handler: `0x${BigInt(calldata[4]).toString(16)}`,
     flags: calldata[5],
-    paymentHash: calldata[6],
-    expiry: calldata[7],
-    strkAmount: BigInt(calldata[8]),
-    signatureStart: 16,
+    claim_data: calldata[6],
+    refund_data: calldata[7],
+    amount: { low: calldata[8], high: calldata[9] },
+    fee_token: `0x${BigInt(calldata[10]).toString(16)}`,
+    security_deposit: { low: calldata[11], high: calldata[12] },
+    claimer_bounty: { low: calldata[13], high: calldata[14] },
+    success_action: calldata[15],
+    signature,
+    timeout: calldata[19],
+    extra_data: calldata[20],
   };
 }
 
