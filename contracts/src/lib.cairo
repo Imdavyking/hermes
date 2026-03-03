@@ -84,6 +84,10 @@ trait IAtomiqEscrow<TContractState> {
 trait IAtomiqEscrowRefund<TContractState> {
     fn refund(self: @TContractState, refund_data: felt252, witness: Array<felt252>) -> bool;
 }
+#[starknet::interface]
+trait IAtomiqEscrowClaim<TContractState> {
+    fn claim(self: @TContractState, claim_data: felt252, witness: Array<felt252>) -> bool;
+}
 
 // -------------------------------------------------------
 // Shared Data Types
