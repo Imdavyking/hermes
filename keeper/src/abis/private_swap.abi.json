@@ -75,6 +75,10 @@
       {
         "name": "calldata",
         "type": "core::array::Array::<core::felt252>"
+      },
+      {
+        "name": "strk_amount",
+        "type": "core::integer::u256"
       }
     ]
   },
@@ -209,6 +213,60 @@
       {
         "name": "is_active",
         "type": "core::bool"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "contracts::EscrowData",
+    "members": [
+      {
+        "name": "offerer",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "claimer",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "token",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "refund_handler",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "claim_handler",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "flags",
+        "type": "core::integer::u128"
+      },
+      {
+        "name": "claim_data",
+        "type": "core::felt252"
+      },
+      {
+        "name": "refund_data",
+        "type": "core::felt252"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "fee_token",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "security_deposit",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "claimer_bounty",
+        "type": "core::integer::u256"
       }
     ]
   },
@@ -421,6 +479,10 @@
         "name": "create_dca_order",
         "inputs": [
           {
+            "name": "btc_destination",
+            "type": "core::byte_array::ByteArray"
+          },
+          {
             "name": "usdc_per_interval",
             "type": "core::integer::u256"
           },
@@ -443,6 +505,38 @@
       {
         "type": "function",
         "name": "execute_dca",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "strk_amount",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "payment_hash",
+            "type": "core::felt252"
+          },
+          {
+            "name": "expiry",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "flags",
+            "type": "core::integer::u128"
+          },
+          {
+            "name": "signature",
+            "type": "core::array::Array::<core::felt252>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "refund_dca_interval",
         "inputs": [
           {
             "name": "order_id",
@@ -606,6 +700,22 @@
       },
       {
         "type": "function",
+        "name": "get_dca_btc_destination",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::byte_array::ByteArray"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "keeper_fee_strk",
         "inputs": [],
         "outputs": [
@@ -721,6 +831,54 @@
       },
       {
         "type": "function",
+        "name": "get_dca_pending_escrow",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "contracts::EscrowData"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "dca_interval_needs_refund",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "get_dca_pending_interval_index",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "set_wbtc",
         "inputs": [
           {
@@ -761,6 +919,30 @@
         "inputs": [
           {
             "name": "new_owner",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "add_keeper",
+        "inputs": [
+          {
+            "name": "keeper",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "remove_keeper",
+        "inputs": [
+          {
+            "name": "keeper",
             "type": "core::starknet::contract_address::ContractAddress"
           }
         ],
@@ -1172,6 +1354,28 @@
   },
   {
     "type": "event",
+    "name": "contracts::PrivateSwap::DCAIntervalRefunded",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "order_id",
+        "type": "core::integer::u256",
+        "kind": "key"
+      },
+      {
+        "name": "interval_index",
+        "type": "core::integer::u32",
+        "kind": "data"
+      },
+      {
+        "name": "strk_returned",
+        "type": "core::integer::u256",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "contracts::PrivateSwap::Event",
     "kind": "enum",
     "variants": [
@@ -1253,6 +1457,11 @@
       {
         "name": "DCACancelled",
         "type": "contracts::PrivateSwap::DCACancelled",
+        "kind": "nested"
+      },
+      {
+        "name": "DCAIntervalRefunded",
+        "type": "contracts::PrivateSwap::DCAIntervalRefunded",
         "kind": "nested"
       }
     ]
