@@ -497,6 +497,19 @@ mod PrivateSwap {
     }
 
     #[derive(Drop, starknet::Event)]
+struct DCAOrderCreated {
+    #[key]
+    order_id: u256,
+    owner: ContractAddress,
+    usdc_per_interval: u256,
+    interval_seconds: u64,
+    total_intervals: u32,
+    total_usdc_deposited: u256,
+    total_strk_fee_deposited: u256,
+    btc_destination: ByteArray, 
+}
+
+    #[derive(Drop, starknet::Event)]
     struct Deposit {
         #[key]
         commitment: u256,
@@ -1015,7 +1028,8 @@ mod PrivateSwap {
 
             let order_id = self.dca_order_count.read() + 1;
             self.dca_order_count.write(order_id);
-            self.dca_btc_destinations.write(order_id, btc_destination);
+            let btc_destination_for_event = btc_destination.clone();
+self.dca_btc_destinations.write(order_id, btc_destination);
 
             let interval_seconds: u64 = interval_hours * 3_600;
 
@@ -1031,6 +1045,7 @@ mod PrivateSwap {
                         total_intervals,
                         executed_intervals: 0,
                         is_active: true,
+                          btc_destination: btc_destination_for_event,
                     },
                 );
 
