@@ -29,6 +29,7 @@ interface DcaOrder {
   intervalSeconds: number;
   totalIntervals: number;
   totalUsdcDeposited: string;
+  btcDestination: string; // ← new
   executedIntervals: number;
   isActive: boolean;
   lastExecution: number;
@@ -100,7 +101,6 @@ const fmtDate = (ts: number) =>
 
 const toHexAddr = (raw: string) =>
   "0x" + BigInt(raw).toString(16).padStart(64, "0");
-
 const shortenAddr = (addr: string) => addr.slice(0, 8) + "…" + addr.slice(-6);
 
 // ── Presets ───────────────────────────────────────────────────────────────────
@@ -111,7 +111,6 @@ const HOUR_PRESETS = [
   { label: "1d", hours: 24 },
   { label: "1w", hours: 168 },
 ];
-
 const EXEC_PRESETS = [3, 6, 12, 24, 52];
 
 const ERC20_BALANCE_ABI = [
@@ -135,7 +134,6 @@ export default function DcaTab() {
   const { address, account } = useAccount();
   const { contract } = useContract({ abi, address: CONTRACT_ADDRESS });
 
-  // ── Form ──────────────────────────────────────────────────────────────────
   const [btcDestination, setBtcDestination] = useState("");
   const [connectingXverse, setConnectingXverse] = useState(false);
   const [usdcAmount, setUsdcAmount] = useState("");
@@ -147,8 +145,6 @@ export default function DcaTab() {
   const [approveOk, setApproveOk] = useState(false);
   const [creating, setCreating] = useState(false);
   const [minting, setMinting] = useState(false);
-
-  // ── List ──────────────────────────────────────────────────────────────────
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -174,6 +170,7 @@ export default function DcaTab() {
       intervalSeconds: Number(o.interval_seconds),
       totalIntervals: Number(o.total_intervals),
       totalUsdcDeposited: o.total_usdc_deposited,
+      btcDestination: o.btc_destination ?? "", // ← new
       executedIntervals: Number(o.executed_intervals),
       isActive: Boolean(o.is_active),
       lastExecution: Number(o.last_execution),
@@ -183,7 +180,6 @@ export default function DcaTab() {
         : undefined,
     }));
 
-  // ── Execution history ─────────────────────────────────────────────────────
   const { data: execData, loading: execLoading } = useQuery(
     GET_DCA_EXECUTIONS,
     {
@@ -203,7 +199,6 @@ export default function DcaTab() {
     executedTxHash: e.executed_tx_hash,
   }));
 
-  // ── Oracle price ──────────────────────────────────────────────────────────
   const { data: btcPriceData } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -230,7 +225,6 @@ export default function DcaTab() {
   const btcDecimals = btcPriceData ? Number((btcPriceData as any)[1]) : 8;
   const btcUsd = btcPrice ? btcPrice / Math.pow(10, btcDecimals) : null;
 
-  // ── Keeper fee ────────────────────────────────────────────────────────────
   const { data: keeperFeeData } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -241,7 +235,6 @@ export default function DcaTab() {
     ? BigInt((keeperFeeData as any).toString())
     : BigInt(500_000_000_000_000_000);
 
-  // ── STRK token address + balance ──────────────────────────────────────────
   const { data: strkAddressRaw } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -266,7 +259,6 @@ export default function DcaTab() {
       ? BigInt((strkBalanceData as any).toString())
       : BigInt(0);
 
-  // ── wBTC preview ──────────────────────────────────────────────────────────
   const usdcRawForPreview =
     usdcAmount && Number(usdcAmount) > 0
       ? BigInt(Math.round(Number(usdcAmount) * 1e6))
@@ -285,7 +277,6 @@ export default function DcaTab() {
     ? Number(toDecimal((wbtcPreviewData as any).toString()))
     : null;
 
-  // ── USDC token address + balance ──────────────────────────────────────────
   const { data: usdcAddressRaw } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
@@ -310,13 +301,11 @@ export default function DcaTab() {
       ? Number(BigInt((usdcBalanceData as any).toString())) / 1e6
       : null;
 
-  // ── Derived totals ────────────────────────────────────────────────────────
   const now = Math.floor(Date.now() / 1000);
   const effHours = customHours ? Number(customHours) : intervalHours;
   const effExecs = customExec ? Number(customExec) : numExecs;
   const totalUsdc = usdcAmount ? Number(usdcAmount) * effExecs : null;
   const totalStrkFee: bigint = keeperFeePerExec * BigInt(effExecs);
-
   const insufficientUsdcBalance =
     totalUsdc !== null && usdcBalance !== null && totalUsdc > usdcBalance;
   const insufficientStrkBalance =
@@ -324,7 +313,6 @@ export default function DcaTab() {
   const insufficientBalance =
     insufficientUsdcBalance || insufficientStrkBalance;
 
-  // ── Xverse ────────────────────────────────────────────────────────────────
   const handleConnectXverse = async () => {
     setConnectingXverse(true);
     try {
@@ -343,20 +331,16 @@ export default function DcaTab() {
     setBtcDestination(v);
     setApproveOk(false);
   };
-
-  // ── Form change helpers ───────────────────────────────────────────────────
   const handleAmountChange = (v: string) => {
     setUsdcAmount(v);
     setApproveOk(false);
   };
-
   const handleExecChange = (n: number, custom = "") => {
     setNumExecs(n);
     setCustomExec(custom);
     setApproveOk(false);
   };
 
-  // ── Step 1: Approve USDC + STRK ───────────────────────────────────────────
   const handleApprove = async () => {
     if (!account || !address) return toast.error("Connect wallet first.");
     if (!usdcAddressRaw) return toast.error("Could not read USDC address.");
@@ -373,19 +357,16 @@ export default function DcaTab() {
       return toast.error(
         `Insufficient STRK for keeper fee — need ${fmtStrk(totalStrkFee)}, have ${fmtStrk(strkBalance)}`,
       );
-
     const toastId = toast.loading("Approving USDC + STRK…");
     setApproving(true);
     try {
       const usdcAddrHex = "0x" + BigInt(usdcAddressRaw.toString()).toString(16);
       const strkAddrHex = "0x" + BigInt(strkAddr).toString(16);
-
       const totalUsdcRaw = BigInt(
         Math.round(Number(usdcAmount) * effExecs * 1e6),
       );
       const usdcU256 = uint256.bnToUint256(totalUsdcRaw);
       const strkU256 = uint256.bnToUint256(totalStrkFee);
-
       const [usdcAlwRes, strkAlwRes] = await Promise.all([
         account.callContract({
           contractAddress: usdcAddrHex,
@@ -398,7 +379,6 @@ export default function DcaTab() {
           calldata: CallData.compile([address, CONTRACT_ADDRESS]),
         }),
       ]);
-
       const existingUsdc = uint256.uint256ToBN({
         low: usdcAlwRes[0],
         high: usdcAlwRes[1],
@@ -407,10 +387,8 @@ export default function DcaTab() {
         low: strkAlwRes[0],
         high: strkAlwRes[1],
       });
-
       const needsUsdcApprove = existingUsdc < totalUsdcRaw;
       const needsStrkApprove = existingStrk < totalStrkFee;
-
       if (!needsUsdcApprove && !needsStrkApprove) {
         toast.update(toastId, {
           render: "Allowances already sufficient.",
@@ -421,33 +399,27 @@ export default function DcaTab() {
         setApproveOk(true);
         return;
       }
-
       const calls: Call[] = [];
-      if (needsUsdcApprove) {
+      if (needsUsdcApprove)
         calls.push({
           contractAddress: usdcAddrHex,
           entrypoint: "approve",
           calldata: CallData.compile([CONTRACT_ADDRESS, usdcU256]),
         });
-      }
-      if (needsStrkApprove) {
+      if (needsStrkApprove)
         calls.push({
           contractAddress: strkAddrHex,
           entrypoint: "approve",
           calldata: CallData.compile([CONTRACT_ADDRESS, strkU256]),
         });
-      }
-
       const tx = await account.execute(calls);
       await account.waitForTransaction(tx.transaction_hash);
-
       const approvedLabel = [
         needsUsdcApprove && `$${(Number(totalUsdcRaw) / 1e6).toFixed(2)} USDC`,
         needsStrkApprove && fmtStrk(totalStrkFee),
       ]
         .filter(Boolean)
         .join(" + ");
-
       toast.update(toastId, {
         render: `Approved ${approvedLabel}`,
         isLoading: false,
@@ -471,7 +443,6 @@ export default function DcaTab() {
     }
   };
 
-  // ── Step 2: create_dca_order ───────────────────────────────────────────────
   const handleCreate = async () => {
     if (!account || !contract || !address)
       return toast.error("Connect wallet.");
@@ -484,27 +455,22 @@ export default function DcaTab() {
     if (effExecs < 1 || effExecs > 1000)
       return toast.error("Executions must be 1-1000.");
     if (!approveOk) return toast.error("Complete step 1 first.");
-
     const toastId = toast.loading("Creating DCA order…");
     setCreating(true);
     try {
       const usdcRaw = uint256.bnToUint256(
         BigInt(Math.round(Number(usdcAmount) * 1e6)),
       );
-
-      // Cairo signature: create_dca_order(btc_destination, usdc_per_interval, interval_hours, total_intervals)
       const populate = contract.populate("create_dca_order", [
         btcDestination,
         usdcRaw,
         effHours,
         effExecs,
       ]);
-
       await account.estimateInvokeFee([populate]);
       const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
-
       const satsLabel = wbtcPreviewSats
         ? wbtcPreviewSats.toLocaleString() + " sat"
         : "wBTC";
@@ -514,7 +480,6 @@ export default function DcaTab() {
         type: "success",
         autoClose: 6000,
       });
-
       setBtcDestination("");
       setUsdcAmount("");
       setCustomHours("");
@@ -537,7 +502,6 @@ export default function DcaTab() {
     }
   };
 
-  // ── cancel_dca ────────────────────────────────────────────────────────────
   const handleCancel = async (orderId: string) => {
     if (!account || !contract) return;
     setCancelling(orderId);
@@ -596,9 +560,8 @@ export default function DcaTab() {
         autoClose: 4000,
       });
     } catch (err: any) {
-      const msg = err?.message || err?.toString() || "Mint failed";
       toast.update(toastId, {
-        render: msg,
+        render: err?.message || "Mint failed",
         isLoading: false,
         type: "error",
         autoClose: 5000,
@@ -615,7 +578,6 @@ export default function DcaTab() {
     Number(usdcAmount) >= 1 &&
     !approving &&
     !insufficientBalance;
-
   const canCreate =
     !!address &&
     !!btcDestination &&
@@ -658,34 +620,31 @@ export default function DcaTab() {
           >
             Mint test USDC to fund your DCA orders (Sepolia only)
           </div>
-          <div style={{ display: "flex", gap: "0.6rem", alignItems: "center" }}>
-            <button
-              onClick={handleMintTestUsdc}
-              disabled={!isTestnet}
-              style={{
-                ...btnPrimary(isTestnet),
-                minWidth: "120px",
-                padding: "0.5rem 1rem",
-              }}
-            >
-              {minting ? (
-                <>
-                  <FaSpinner
-                    size={12}
-                    style={{ animation: "spin 1s linear infinite" }}
-                  />{" "}
-                  Minting…
-                </>
-              ) : (
-                "Mint Test USDC"
-              )}
-            </button>
-          </div>
+          <button
+            onClick={handleMintTestUsdc}
+            disabled={!isTestnet}
+            style={{
+              ...btnPrimary(isTestnet),
+              minWidth: "120px",
+              padding: "0.5rem 1rem",
+            }}
+          >
+            {minting ? (
+              <>
+                <FaSpinner
+                  size={12}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />{" "}
+                Minting…
+              </>
+            ) : (
+              "Mint Test USDC"
+            )}
+          </button>
           <div
             style={{ fontSize: "0.62rem", color: "#555", marginTop: "0.5rem" }}
           >
-            Tokens are minted directly to your wallet. Use them to approve and
-            create DCA orders.
+            Tokens are minted directly to your wallet.
           </div>
         </div>
       )}
@@ -946,7 +905,6 @@ export default function DcaTab() {
               label="Fee per execution"
               value={fmtStrk(keeperFeePerExec)}
             />
-
             {insufficientUsdcBalance && (
               <div style={warningText}>
                 ⚠ Insufficient USDC — you have $
@@ -962,7 +920,6 @@ export default function DcaTab() {
                 {fmtStrk(strkBalance)}, need {fmtStrk(totalStrkFee)}
               </div>
             )}
-
             <div
               style={{
                 fontSize: "0.6rem",
@@ -972,8 +929,7 @@ export default function DcaTab() {
               }}
             >
               wBTC is delivered to your Bitcoin address each execution. USDC +
-              STRK fee are both pulled upfront in step 1. Unspent amounts are
-              refunded on cancel.
+              STRK fee are both pulled upfront in step 1.
             </div>
           </div>
         )}
@@ -1113,7 +1069,6 @@ export default function DcaTab() {
                   justifyContent: "space-between",
                   alignItems: "center",
                   cursor: "pointer",
-                  transition: "background 0.15s",
                 }}
               >
                 <div
@@ -1213,6 +1168,12 @@ export default function DcaTab() {
                       label="wBTC owner"
                       value={shortenAddr(order.owner)}
                     />
+                    {order.btcDestination && (
+                      <DetailRow
+                        label="BTC destination"
+                        value={`${order.btcDestination.slice(0, 8)}…${order.btcDestination.slice(-6)}`}
+                      />
+                    )}
                     <DetailRow
                       label="Interval"
                       value={fmtInterval(order.intervalSeconds)}
@@ -1246,7 +1207,6 @@ export default function DcaTab() {
                     )}
                   </div>
 
-                  {/* Execution history */}
                   {execLoading && expandedId === order.orderId && (
                     <div
                       style={{
@@ -1331,7 +1291,6 @@ export default function DcaTab() {
                         ))}
                       </div>
 
-                      {/* Avg cost basis */}
                       {execHistory.length > 1 &&
                         (() => {
                           const totalUsdcRaw = execHistory.reduce(
@@ -1394,7 +1353,6 @@ export default function DcaTab() {
                       alignItems: "center",
                       justifyContent: "center",
                       gap: "0.4rem",
-                      transition: "all 0.15s",
                       width: "100%",
                     }}
                   >
@@ -1504,8 +1462,6 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
-// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function toDecimal(value: string | bigint | number): string {
   return BigInt(value).toString();

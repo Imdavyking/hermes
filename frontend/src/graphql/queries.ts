@@ -1,7 +1,5 @@
 import { gql } from "@apollo/client";
 
-// ── Deposits (for Merkle tree reconstruction) ────────────────────────────────
-
 export const GET_ALL_DEPOSITS = gql`
   query GetAllDeposits($first: Int!, $skip: Int!) {
     deposits(
@@ -16,8 +14,6 @@ export const GET_ALL_DEPOSITS = gql`
     }
   }
 `;
-
-// ── Open wBTC orders (for FillOrderPanel) ────────────────────────────────────
 
 export const GET_OPEN_WBTC_ORDERS = gql`
   query GetOpenWbtcOrders {
@@ -35,9 +31,6 @@ export const GET_OPEN_WBTC_ORDERS = gql`
     }
   }
 `;
-
-// ── Claimable STRK orders (Alice filled → Bob calls withdraw_strk) ───────────
-// strk_buyer = myAddr, not withdrawn, not refunded, not expired
 
 export const GET_CLAIMABLE_STRK_ORDERS = gql`
   query GetClaimableStrkOrders($buyer: String!, $now: Int!) {
@@ -58,12 +51,6 @@ export const GET_CLAIMABLE_STRK_ORDERS = gql`
   }
 `;
 
-// ── Claimable wBTC orders (secret revealed → Bob calls withdraw_wbtc) ────────
-// wbtc_buyer = myAddr, is_filled=true, not withdrawn
-// NOTE: secret-revealed check still requires a contract call because the
-//       `secret` field is not indexed. We fetch candidates here and filter
-//       on-chain in the hook.
-
 export const GET_FILLED_WBTC_ORDERS_FOR_BUYER = gql`
   query GetFilledWbtcOrdersForBuyer($buyer: String!) {
     wbtcorders(
@@ -81,8 +68,6 @@ export const GET_FILLED_WBTC_ORDERS_FOR_BUYER = gql`
     }
   }
 `;
-
-// ── Refundable wBTC orders (Alice, expired + never filled) ───────────────────
 
 export const GET_REFUNDABLE_WBTC_ORDERS = gql`
   query GetRefundableWbtcOrders($seller: String!, $now: Int!) {
@@ -102,8 +87,6 @@ export const GET_REFUNDABLE_WBTC_ORDERS = gql`
   }
 `;
 
-// ── Refundable STRK orders (Bob, expired + Alice never revealed) ─────────────
-
 export const GET_REFUNDABLE_STRK_ORDERS = gql`
   query GetRefundableStrkOrders($seller: String!, $now: Int!) {
     strkorders(
@@ -121,10 +104,6 @@ export const GET_REFUNDABLE_STRK_ORDERS = gql`
   }
 `;
 
-// ── All active DCA orders for an owner ───────────────────────────────────────
-// "Active" = not cancelled + executions_left > 0
-// Used in DcaTab to show live orders.
-
 export const GET_ACTIVE_DCA_ORDERS = gql`
   query GetActiveDcaOrders($owner: String!) {
     dcaorders(
@@ -138,6 +117,7 @@ export const GET_ACTIVE_DCA_ORDERS = gql`
       interval_seconds
       total_intervals
       total_usdc_deposited
+      btc_destination
       executed_intervals
       is_active
       last_execution
@@ -148,8 +128,6 @@ export const GET_ACTIVE_DCA_ORDERS = gql`
   }
 `;
 
-// ── All DCA orders (incl. completed + cancelled) for history view ─────────────
-
 export const GET_ALL_DCA_ORDERS = gql`
   query GetAllDcaOrders($owner: String!) {
     dcaorders(
@@ -157,11 +135,12 @@ export const GET_ALL_DCA_ORDERS = gql`
       orderBy: created_at_block
       orderDirection: desc
     ) {
-      id # this is the order_id (as string)
+      id
       owner
       usdc_per_interval
       interval_seconds
       total_intervals
+      btc_destination
       executed_intervals
       is_active
       last_execution
@@ -174,19 +153,16 @@ export const GET_ALL_DCA_ORDERS = gql`
   }
 `;
 
-// ── Execution history for a single DCA order ─────────────────────────────────
-// Used to render the cost-basis chart / execution log.
-
 export const GET_DCA_EXECUTIONS = gql`
   query GetDcaExecutions($orderId: String!) {
     dcaexecutions(
       where: { order_id: $orderId }
-      orderBy: executed_intervals # using the real field
+      orderBy: executed_intervals
       orderDirection: asc
     ) {
       id
       order_id
-      executed_intervals # 1, 2, 3… (post-increment)
+      executed_intervals
       usdc_spent
       wbtc_received
       keeper
@@ -197,8 +173,6 @@ export const GET_DCA_EXECUTIONS = gql`
   }
 `;
 
-// ── Single DCA order (for detail panel / cancel confirmation) ─────────────────
-
 export const GET_DCA_ORDER = gql`
   query GetDcaOrder($orderId: String!) {
     dcaorder(id: $orderId) {
@@ -207,6 +181,7 @@ export const GET_DCA_ORDER = gql`
       usdc_per_interval
       interval_seconds
       total_intervals
+      btc_destination
       executed_intervals
       is_active
       last_execution

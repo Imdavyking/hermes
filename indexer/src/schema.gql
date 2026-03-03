@@ -1,41 +1,38 @@
 scalar BigDecimalU256
 
 type Deposit {
-  id: ID! # commitment (u256)
+  id: ID!
   commitment: BigDecimalU256!
-  leaf_index: Int! # u32
-  timestamp: Int! # u64
+  leaf_index: Int!
+  timestamp: Int!
   block_number: Int!
   tx_hash: String!
 }
 
 type Withdrawal {
-  id: ID! # nullifier_hash (u256)
-  recipient: String! # ContractAddress
+  id: ID!
+  recipient: String!
   nullifier_hash: BigDecimalU256!
   block_number: Int!
   tx_hash: String!
 }
 
 type WbtcOrder {
-  id: ID! # order_id (u256)
-  wbtc_seller: String! # ContractAddress
-  alice_strk_destination: String! # ContractAddress
-  wbtc_amount: BigDecimalU256! # u256
-  quoted_strk_amount: BigDecimalU256! # u256
-  hashlock: String! # felt252
-  expiry: Int! # u64
-  rate_expiry: Int! # u64
-  # Set when filled
-  wbtc_buyer: String # ContractAddress
-  strk_order_id: String # paired StrkOrder id
-  strk_amount_locked: BigDecimalU256 # u256
-  bob_expiry: Int # u64
-  # Status
+  id: ID!
+  wbtc_seller: String!
+  alice_strk_destination: String!
+  wbtc_amount: BigDecimalU256!
+  quoted_strk_amount: BigDecimalU256!
+  hashlock: String!
+  expiry: Int!
+  rate_expiry: Int!
+  wbtc_buyer: String
+  strk_order_id: String
+  strk_amount_locked: BigDecimalU256
+  bob_expiry: Int
   is_filled: Boolean!
   is_withdrawn: Boolean!
   is_refunded: Boolean!
-  # Metadata
   posted_at_block: Int!
   posted_tx_hash: String!
   filled_at_block: Int
@@ -44,17 +41,15 @@ type WbtcOrder {
 }
 
 type StrkOrder {
-  id: ID! # strk_order_id (u256)
-  strk_seller: String! # ContractAddress
-  strk_buyer: String! # ContractAddress
-  strk_amount: BigDecimalU256! # u256
-  hashlock: String! # felt252
-  expiry: Int! # u64
-  wbtc_order_id: String # paired WbtcOrder id (null for direct orders)
-  # Status
+  id: ID!
+  strk_seller: String!
+  strk_buyer: String!
+  strk_amount: BigDecimalU256!
+  hashlock: String!
+  expiry: Int!
+  wbtc_order_id: String
   is_withdrawn: Boolean!
   is_refunded: Boolean!
-  # Metadata
   posted_at_block: Int!
   posted_tx_hash: String!
   withdrawn_at_block: Int
@@ -62,65 +57,39 @@ type StrkOrder {
 }
 
 type OwnershipTransfer {
-  id: ID! # tx_hash
-  previous_owner: String! # ContractAddress
-  new_owner: String! # ContractAddress
+  id: ID!
+  previous_owner: String!
+  new_owner: String!
   block_number: Int!
   tx_hash: String!
 }
 
-# ── DCA ───────────────────────────────────────────────────────────────────────
-#
-# Contract: create_dca_order(usdc_per_interval, interval_hours, total_intervals)
-#   - wBTC always delivered to order.owner (= get_caller_address())
-#   - No recipient field anywhere
-#
-# DCAOrderCreated { order_id, owner, usdc_per_interval, interval_seconds,
-#                   total_intervals, total_usdc_deposited }
-#
-# DCAExecuted { order_id, owner, usdc_spent, wbtc_received,
-#               executed_intervals,   ← post-increment value (1, 2, 3…)
-#               keeper }
-#   NOTE: no btc_price_usd in this event — not emitted by contract
-#
-# DCACancelled { order_id, owner, usdc_refunded }
-
 type DcaOrder {
-  id: ID! # order_id (u256 decimal string, auto-incremented from dca_order_count)
-
-  # From DCAOrderCreated
-  owner: String! # ContractAddress — also receives wBTC each execution
-  usdc_per_interval: BigDecimalU256! # u256, USDC 6-dec
-  interval_seconds: Int! # u64 (contract converts interval_hours * 3600)
-  total_intervals: Int! # u32
-  total_usdc_deposited: BigDecimalU256! # u256 = usdc_per_interval * total_intervals
-
-  # Mutable — updated by DCAExecuted / DCACancelled
-  executed_intervals: Int! # u32, starts 0, post-increment value after each exec
-  is_active: Boolean! # false when fully executed or cancelled
-  last_execution: Int! # unix ts — block.timestamp at creation; updated each exec
-  usdc_refunded: BigDecimalU256 # set on DCACancelled; null otherwise
-
-  # Metadata
+  id: ID!
+  owner: String!
+  usdc_per_interval: BigDecimalU256!
+  interval_seconds: Int!
+  total_intervals: Int!
+  total_usdc_deposited: BigDecimalU256!
+  btc_destination: String!
+  executed_intervals: Int!
+  is_active: Boolean!
+  last_execution: Int!
+  usdc_refunded: BigDecimalU256
   created_at_block: Int!
   created_tx_hash: String!
-  last_executed_at_block: Int # null until first execution
-  cancelled_at_block: Int # null unless cancelled
+  last_executed_at_block: Int
+  cancelled_at_block: Int
 }
 
 type DcaExecution {
-  id: ID! # "{order_id}-{executed_intervals}" (post-increment, so 1-based)
-
-  order_id: String! # matches DcaOrder.id
-
-  # From DCAExecuted
-  executed_intervals: Int! # post-increment counter (1, 2, 3…)
-  usdc_spent: BigDecimalU256! # u256, USDC 6-dec — always = usdc_per_interval
-  wbtc_received: BigDecimalU256! # u256, satoshis — varies with oracle price
-  keeper: String! # ContractAddress — who triggered this execution
-
-  # Metadata
+  id: ID!
+  order_id: String!
+  executed_intervals: Int!
+  usdc_spent: BigDecimalU256!
+  wbtc_received: BigDecimalU256!
+  keeper: String!
   executed_at_block: Int!
   executed_tx_hash: String!
-  executed_timestamp: Int! # block.timestamp
+  executed_timestamp: Int!
 }
