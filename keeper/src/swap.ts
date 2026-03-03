@@ -335,54 +335,54 @@ async function main() {
     }
   }
 
-  // // ── 9. Commit STRK (Lock in Escrow) ──────────────────
-  // printSeparator("9. Committing STRK to Escrow");
+  // ── 9. Commit STRK (Lock in Escrow) ──────────────────
+  printSeparator("9. Committing STRK to Escrow");
 
-  // console.log("⏳ Sending StarkNet transaction to lock STRK in escrow...");
-  // const commitTxId = await swap.commit(starknetSigner);
+  console.log("⏳ Sending StarkNet transaction to lock STRK in escrow...");
+  const commitTxId = await swap.commit(starknetSigner);
 
-  // console.log(`✅ StarkNet transaction confirmed!`);
-  // console.log(`   Tx ID:    ${commitTxId}`);
-  // console.log(`   Explorer: https://sepolia.voyager.online/tx/${commitTxId}`);
+  console.log(`✅ StarkNet transaction confirmed!`);
+  console.log(`   Tx ID:    ${commitTxId}`);
+  console.log(`   Explorer: https://sepolia.voyager.online/tx/${commitTxId}`);
 
-  // // ── 10. Wait for LP to Pay BTC ───────────────────────
-  // printSeparator("10. Waiting for BTC Payment from LP");
+  // ── 10. Wait for LP to Pay BTC ───────────────────────
+  printSeparator("10. Waiting for BTC Payment from LP");
 
-  // console.log("⏳ Waiting for LP to release BTC...");
-  // console.log(`   Your Bitcoin address: ${bitcoinAddress}`);
-  // console.log(
-  //   `   Track: https://mempool.space/testnet/address/${bitcoinAddress}`,
-  // );
+  console.log("⏳ Waiting for LP to release BTC...");
+  console.log(`   Your Bitcoin address: ${bitcoinAddress}`);
+  console.log(
+    `   Track: https://mempool.space/testnet/address/${bitcoinAddress}`,
+  );
 
-  // const success = await swap.waitForPayment();
+  const success = await swap.waitForPayment();
 
-  // // ── 11. Result ────────────────────────────────────────
-  // printSeparator("11. Result");
+  // ── 11. Result ────────────────────────────────────────
+  printSeparator("11. Result");
 
-  // if (!success) {
-  //   console.log("❌ Swap failed or timed out — refunding STRK...");
-  //   try {
-  //     const refundTxId = await swap.refund(starknetSigner);
-  //     console.log(`✅ Refund successful!`);
-  //     console.log(`   Tx ID:    ${refundTxId}`);
-  //     console.log(
-  //       `   Explorer: https://sepolia.voyager.online/tx/${refundTxId}`,
-  //     );
-  //   } catch (refundErr) {
-  //     console.error(
-  //       `❌ Refund failed: ${
-  //         refundErr instanceof Error ? refundErr.message : String(refundErr)
-  //       }`,
-  //     );
-  //   }
-  // } else {
-  //   const btcTxId = swap.getOutputTxId();
-  //   console.log("✅ Swap successful!");
-  //   console.log(`   Bitcoin Tx ID: ${btcTxId}`);
-  //   console.log(`   Track: https://mempool.space/testnet/tx/${btcTxId}`);
-  // }
+  if (!success) {
+    console.log("❌ Swap failed or timed out — refunding STRK...");
+    try {
+      const refundTxId = await swap.refund(starknetSigner);
+      console.log(`✅ Refund successful!`);
+      console.log(`   Tx ID:    ${refundTxId}`);
+      console.log(
+        `   Explorer: https://sepolia.voyager.online/tx/${refundTxId}`,
+      );
+    } catch (refundErr) {
+      console.error(
+        `❌ Refund failed: ${
+          refundErr instanceof Error ? refundErr.message : String(refundErr)
+        }`,
+      );
+    }
+  } else {
+    const btcTxId = swap.getOutputTxId();
+    console.log("✅ Swap successful!");
+    console.log(`   Bitcoin Tx ID: ${btcTxId}`);
+    console.log(`   Track: https://mempool.space/testnet/tx/${btcTxId}`);
+  }
 
-  // await swapper.stop();
+  await swapper.stop();
   console.log("\n🏁 Done.\n");
 }
 

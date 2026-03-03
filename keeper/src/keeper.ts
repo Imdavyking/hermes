@@ -1,4 +1,4 @@
-import { account, getExecutePayload } from "./starknet";
+import { account, getExecutePayload, getRefundPayload } from "./starknet";
 import { fetchActiveOrders, ActiveDcaOrder } from "./apollo";
 import { config } from "./config";
 import { Call } from "starknet";
@@ -23,6 +23,52 @@ function isDue(order: ActiveDcaOrder, now: number): boolean {
   return now >= lastExecution + intervalSeconds;
 }
 
+// submitBatch
+// ─────────────────────────────────────────────────────────────────────────────
+// Dry-runs a set of calls via estimateInvokeFee, then submits and waits for
+// the transaction receipt. Returns true on success, false on any failure.
+// Does not throw — all errors are logged and the keeper loop continues.
+
+async function submitBatch(calls: Call[], label: string): Promise<boolean> {
+  try {
+    await account.estimateInvokeFee(calls);
+
+    const tx = await account.execute(calls);
+    console.log(`  ${label} submitted: ${tx.transaction_hash}`);
+
+    const receipt = await account.waitForTransaction(tx.transaction_hash);
+    if (receipt.isSuccess()) {
+      console.log(`  ${label} confirmed ✓`);
+      return true;
+    } else {
+      console.error(`  ${label} reverted. Receipt:`, receipt);
+      return false;
+    }
+  } catch (err: unknown) {
+    // Unwrap the Starknet execution error chain for a readable message.
+    const executionError =
+      (
+        err as {
+          baseError?: {
+            data?: {
+              execution_error?: { error?: { error?: { error?: string } } };
+            };
+          };
+        }
+      )?.baseError?.data?.execution_error?.error?.error?.error ??
+      (
+        err as {
+          baseError?: { data?: { execution_error?: { error?: string } } };
+        }
+      )?.baseError?.data?.execution_error?.error ??
+      (err as { message?: string })?.message ??
+      String(err);
+
+    console.error(`  ${label} failed to submit:`, executionError);
+    return false;
+  }
+}
+
 // ── Core run ──────────────────────────────────────────────────────────────────
 
 export async function runKeeper(): Promise<void> {
@@ -40,16 +86,75 @@ export async function runKeeper(): Promise<void> {
 
   console.log(`  Active orders in indexer: ${allOrders.length}`);
 
-  // 2. Filter to those whose interval has elapsed (cheap, off-chain).
+  // ── Pass 1: Refund stale Atomiq escrows ──────────────────────────────────
+  //
+  // Before trying to execute new intervals we check every active order for a
+  // pending failed escrow (LP never sent BTC, timeout elapsed). Refunding
+  // rolls back the interval counter, making it immediately eligible for
+  // re-execution in Pass 2 of the same tick.
+  //
+  // Why refund BEFORE execute?
+  //   If we executed first, orders with a pending refund would be blocked by
+  //   the DCA_INTERVAL_PENDING guard and skipped for the entire tick, delaying
+  //   the user's DCA by a full interval period unnecessarily.
+  //
+  // Refund calls are batched into a single tx to minimise gas overhead.
+  // If the refund tx reverts (e.g. escrow was already claimed by LP on a
+  // previous attempt), we log the failure and skip Pass 2 for safety —
+  // the state may be inconsistent and retrying execute could double-spend.
+
+  console.log("  Pass 1: scanning for stale escrows to refund...");
+
+  const refundCalls = (
+    await Promise.all(
+      allOrders.map(async (o) => {
+        const call = await getRefundPayload(o.id);
+        if (call) {
+          console.log(
+            `  Order ${o.id}: stale escrow detected — queuing refund`,
+          );
+        }
+        return call;
+      }),
+    )
+  ).filter((c): c is Call => c !== null);
+
+  if (refundCalls.length > 0) {
+    console.log(
+      `  Submitting ${refundCalls.length} refund call(s) in a single tx...`,
+    );
+
+    const refundOk = await submitBatch(refundCalls, "Refund batch");
+
+    if (!refundOk) {
+      // A failed refund batch means on-chain state is uncertain.
+      // Skip the execute pass entirely this tick — we'll retry next tick
+      // once the indexer has caught up and we can reassess each order.
+      console.error(
+        "  Refund batch failed — skipping execute pass this tick for safety.",
+      );
+      return;
+    }
+  } else {
+    console.log("  No stale escrows found.");
+  }
+
+  // ── Pass 2: Execute due intervals ────────────────────────────────────────
+  //
+  // Filter to candidates whose interval has elapsed (cheap, off-chain pre-filter).
+  // The authoritative on-chain check (checker()) happens inside getExecutePayload().
+  // After a successful refund pass above, previously-blocked orders will now
+  // pass checker() and appear in this list.
+
+  console.log("  Pass 2: scanning for intervals due for execution...");
+
   const candidates = allOrders.filter((o) => isDue(o, now));
   console.log(`  Candidates due for execution: ${candidates.length}`);
 
   if (candidates.length === 0) return;
 
-  // 3. For each candidate: confirm on-chain via checker() and fetch the
-  //    Atomiq quote to build the execute_dca calldata.
-  //    getExecutePayload returns null if the order was already executed,
-  //    is no longer active, or the Atomiq quote failed.
+  // For each candidate: confirm on-chain via checker() and fetch an Atomiq
+  // quote to build the execute_dca calldata. Returns null if skipped.
   const calls = (
     await Promise.all(
       candidates.map(async (o) => {
@@ -66,59 +171,27 @@ export async function runKeeper(): Promise<void> {
 
   if (calls.length === 0) return;
 
-  // 4. Chunk into batches and submit as Starknet multicalls.
-  //    One tx per batch — one gas payment covers all execute_dca calls.
-  //    Batch size is capped to avoid hitting block gas limits.
+  // Chunk into batches and submit as Starknet multicalls.
+  // One tx per batch — one gas payment covers all execute_dca calls.
+  // Batch size is capped to avoid hitting block gas limits.
   const chunks: Call[][] = [];
   for (let i = 0; i < calls.length; i += config.maxBatchSize) {
     chunks.push(calls.slice(i, i + config.maxBatchSize));
   }
 
   console.log(
-    `  Submitting ${chunks.length} batch(es) of up to ${config.maxBatchSize} calls`,
+    `  Submitting ${chunks.length} execute batch(es) of up to ${config.maxBatchSize} calls`,
   );
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    console.log(`  Batch ${i + 1}/${chunks.length}: ${chunk.length} call(s)`);
+    console.log(
+      `  Execute batch ${i + 1}/${chunks.length}: ${chunk.length} call(s)`,
+    );
 
-    try {
-      // Dry-run first — surfaces fee estimation errors before broadcasting.
-      await account.estimateInvokeFee(chunk);
-
-      const tx = await account.execute(chunk);
-      console.log(`  Batch ${i + 1} submitted: ${tx.transaction_hash}`);
-
-      const receipt = await account.waitForTransaction(tx.transaction_hash);
-      if (receipt.isSuccess()) {
-        console.log(`  Batch ${i + 1} confirmed ✓`);
-      } else {
-        // Individual reverts inside a multicall revert the entire tx.
-        // Log and continue — still-due orders will be retried on the next tick.
-        console.error(`  Batch ${i + 1} reverted. Receipt:`, receipt);
-      }
-    } catch (err: unknown) {
-      // Unwrap the Starknet execution error chain for a readable message.
-      const executionError =
-        (
-          err as {
-            baseError?: {
-              data?: {
-                execution_error?: { error?: { error?: { error?: string } } };
-              };
-            };
-          }
-        )?.baseError?.data?.execution_error?.error?.error?.error ??
-        (
-          err as {
-            baseError?: { data?: { execution_error?: { error?: string } } };
-          }
-        )?.baseError?.data?.execution_error?.error ??
-        (err as { message?: string })?.message ??
-        String(err);
-
-      console.error(`  Batch ${i + 1} failed to submit:`, executionError);
-      // Do not rethrow — a failed batch should not stop the keeper loop.
-    }
+    // A failed execute batch is non-fatal — still-due orders will be retried
+    // on the next tick. We do NOT return early here so remaining batches still
+    // get a chance to submit.
+    await submitBatch(chunk, `Execute batch ${i + 1}/${chunks.length}`);
   }
 }
