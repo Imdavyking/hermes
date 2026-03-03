@@ -66,7 +66,7 @@ struct EscrowData {
     security_deposit: u256,
     claimer_bounty: u256,
     // NOTE: success_action omitted from stored struct to keep Store derivation simple.
-    // The pending escrow stored on-chain always has success_action = None.
+// The pending escrow stored on-chain always has success_action = None.
 }
 
 #[starknet::interface]
@@ -79,6 +79,10 @@ trait IAtomiqEscrow<TContractState> {
         extra_data: Span<felt252>,
     );
     fn refund(ref self: TContractState, escrow: EscrowData, witness: Array<felt252>);
+}
+#[starknet::interface]
+trait IAtomiqEscrowRefund<TContractState> {
+    fn refund(self: @TContractState, refund_data: felt252, witness: Array<felt252>) -> bool;
 }
 
 // -------------------------------------------------------
@@ -1026,9 +1030,7 @@ mod PrivateSwap {
             assert(order.is_active, Errors::DCA_NOT_ACTIVE);
             assert(order.executed_intervals < order.total_intervals, Errors::DCA_COMPLETED);
             assert(now >= order.last_execution + order.interval_seconds, Errors::DCA_NOT_DUE);
-            assert(
-                !self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING,
-            );
+            assert(!self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING);
 
             // Validate strk_amount is within 5% of the live oracle value for
             // usdc_per_interval. This prevents the keeper from committing a
@@ -1185,9 +1187,7 @@ mod PrivateSwap {
             let mut order = self.dca_orders.read(order_id);
             assert(order.is_active, Errors::DCA_NOT_ACTIVE);
             assert(get_caller_address() == order.owner, Errors::DCA_NOT_OWNER);
-            assert(
-                !self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING,
-            );
+            assert(!self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING);
 
             let remaining: u256 = (order.total_intervals - order.executed_intervals).into();
             let usdc_refund = order.usdc_per_interval * remaining;
@@ -1252,8 +1252,9 @@ mod PrivateSwap {
             let can_exec = !pending_refund
                 && order.is_active
                 && order.executed_intervals < order.total_intervals
-                && now >= order.last_execution + order.interval_seconds
-                && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
+                && now >= order.last_execution
+                + order.interval_seconds
+                    && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
 
             // Only hit the oracle when we actually need the STRK amount.
             // Avoids reverting on a stale feed for orders that are not due.
