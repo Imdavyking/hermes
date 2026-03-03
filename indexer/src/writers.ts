@@ -343,17 +343,6 @@ export function createWriters(ctx: Context) {
 
   // =======================================================
   // DCA
-  // Verified against actual Cairo contract events:
-  //
-  // DCAOrderCreated { order_id, owner, usdc_per_interval, interval_seconds,
-  //                   total_intervals, total_usdc_deposited }
-  //
-  // DCAExecuted { order_id, owner, usdc_spent, wbtc_received,
-  //               executed_intervals,  ← post-increment (1, 2, 3…)
-  //               keeper }
-  //   NOTE: NO btc_price_usd field in this event
-  //
-  // DCACancelled { order_id, owner, usdc_refunded }
   // =======================================================
 
   // -------------------------------------------------------
@@ -406,7 +395,6 @@ export function createWriters(ctx: Context) {
     order.total_usdc_deposited = totalUsdcDeposited;
     order.executed_intervals = 0;
     order.is_active = true;
-    // Contract sets last_execution = get_block_timestamp() at creation
     order.last_execution = block.timestamp ?? 0;
     order.created_at_block = block.block_number;
     order.created_tx_hash = txId;
@@ -421,8 +409,9 @@ export function createWriters(ctx: Context) {
   //                 owner,
   //                 usdc_spent.low, usdc_spent.high,
   //                 wbtc_received.low, wbtc_received.high,
-  //                 executed_intervals,   ← post-increment value
-  //                 keeper]
+  //                 executed_intervals,
+  //                 keeper,
+  //                 keeper_fee_paid.low, keeper_fee_paid.high]
   // -------------------------------------------------------
   const handleDCAExecuted: starknet.Writer = async ({
     event,
@@ -440,7 +429,6 @@ export function createWriters(ctx: Context) {
 
     if (event) {
       orderId = toDecimal(event.order_id);
-      // event.owner — skip, already on the order
       usdcSpent = toDecimal(event.usdc_spent);
       wbtcReceived = toDecimal(event.wbtc_received);
       executedIntervals = Number(event.executed_intervals);
@@ -453,23 +441,23 @@ export function createWriters(ctx: Context) {
       wbtcReceived = readU256(d[5], d[6]);
       executedIntervals = Number(d[7]);
       keeper = toHexAddress(d[8]);
+      // d[9], d[10] = keeper_fee_paid (low, high) — not stored
     } else return;
 
-    // 1. Patch the parent DcaOrder
+    // 1. Patch the parent DcaOrder.
     const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
       order.executed_intervals = executedIntervals;
       order.last_execution = block.timestamp ?? 0;
       order.last_executed_at_block = block.block_number;
-      // Contract sets is_active = false when executed_intervals == total_intervals
       if (executedIntervals >= order.total_intervals) {
         order.is_active = false;
       }
       await order.save();
     }
 
-    // 2. Append immutable execution history row
-    //    id = "{orderId}-{executedIntervals}" (1-based, post-increment matches contract)
+    // 2. Append immutable execution history row.
+    //    id = "{orderId}-{executedIntervals}" (1-based, post-increment).
     const exec = new DcaExecution(
       `${orderId}-${executedIntervals}`,
       ctx.indexerName,
@@ -487,10 +475,81 @@ export function createWriters(ctx: Context) {
   };
 
   // -------------------------------------------------------
+  // DCA INTERVAL REFUNDED
+  //
+  // Emitted by refund_dca_interval() when an Atomiq escrow expired without
+  // the LP paying. The contract rolls back executed_intervals and last_execution
+  // on-chain, so the indexer mirrors that exactly:
+  //   - Delete the DcaExecution row for the failed interval.
+  //   - Patch DcaOrder: decrement executed_intervals, roll back last_execution,
+  //     and re-activate if the order was auto-closed on this failed interval.
+  //
+  // rawEvent.data: [order_id.low, order_id.high,
+  //                 interval_index,        ← 1-based, matches DcaExecution id suffix
+  //                 strk_returned.low, strk_returned.high]
+  // -------------------------------------------------------
+  const handleDCAIntervalRefunded: starknet.Writer = async ({
+    event,
+    rawEvent,
+    block,
+  }) => {
+    if (!block) return;
+
+    let orderId: string;
+    let intervalIndex: number;
+
+    if (event) {
+      orderId = toDecimal(event.order_id);
+      intervalIndex = Number(event.interval_index);
+    } else if (rawEvent) {
+      const d = rawEvent.data;
+      orderId = readU256(d[0], d[1]);
+      intervalIndex = Number(d[2]);
+      // d[3], d[4] = strk_returned — not stored in indexer
+    } else return;
+
+    // 1. Delete the DcaExecution for the failed interval.
+    //    The row was created optimistically by handleDCAExecuted; it must be
+    //    removed because no BTC was ever delivered to the user.
+    const execId = `${orderId}-${intervalIndex}`;
+    const exec = await DcaExecution.loadEntity(execId, ctx.indexerName);
+    if (exec) {
+      await exec.delete();
+    }
+
+    // 2. Roll back the parent DcaOrder to mirror the contract state:
+    //      executed_intervals -= 1
+    //      last_execution     -= interval_seconds  (contract subtracts this)
+    //      is_active           = true if auto-closed on this now-failed interval
+    const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
+    if (order) {
+      order.executed_intervals = Math.max(0, order.executed_intervals - 1);
+      order.last_execution = order.last_execution - order.interval_seconds;
+
+      // Re-activate if the order was auto-closed when this interval was
+      // (prematurely) counted as the final one.
+      if (
+        !order.is_active &&
+        order.executed_intervals < order.total_intervals
+      ) {
+        order.is_active = true;
+      }
+
+      // Clear last_executed_at_block if there are now no completed intervals.
+      if (order.executed_intervals === 0) {
+        order.last_executed_at_block = null;
+      }
+
+      await order.save();
+    }
+  };
+
+  // -------------------------------------------------------
   // DCA CANCELLED
   //
   // rawEvent.data: [order_id.low, order_id.high, owner,
-  //                 usdc_refunded.low, usdc_refunded.high]
+  //                 usdc_refunded.low, usdc_refunded.high,
+  //                 strk_fee_refunded.low, strk_fee_refunded.high]
   // -------------------------------------------------------
   const handleDCACancelled: starknet.Writer = async ({
     event,
@@ -504,13 +563,13 @@ export function createWriters(ctx: Context) {
 
     if (event) {
       orderId = toDecimal(event.order_id);
-      // event.owner — skip
       usdcRefunded = toDecimal(event.usdc_refunded);
     } else if (rawEvent) {
       const d = rawEvent.data;
       orderId = readU256(d[0], d[1]);
       // d[2] = owner — skip
       usdcRefunded = readU256(d[3], d[4]);
+      // d[5], d[6] = strk_fee_refunded — not stored
     } else return;
 
     const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
@@ -523,7 +582,6 @@ export function createWriters(ctx: Context) {
   };
 
   return {
-    // existing
     handleDeposit,
     handleWithdrawal,
     handleWbtcOrderPosted,
@@ -533,9 +591,9 @@ export function createWriters(ctx: Context) {
     handleWbtcRefunded,
     handleStrkRefunded,
     handleOwnershipTransferred,
-    // DCA
     handleDCAOrderCreated,
     handleDCAExecuted,
+    handleDCAIntervalRefunded,
     handleDCACancelled,
   };
 }

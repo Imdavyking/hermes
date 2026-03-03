@@ -33,6 +33,7 @@ export const config: CheckpointConfig = {
         { name: "DCAOrderCreated", fn: "handleDCAOrderCreated" },
         { name: "DCAExecuted", fn: "handleDCAExecuted" },
         { name: "DCACancelled", fn: "handleDCACancelled" },
+        { name: "DCAIntervalRefunded", fn: "handleDCAIntervalRefunded" },
       ],
     },
   ],
