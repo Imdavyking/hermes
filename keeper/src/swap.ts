@@ -295,8 +295,6 @@ async function main() {
       bitcoinAddress, // Destination Bitcoin address
     )) as ToBTCSwap<any>;
 
-
-
     // swap<C extends ChainIds<T>>(srcToken: SCToken<C>, dstToken: BtcToken<false>, amount: bigint | string, exactIn: boolean | SwapAmountType, src: string, dstAddress: string, options?: ToBTCOptions): Promise<ToBTCSwap<T[C]>>;
   } catch (err: any) {
     // OutOfBoundsError — LP rejected the amount, show human-readable min/max

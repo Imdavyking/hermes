@@ -1127,32 +1127,42 @@ mod PrivateSwap {
             let escrow_key: u256 = order_id * ESCROW_KEY_MULTIPLIER + interval_index.into();
             let escrow = self.dca_pending_escrows.read(escrow_key);
 
-            let expiry: u64 = escrow.refund_data.try_into().unwrap();
-            assert(get_block_timestamp() >= expiry, Errors::DCA_ESCROW_NOT_EXPIRED);
+            let can_refund = IAtomiqEscrowRefundDispatcher {
+                contract_address: escrow.refund_handler,
+            }
+                .refund(escrow.refund_data, array![]);
 
+            let zeroed_escrow = EscrowData {
+                offerer: ZERO_ADDRESS,
+                claimer: ZERO_ADDRESS,
+                token: ZERO_ADDRESS,
+                refund_handler: ZERO_ADDRESS,
+                claim_handler: ZERO_ADDRESS,
+                flags: 0,
+                claim_data: 0,
+                refund_data: 0,
+                amount: 0,
+                fee_token: ZERO_ADDRESS,
+                security_deposit: 0,
+                claimer_bounty: 0,
+            };
+
+            if !can_refund {
+                // LP already claimed — BTC was delivered successfully.
+                // Just unlock the next interval without rolling back state.
+                self.dca_interval_needs_refund.write(order_id, false);
+                self.dca_pending_interval_index.write(order_id, 0);
+                self.dca_pending_escrows.write(escrow_key, zeroed_escrow);
+                return;
+            }
+
+            // LP did not release BTC — escrow has expired without a claim.
+            // Roll back the interval so the keeper retries it.
             let strk_returned = escrow.amount;
 
             self.dca_interval_needs_refund.write(order_id, false);
             self.dca_pending_interval_index.write(order_id, 0);
-            self
-                .dca_pending_escrows
-                .write(
-                    escrow_key,
-                    EscrowData {
-                        offerer: ZERO_ADDRESS,
-                        claimer: ZERO_ADDRESS,
-                        token: ZERO_ADDRESS,
-                        refund_handler: ZERO_ADDRESS,
-                        claim_handler: ZERO_ADDRESS,
-                        flags: 0,
-                        claim_data: 0,
-                        refund_data: 0,
-                        amount: 0,
-                        fee_token: ZERO_ADDRESS,
-                        security_deposit: 0,
-                        claimer_bounty: 0,
-                    },
-                );
+            self.dca_pending_escrows.write(escrow_key, zeroed_escrow);
 
             let mut order = self.dca_orders.read(order_id);
             order.executed_intervals -= 1;
