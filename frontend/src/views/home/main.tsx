@@ -36,7 +36,7 @@ const erc20Abi = [
 
 export default function UmbraHome() {
   const { address } = useAccount();
-  const [tab, setTab] = useState<AppTab>("swap");
+  const [tab, setTab] = useState<AppTab>("dca");
   const [wBTCBalance, setwBTCBalance] = useState<number | null>(null);
   const [strkBalance, setStrkBalance] = useState<number | null>(null);
 
