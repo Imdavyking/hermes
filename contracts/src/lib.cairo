@@ -54,6 +54,43 @@ trait IMockWBTC<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
+
+#[derive(Drop, Serde)]
+struct EscrowExecution {
+    hash: felt252,
+    expiry: u64,
+    fee: u256,
+}
+
+#[derive(Drop, Serde)]
+struct EscrowData {
+    offerer: ContractAddress,
+    claimer: ContractAddress,
+    token: ContractAddress,
+    refund_handler: ContractAddress,
+    claim_handler: ContractAddress,
+    flags: u128,
+    claim_data: felt252, // payment hash (from SDK/LP quote)
+    refund_data: felt252, // expiry as felt252
+    amount: u256,
+    fee_token: ContractAddress,
+    security_deposit: u256,
+    claimer_bounty: u256,
+    success_action: Option<EscrowExecution>,
+}
+
+#[starknet::interface]
+trait IAtomiqEscrow<TContractState> {
+    fn initialize(
+        ref self: TContractState,
+        escrow: EscrowData,
+        signature: Array<felt252>,
+        timeout: u64,
+        extra_data: Span<felt252>,
+    );
+    fn refund(ref self: TContractState, escrow: EscrowData, witness: Array<felt252>);
+}
+
 // -------------------------------------------------------
 // Shared Data Types
 // -------------------------------------------------------
@@ -177,19 +214,28 @@ trait IPrivateSwap<TContractState> {
     fn refund_wbtc(ref self: TContractState, wbtc_order_id: u256);
     fn refund_strk(ref self: TContractState, strk_order_id: u256);
 
-    // --- DCA (USDC → wBTC) ---
+    // --- DCA (USDC → wBTC via Atomiq) ---
     // User pre-approves usdc_per_interval * total_intervals USDC
     // AND keeper_fee_strk() * total_intervals STRK before calling.
-    // Each interval the keeper calls execute_dca(); the contract reads the live
-    // BTC/USD oracle, calculates how much wBTC the user's USDC buys, delivers
-    // it, and pays the keeper KEEPER_FEE_STRK from the reserved balance.
+    // Each interval the keeper calls execute_dca(); the contract fetches an
+    // Atomiq quote, commits STRK to the escrow, and the LP releases BTC to
+    // the user's btc_destination. The keeper is paid KEEPER_FEE_STRK.
     fn create_dca_order(
         ref self: TContractState,
+        btc_destination: ByteArray,
         usdc_per_interval: u256,
         interval_hours: u64,
         total_intervals: u32,
     ) -> u256;
-    fn execute_dca(ref self: TContractState, order_id: u256);
+    fn execute_dca(
+        ref self: TContractState,
+        order_id: u256,
+        strk_amount: u256, // how much STRK to commit to atomiq
+        payment_hash: felt252, // claim_data from atomiq quote
+        expiry: u64, // refund_data from atomiq quote
+        flags: u128, // flags from atomiq quote
+        signature: Array<felt252>,
+    );
     fn cancel_dca(ref self: TContractState, order_id: u256);
     fn checker(self: @TContractState, order_id: u256) -> (bool, ExecPayload);
 
@@ -204,6 +250,8 @@ trait IPrivateSwap<TContractState> {
     fn preview_wbtc_for_usdc(self: @TContractState, usdc_amount: u256) -> u256;
     // Returns total STRK reserved for keeper fees on a given DCA order.
     fn get_dca_strk_reserved(self: @TContractState, order_id: u256) -> u256;
+    // Returns the BTC destination address stored for a given DCA order.
+    fn get_dca_btc_destination(self: @TContractState, order_id: u256) -> ByteArray;
     // Returns the per-execution keeper fee in STRK (18 decimals).
     fn keeper_fee_strk(self: @TContractState) -> u256;
     fn current_root(self: @TContractState) -> u256;
@@ -246,8 +294,9 @@ mod PrivateSwap {
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
     use super::{
-        ContractAddress, DCAOrder, ExecPayload, FieldTrait, IAggregatorProxyDispatcher,
-        IAggregatorProxyDispatcherTrait, IMockWBTCDispatcher, IMockWBTCDispatcherTrait,
+        ContractAddress, DCAOrder, EscrowData, EscrowExecution, ExecPayload, FieldTrait,
+        IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher,
+        IAtomiqEscrowDispatcherTrait, IMockWBTCDispatcher, IMockWBTCDispatcherTrait,
         IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait,
         Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address,
         get_contract_address,
@@ -311,6 +360,19 @@ mod PrivateSwap {
         0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d;
     const USDC_ADDRESS: felt252 =
         0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8;
+
+    // Atomiq escrow contract address on Sepolia
+    const ATOMIQ_ESCROW: felt252 =
+        0x017bf50dd28b6d823a231355bb25813d4396c8e19d2df03026038714a22f0413;
+
+    // Atomiq LP claimer address
+    const ATOMIQ_LP: felt252 = 0x07616a5e3dc18e97b3310d8aba0bacb14ab389a4078442d9658be9616feeff3f;
+
+    // Atomiq handler contracts
+    const ATOMIQ_REFUND_HANDLER: felt252 =
+        0x034b8f28b3ca979036cb2849cfa3af7f67207459224b6ca5ce2474aa398ec3e7;
+    const ATOMIQ_CLAIM_HANDLER: felt252 =
+        0x050e50eacd16da414f2c3a7c3570fd5e248974c6fe757d41acbf72d2836fa0a1;
 
     // -------------------------------------------------------
     // Errors
@@ -402,6 +464,7 @@ mod PrivateSwap {
         // DCA orders
         dca_orders: Map<u256, DCAOrder>,
         dca_order_count: u256,
+        dca_btc_destinations: Map<u256, ByteArray>,
         // Keeper fee reserves per DCA order.
         // Tracks how much STRK is still owed to future keepers.
         // Decremented by KEEPER_FEE_STRK on each execution.
@@ -962,6 +1025,7 @@ mod PrivateSwap {
         // ---------------------------------------------------
         fn create_dca_order(
             ref self: ContractState,
+            btc_destination: ByteArray,
             usdc_per_interval: u256,
             interval_hours: u64,
             total_intervals: u32,
@@ -976,7 +1040,7 @@ mod PrivateSwap {
             let this = get_contract_address();
 
             // ── Pull USDC swap budget
-            // ──────────────────────────────────────
+            // ──────────────────────────────────────────────────
             let total_usdc: u256 = usdc_per_interval * total_intervals.into();
             let usdc = IERC20Dispatcher { contract_address: self.usdc.read() };
             assert(usdc.allowance(caller, this) >= total_usdc, Errors::INSUFFICIENT_ALLOWANCE);
@@ -984,7 +1048,7 @@ mod PrivateSwap {
             assert(ok, Errors::USDC_TRANSFER_FAILED);
 
             // ── Pull STRK keeper fee reserve
-            // ──────────────────────────────
+            // ──────────────────────────────────────────
             // Locked here; paid out to keeper on each execute_dca().
             // Remaining balance is refunded on cancel_dca().
             let total_strk_fee: u256 = KEEPER_FEE_STRK * total_intervals.into();
@@ -994,9 +1058,10 @@ mod PrivateSwap {
             assert(ok2, Errors::STRK_TRANSFER_FAILED);
 
             // ── Write order
-            // ───────────────────────────────────────────────
+            // ───────────────────────────────────────────────────────────
             let order_id = self.dca_order_count.read() + 1;
             self.dca_order_count.write(order_id);
+            self.dca_btc_destinations.write(order_id, btc_destination);
 
             let interval_seconds: u64 = interval_hours * 3_600;
 
@@ -1038,20 +1103,25 @@ mod PrivateSwap {
         // EXECUTE DCA
         //
         // Permissionless — any address can call this when an interval is due.
-        // The order owner always receives their wBTC regardless of caller.
+        // The order owner always receives their BTC regardless of caller.
         //
         // On each execution the contract:
         //   1. Validates the interval has elapsed and the order is still active.
-        //   2. Calculates wBTC from the live BTC/USD oracle price.
-        //   3. Updates state (CEI — all state writes before external calls).
-        //   4. Acquires and delivers wBTC to the order owner.
-        //   5. If the caller is a registered keeper, pays KEEPER_FEE_STRK from
+        //   2. Updates state (CEI — all state writes before external calls).
+        //   3. Commits STRK to the Atomiq escrow; the LP releases BTC on-chain
+        //      to the btc_destination stored when the order was created.
+        //   4. If the caller is a registered keeper, pays KEEPER_FEE_STRK from
         //      the pre-funded reserve. Unregistered callers earn nothing.
-        //
-        // TESTNET: _acquire_wbtc() mints wBTC directly (no DEX needed).
-        // MAINNET: replace _acquire_wbtc() with an Ekubo USDC → wBTC swap.
         // ---------------------------------------------------
-        fn execute_dca(ref self: ContractState, order_id: u256) {
+        fn execute_dca(
+            ref self: ContractState,
+            order_id: u256,
+            strk_amount: u256, // how much STRK to commit to atomiq
+            payment_hash: felt252, // claim_data from atomiq quote
+            expiry: u64, // refund_data from atomiq quote
+            flags: u128, // flags from atomiq quote
+            signature: Array<felt252>,
+        ) {
             let mut order = self.dca_orders.read(order_id);
             let now = get_block_timestamp();
             let keeper = get_caller_address();
@@ -1060,13 +1130,7 @@ mod PrivateSwap {
             assert(order.executed_intervals < order.total_intervals, Errors::DCA_COMPLETED);
             assert(now >= order.last_execution + order.interval_seconds, Errors::DCA_NOT_DUE);
 
-            // How much wBTC the user's USDC budget buys at the live oracle price.
-            let wbtc_amount = self.wbtc_for_usdc(order.usdc_per_interval);
-            assert(wbtc_amount > 0, Errors::DCA_WBTC_ZERO);
-
-            // ── Update state first (CEI)
-            // ───────────────────────────────────
-            // Anchor to the scheduled due time, not now, to prevent cumulative drift.
+            // CEI — update state before external calls
             order.last_execution = order.last_execution + order.interval_seconds;
             order.executed_intervals += 1;
             if order.executed_intervals == order.total_intervals {
@@ -1074,39 +1138,16 @@ mod PrivateSwap {
             }
             self.dca_orders.write(order_id, order);
 
-            // ── External calls after state is finalised
-            // ───────────────────
+            // Commit STRK to Atomiq escrow — LP will release BTC to btc_destination
+            self._commit_strk_to_atomiq(strk_amount, payment_hash, expiry, flags, signature);
 
-            // Deliver wBTC to the order owner.
-            self._acquire_wbtc(order.owner, order.usdc_per_interval, wbtc_amount);
-
-            // Only registered keepers earn the fee.
-            // Unregistered callers can still execute — the user gets their wBTC either
-            // way — but the fee reserve is only decremented when it is actually paid out.
-            let keeper_fee_paid = if self.registered_keepers.read(keeper) {
+            // Keeper fee (registered keepers only)
+            if self.registered_keepers.read(keeper) {
                 let reserved = self.dca_strk_reserved.read(order_id);
-                assert(reserved >= KEEPER_FEE_STRK, 'insufficient keeper fee reserve');
                 self.dca_strk_reserved.write(order_id, reserved - KEEPER_FEE_STRK);
-                let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                IERC20Dispatcher { contract_address: self.strk.read() }
                     .transfer(keeper, KEEPER_FEE_STRK);
-                assert(ok, Errors::STRK_TRANSFER_FAILED);
-                KEEPER_FEE_STRK
-            } else {
-                0
-            };
-
-            self
-                .emit(
-                    DCAExecuted {
-                        order_id,
-                        owner: order.owner,
-                        usdc_spent: order.usdc_per_interval,
-                        wbtc_received: wbtc_amount,
-                        executed_intervals: order.executed_intervals,
-                        keeper,
-                        keeper_fee_paid,
-                    },
-                );
+            }
         }
 
         // ---------------------------------------------------
@@ -1124,26 +1165,25 @@ mod PrivateSwap {
             let remaining: u256 = (order.total_intervals - order.executed_intervals).into();
             let usdc_refund = order.usdc_per_interval * remaining;
 
-            // Remaining STRK fee reserve = intervals not yet executed * fee per interval.
-            // This equals dca_strk_reserved[order_id] but we re-derive it for clarity.
+            // Remaining STRK fee reserve = intervals not yet executed × fee per interval.
             let strk_refund = KEEPER_FEE_STRK * remaining;
 
-            // ── CEI: mark inactive before any external calls
-            // ───────────────
+            // CEI: mark inactive before any external calls
+            // ─────────────────────────────
             order.is_active = false;
             self.dca_orders.write(order_id, order);
             self.dca_strk_reserved.write(order_id, 0);
 
-            // ── Refund USDC
-            // ───────────────────────────────────────────────
+            // Refund USDC
+            // ──────────────────────────────────────────────────────────────
             if usdc_refund > 0 {
                 let ok = IERC20Dispatcher { contract_address: self.usdc.read() }
                     .transfer(order.owner, usdc_refund);
                 assert(ok, Errors::USDC_TRANSFER_FAILED);
             }
 
-            // ── Refund unspent STRK fee reserve
-            // ───────────────────────────
+            // Refund unspent STRK fee reserve
+            // ──────────────────────────────────────────
             if strk_refund > 0 {
                 let ok = IERC20Dispatcher { contract_address: self.strk.read() }
                     .transfer(order.owner, strk_refund);
@@ -1230,6 +1270,10 @@ mod PrivateSwap {
             self.dca_strk_reserved.read(order_id)
         }
 
+        fn get_dca_btc_destination(self: @ContractState, order_id: u256) -> ByteArray {
+            self.dca_btc_destinations.read(order_id)
+        }
+
         fn keeper_fee_strk(self: @ContractState) -> u256 {
             KEEPER_FEE_STRK
         }
@@ -1314,7 +1358,6 @@ mod PrivateSwap {
             self.usdc.write(usdc);
         }
 
-        // Admin functions
         fn add_keeper(ref self: ContractState, keeper: ContractAddress) {
             self.assert_only_owner();
             self.registered_keepers.write(keeper, true);
@@ -1342,6 +1385,44 @@ mod PrivateSwap {
     impl Private of PrivateTrait {
         fn assert_only_owner(self: @ContractState) {
             assert(get_caller_address() == self.owner.read(), Errors::NOT_OWNER);
+        }
+
+        // Locks STRK in the Atomiq escrow contract.
+        // The LP monitors the escrow and, once confirmed, releases BTC to the
+        // btc_destination stored in dca_btc_destinations for this order.
+        fn _commit_strk_to_atomiq(
+            ref self: ContractState,
+            amount: u256,
+            payment_hash: felt252,
+            expiry: u64,
+            flags: u128,
+            signature: Array<felt252>,
+        ) {
+            let this = get_contract_address();
+            let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
+
+            // 1. Approve escrow to pull STRK
+            strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), amount);
+
+            // 2. Lock STRK in Atomiq escrow
+            let escrow = EscrowData {
+                offerer: this,
+                claimer: ATOMIQ_LP.try_into().unwrap(),
+                token: REAL_STRK_ADDRESS.try_into().unwrap(),
+                refund_handler: ATOMIQ_REFUND_HANDLER.try_into().unwrap(),
+                claim_handler: ATOMIQ_CLAIM_HANDLER.try_into().unwrap(),
+                flags,
+                claim_data: payment_hash,
+                refund_data: expiry.into(),
+                amount,
+                fee_token: REAL_STRK_ADDRESS.try_into().unwrap(),
+                security_deposit: 0,
+                claimer_bounty: 0,
+                success_action: Option::None,
+            };
+
+            IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
+                .initialize(escrow, signature, expiry, array![].span());
         }
 
         // Shared ZK proof verification used by zk_withdraw_wbtc(), start_earning(),
@@ -1423,8 +1504,7 @@ mod PrivateSwap {
 
         // Acquires wBTC for the DCA order owner.
         //
-        // TESTNET: mints wBTC directly — no DEX needed; usdc_spent is tracked
-        //          for event accuracy but not transferred on testnet.
+        // TESTNET: mints wBTC directly — no DEX needed.
         //
         // MAINNET: replace the body with an Ekubo swap:
         //   IERC20Dispatcher { contract_address: self.usdc.read() }

@@ -1,0 +1,12 @@
+# ── Network ──────────────────────────────────────────────
+STARKNET_RPC_URL=https://starknet-sepolia.public.blastapi.io/rpc/v0_8
+BITCOIN_RPC_URL=https://mempool.space/testnet/api/
+
+# ── Wallets ───────────────────────────────────────────────
+# Leave blank to auto-generate and save to starknet.key / bitcoin.key files
+STARKNET_PRIVATE_KEY=
+STARKNET_ACCOUNT_ADDRESS=
+BITCOIN_PRIVATE_KEY=
+
+# ── Swap ──────────────────────────────────────────────────
+STRK_AMOUNT=15
