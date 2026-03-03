@@ -615,17 +615,6 @@ mod PrivateSwap {
         new_owner: ContractAddress,
     }
 
-    #[derive(Drop, starknet::Event)]
-    struct DCAOrderCreated {
-        #[key]
-        order_id: u256,
-        owner: ContractAddress,
-        usdc_per_interval: u256,
-        interval_seconds: u64,
-        total_intervals: u32,
-        total_usdc_deposited: u256,
-        total_strk_fee_deposited: u256,
-    }
 
     #[derive(Drop, starknet::Event)]
     struct DCAExecuted {
