@@ -310,7 +310,14 @@ mod PrivateSwap {
     use starknet::{SyscallResultTrait, get_tx_info};
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
-    use super::{ContractAddress, DCAOrder, EscrowData, EscrowDataFull, ExecPayload, FieldTrait, IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher, IAtomiqEscrowDispatcherTrait, IAtomiqEscrowStorageDispatcher, IAtomiqEscrowStorageDispatcherTrait, IMockWBTCDispatcherTrait, IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait, Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address, get_contract_address};
+    use super::{
+        ContractAddress, DCAOrder, EscrowData, EscrowDataFull, ExecPayload, FieldTrait,
+        IAggregatorProxyDispatcher, IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher,
+        IAtomiqEscrowDispatcherTrait, IAtomiqEscrowStorageDispatcher,
+        IAtomiqEscrowStorageDispatcherTrait, IMockWBTCDispatcherTrait, IVTokenDispatcher,
+        IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait, Poseidon2Trait,
+        StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address, get_contract_address,
+    };
 
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
@@ -497,17 +504,17 @@ mod PrivateSwap {
     }
 
     #[derive(Drop, starknet::Event)]
-struct DCAOrderCreated {
-    #[key]
-    order_id: u256,
-    owner: ContractAddress,
-    usdc_per_interval: u256,
-    interval_seconds: u64,
-    total_intervals: u32,
-    total_usdc_deposited: u256,
-    total_strk_fee_deposited: u256,
-    btc_destination: ByteArray, 
-}
+    struct DCAOrderCreated {
+        #[key]
+        order_id: u256,
+        owner: ContractAddress,
+        usdc_per_interval: u256,
+        interval_seconds: u64,
+        total_intervals: u32,
+        total_usdc_deposited: u256,
+        total_strk_fee_deposited: u256,
+        btc_destination: ByteArray,
+    }
 
     #[derive(Drop, starknet::Event)]
     struct Deposit {
@@ -1029,7 +1036,7 @@ struct DCAOrderCreated {
             let order_id = self.dca_order_count.read() + 1;
             self.dca_order_count.write(order_id);
             let btc_destination_for_event = btc_destination.clone();
-self.dca_btc_destinations.write(order_id, btc_destination);
+            self.dca_btc_destinations.write(order_id, btc_destination);
 
             let interval_seconds: u64 = interval_hours * 3_600;
 
@@ -1045,7 +1052,6 @@ self.dca_btc_destinations.write(order_id, btc_destination);
                         total_intervals,
                         executed_intervals: 0,
                         is_active: true,
-                          btc_destination: btc_destination_for_event,
                     },
                 );
 
@@ -1063,6 +1069,7 @@ self.dca_btc_destinations.write(order_id, btc_destination);
                         total_intervals,
                         total_usdc_deposited: total_usdc,
                         total_strk_fee_deposited: total_strk_fee,
+                        btc_destination: btc_destination_for_event,
                     },
                 );
 
@@ -1349,8 +1356,9 @@ self.dca_btc_destinations.write(order_id, btc_destination);
             let can_exec = !pending_refund
                 && order.is_active
                 && order.executed_intervals < order.total_intervals
-                && now >= order.last_execution + order.interval_seconds
-                && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
+                && now >= order.last_execution
+                + order.interval_seconds
+                    && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
 
             let strk_amount: u256 = if can_exec {
                 let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
