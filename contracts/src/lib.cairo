@@ -208,7 +208,7 @@ trait IPrivateSwap<TContractState> {
     fn refund_wbtc(ref self: TContractState, wbtc_order_id: u256);
     fn refund_strk(ref self: TContractState, strk_order_id: u256);
 
-    // --- DCA (USDC → wBTC via Atomiq) ---
+    // --- DCA (USDC → BTC via Atomiq) ---
     fn create_dca_order(
         ref self: TContractState,
         btc_destination: ByteArray,
@@ -1216,7 +1216,7 @@ mod PrivateSwap {
         //
         // Queries IAtomiqEscrowStorage::get_state to determine the outcome:
         //
-        //   state == 3 (CLAIMED):
+        //   state == 2 (SOFT_CLAIMED) or state == 3 (CLAIMED):
         //     The LP claimed STRK — BTC was delivered to the user.
         //     Clear the pending flag so the next interval can execute.
         //     No rollback of executed_intervals.
@@ -1227,7 +1227,7 @@ mod PrivateSwap {
         //     retries this interval automatically. Then call Atomiq refund
         //     to reclaim the STRK back to this contract.
         //
-        //   state == 1 (COMMITED) or 2 (SOFT_CLAIMED):
+        //   state == 1 (COMMITED):
         //     Still in flight — reverts with DCA_ESCROW_NOT_SETTLED.
         // ---------------------------------------------------
         fn refund_dca_interval(ref self: ContractState, order_id: u256) {
@@ -1245,7 +1245,6 @@ mod PrivateSwap {
                 .get_state(escrow);
 
             // Escrow must be settled (claimed or refundable) before we act.
-            // States 1 (COMMITED) and 2 (SOFT_CLAIMED) mean still in flight.
             assert(
                 escrow_state.state == ESCROW_STATE_SOFT_CLAIMED
                     || escrow_state.state == ESCROW_STATE_CLAIMED
