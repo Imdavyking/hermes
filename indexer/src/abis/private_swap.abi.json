@@ -62,6 +62,96 @@
   },
   {
     "type": "struct",
+    "name": "contracts::EscrowExecution",
+    "members": [
+      {
+        "name": "hash",
+        "type": "core::felt252"
+      },
+      {
+        "name": "expiry",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "fee",
+        "type": "core::integer::u256"
+      }
+    ]
+  },
+  {
+    "type": "enum",
+    "name": "core::option::Option::<contracts::EscrowExecution>",
+    "variants": [
+      {
+        "name": "Some",
+        "type": "contracts::EscrowExecution"
+      },
+      {
+        "name": "None",
+        "type": "()"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "contracts::EscrowData",
+    "members": [
+      {
+        "name": "offerer",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "claimer",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "token",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "refund_handler",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "claim_handler",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "flags",
+        "type": "core::integer::u128"
+      },
+      {
+        "name": "claim_data",
+        "type": "core::felt252"
+      },
+      {
+        "name": "refund_data",
+        "type": "core::felt252"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "fee_token",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "security_deposit",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "claimer_bounty",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "success_action",
+        "type": "core::option::Option::<contracts::EscrowExecution>"
+      }
+    ]
+  },
+  {
+    "type": "struct",
     "name": "contracts::ExecPayload",
     "members": [
       {
@@ -213,60 +303,6 @@
       {
         "name": "is_active",
         "type": "core::bool"
-      }
-    ]
-  },
-  {
-    "type": "struct",
-    "name": "contracts::EscrowData",
-    "members": [
-      {
-        "name": "offerer",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "claimer",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "token",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "refund_handler",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "claim_handler",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "flags",
-        "type": "core::integer::u128"
-      },
-      {
-        "name": "claim_data",
-        "type": "core::felt252"
-      },
-      {
-        "name": "refund_data",
-        "type": "core::felt252"
-      },
-      {
-        "name": "amount",
-        "type": "core::integer::u256"
-      },
-      {
-        "name": "fee_token",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "security_deposit",
-        "type": "core::integer::u256"
-      },
-      {
-        "name": "claimer_bounty",
-        "type": "core::integer::u256"
       }
     ]
   },
@@ -511,24 +547,48 @@
             "type": "core::integer::u256"
           },
           {
-            "name": "strk_amount",
-            "type": "core::integer::u256"
-          },
-          {
-            "name": "payment_hash",
-            "type": "core::felt252"
-          },
-          {
-            "name": "expiry",
-            "type": "core::integer::u64"
-          },
-          {
-            "name": "flags",
-            "type": "core::integer::u128"
+            "name": "escrow",
+            "type": "contracts::EscrowData"
           },
           {
             "name": "signature",
             "type": "core::array::Array::<core::felt252>"
+          },
+          {
+            "name": "timeout",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "extra_data",
+            "type": "core::array::Span::<core::felt252>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "execute_dca_now",
+        "inputs": [
+          {
+            "name": "order_id",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "escrow",
+            "type": "contracts::EscrowData"
+          },
+          {
+            "name": "signature",
+            "type": "core::array::Array::<core::felt252>"
+          },
+          {
+            "name": "timeout",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "extra_data",
+            "type": "core::array::Span::<core::felt252>"
           }
         ],
         "outputs": [],
@@ -1279,6 +1339,11 @@
       {
         "name": "total_strk_fee_deposited",
         "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "btc_destination",
+        "type": "core::byte_array::ByteArray",
         "kind": "data"
       }
     ]
