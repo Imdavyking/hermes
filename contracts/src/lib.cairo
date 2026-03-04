@@ -292,10 +292,9 @@ mod PrivateSwap {
     use super::{
         ContractAddress, DCAOrder, EscrowData, ExecPayload, FieldTrait, IAggregatorProxyDispatcher,
         IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher, IAtomiqEscrowDispatcherTrait,
-        IAtomiqEscrowStorageDispatcher, IAtomiqEscrowStorageDispatcherTrait,
-        IMockWBTCDispatcherTrait, IVTokenDispatcher, IVTokenDispatcherTrait, IVerifierDispatcher,
-        IVerifierDispatcherTrait, Poseidon2Trait, StrkOrder, WbtcOrder, get_block_timestamp,
-        get_caller_address, get_contract_address,
+        IAtomiqEscrowStorageDispatcher, IAtomiqEscrowStorageDispatcherTrait, IVTokenDispatcher,
+        IVTokenDispatcherTrait, IVerifierDispatcher, IVerifierDispatcherTrait, Poseidon2Trait,
+        StrkOrder, WbtcOrder, get_block_timestamp, get_caller_address, get_contract_address,
     };
 
     component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
