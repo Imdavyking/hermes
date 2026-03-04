@@ -29,7 +29,7 @@ interface DcaOrder {
   intervalSeconds: number;
   totalIntervals: number;
   totalUsdcDeposited: string;
-  btcDestination: string; // ← new
+  btcDestination: string;
   executedIntervals: number;
   isActive: boolean;
   lastExecution: number;
@@ -37,13 +37,22 @@ interface DcaOrder {
   lastExecutedAtBlock?: number;
 }
 
+// status lifecycle:
+//   pending  — STRK sent to Atomiq, BTC not yet confirmed
+//   claimed  — LP delivered BTC to the user's Bitcoin address ✓
+//   refunded — LP failed, interval rolled back, keeper will retry
+type ExecStatus = "pending" | "claimed" | "refunded";
+
 interface DcaExecution {
   executedIntervals: number;
   usdcSpent: string;
   wbtcReceived: string;
   keeper: string;
+  status: ExecStatus;
   executedTimestamp: number;
   executedTxHash: string;
+  claimedAtBlock: number | null;
+  refundedAtBlock: number | null;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -102,6 +111,50 @@ const fmtDate = (ts: number) =>
 const toHexAddr = (raw: string) =>
   "0x" + BigInt(raw).toString(16).padStart(64, "0");
 const shortenAddr = (addr: string) => addr.slice(0, 8) + "…" + addr.slice(-6);
+
+// ── Status badge ──────────────────────────────────────────────────────────────
+
+const STATUS_CONFIG: Record<
+  ExecStatus,
+  { label: string; color: string; bg: string }
+> = {
+  pending: {
+    label: "Pending",
+    color: "#f59e0b",
+    bg: "rgba(245,158,11,0.1)",
+  },
+  claimed: {
+    label: "BTC Delivered ✓",
+    color: "#22c55e",
+    bg: "rgba(34,197,94,0.1)",
+  },
+  refunded: {
+    label: "Retrying",
+    color: "#f87171",
+    bg: "rgba(248,113,113,0.1)",
+  },
+};
+
+function StatusBadge({ status }: { status: ExecStatus }) {
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.pending;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        background: cfg.bg,
+        color: cfg.color,
+        border: `1px solid ${cfg.color}33`,
+        borderRadius: 4,
+        padding: "0.1rem 0.4rem",
+        fontSize: "0.58rem",
+        fontFamily: "'DM Mono', monospace",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {cfg.label}
+    </span>
+  );
+}
 
 // ── Presets ───────────────────────────────────────────────────────────────────
 
@@ -170,7 +223,7 @@ export default function DcaTab() {
       intervalSeconds: Number(o.interval_seconds),
       totalIntervals: Number(o.total_intervals),
       totalUsdcDeposited: o.total_usdc_deposited,
-      btcDestination: o.btc_destination ?? "", // ← new
+      btcDestination: o.btc_destination ?? "",
       executedIntervals: Number(o.executed_intervals),
       isActive: Boolean(o.is_active),
       lastExecution: Number(o.last_execution),
@@ -195,9 +248,16 @@ export default function DcaTab() {
     usdcSpent: e.usdc_spent,
     wbtcReceived: e.wbtc_received,
     keeper: e.keeper,
+    status: (e.status ?? "pending") as ExecStatus,
     executedTimestamp: Number(e.executed_timestamp),
     executedTxHash: e.executed_tx_hash,
+    claimedAtBlock: e.claimed_at_block ? Number(e.claimed_at_block) : null,
+    refundedAtBlock: e.refunded_at_block ? Number(e.refunded_at_block) : null,
   }));
+
+  // Only claimed intervals count toward cost-basis — pending/refunded are
+  // not confirmed deliveries.
+  const confirmedExecs = execHistory.filter((e) => e.status === "claimed");
 
   const { data: btcPriceData } = useReadContract({
     abi,
@@ -1242,24 +1302,40 @@ export default function DcaTab() {
                             key={e.executedIntervals}
                             style={{
                               background: "#0a0a0f",
-                              border: "1px solid #1e1e2e",
+                              border: `1px solid ${
+                                e.status === "claimed"
+                                  ? "rgba(34,197,94,0.15)"
+                                  : e.status === "refunded"
+                                    ? "rgba(248,113,113,0.15)"
+                                    : "#1e1e2e"
+                              }`,
                               borderRadius: 6,
                               padding: "0.6rem 0.8rem",
                               display: "flex",
                               justifyContent: "space-between",
-                              alignItems: "center",
+                              alignItems: "flex-start",
+                              gap: "0.5rem",
                             }}
                           >
-                            <div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
                               <div
                                 style={{
-                                  color: "#aaa",
-                                  fontSize: "0.7rem",
-                                  fontWeight: 700,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "0.5rem",
+                                  marginBottom: "0.2rem",
                                 }}
                               >
-                                #{e.executedIntervals} —{" "}
-                                {fmtSats(e.wbtcReceived)}
+                                <span
+                                  style={{
+                                    color: "#aaa",
+                                    fontSize: "0.7rem",
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  #{e.executedIntervals}
+                                </span>
+                                <StatusBadge status={e.status} />
                               </div>
                               <div
                                 style={{
@@ -1275,12 +1351,25 @@ export default function DcaTab() {
                                   fee {fmtStrk(keeperFeePerExec)}
                                 </span>
                               </div>
+                              {e.status === "refunded" && (
+                                <div
+                                  style={{
+                                    fontSize: "0.58rem",
+                                    color: "#f87171",
+                                    marginTop: "0.2rem",
+                                  }}
+                                >
+                                  LP failed to deliver BTC — interval will be
+                                  retried automatically
+                                </div>
+                              )}
                             </div>
                             <div
                               style={{
                                 color: "#2a2a3a",
                                 fontSize: "0.6rem",
                                 textAlign: "right",
+                                flexShrink: 0,
                               }}
                             >
                               {e.executedTimestamp
@@ -1291,20 +1380,19 @@ export default function DcaTab() {
                         ))}
                       </div>
 
-                      {execHistory.length > 1 &&
+                      {/* Cost basis — claimed intervals only */}
+                      {confirmedExecs.length > 1 &&
+                        expandedId === order.orderId &&
                         (() => {
-                          const totalUsdcRaw = execHistory.reduce(
+                          const totalUsdcRaw = confirmedExecs.reduce(
                             (a, e) => a + Number(e.usdcSpent),
                             0,
                           );
-                          const totalSats = execHistory.reduce(
-                            (a, e) => a + Number(e.wbtcReceived),
-                            0,
-                          );
+                          // wbtc_received is always 0 from the contract — derive
+                          // from usdc spent and current oracle price as a proxy.
+                          // When the indexer gets real wbtc values this can use them.
                           const avg =
-                            totalSats > 0
-                              ? totalUsdcRaw / 1e6 / (totalSats / 1e8)
-                              : null;
+                            btcUsd && totalUsdcRaw > 0 ? btcUsd : null;
                           return avg ? (
                             <div
                               style={{
@@ -1317,15 +1405,14 @@ export default function DcaTab() {
                                 marginTop: "0.25rem",
                               }}
                             >
-                              Avg cost basis:{" "}
+                              <span style={{ color: "#3a3a4a" }}>
+                                {confirmedExecs.length} confirmed deliveries ·
+                                total spent{" "}
+                              </span>
                               <span
                                 style={{ color: "#ffc800", fontWeight: 700 }}
                               >
-                                $
-                                {avg.toLocaleString(undefined, {
-                                  maximumFractionDigits: 0,
-                                })}{" "}
-                                / BTC
+                                {fmtUsdc(totalUsdcRaw.toFixed(0))}
                               </span>
                             </div>
                           ) : null;

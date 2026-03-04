@@ -166,9 +166,12 @@ export const GET_DCA_EXECUTIONS = gql`
       usdc_spent
       wbtc_received
       keeper
+      status
       executed_at_block
       executed_tx_hash
       executed_timestamp
+      claimed_at_block
+      refunded_at_block
     }
   }
 `;
