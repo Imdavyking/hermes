@@ -158,14 +158,16 @@ export async function runKeeper(): Promise<void> {
   const calls = (
     await Promise.all(
       candidates.map(async (o) => {
-        const call = await getExecutePayload(o.id);
-        if (!call) {
+        const calls = await getExecutePayload(o.id);
+        if (!calls) {
           console.log(`  Order ${o.id} skipped (not due or quote failed)`);
         }
-        return call;
+        return calls;
       }),
     )
-  ).filter((call): call is Call => call !== null);
+  )
+    .filter((calls): calls is Call[] => calls !== null)
+    .flat();
 
   console.log(`  Confirmed on-chain and quoted: ${calls.length}`);
 

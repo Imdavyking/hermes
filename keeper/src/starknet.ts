@@ -129,38 +129,29 @@ export function parseAtomiqCalldata(calldata: string[]): any {
 //   - checker() reports the order is not yet due (includes pending-refund guard)
 //   - the order has no BTC destination stored
 //   - the Atomiq quote or calldata cannot be obtained
-
-export async function getExecutePayload(orderId: string): Promise<Call | null> {
+export async function getExecutePayload(
+  orderId: string,
+): Promise<Call[] | null> {
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
 
-    // 1. Confirm the order is due on-chain (source of truth).
-    //    checker() returns false when dca_interval_needs_refund is set, so we
-    //    don't need a separate pending-refund check here.
-    //    payload.strk_amount is the live STRK equivalent of usdc_per_interval;
-    //    it is non-zero only when can_exec is true.
     const checkerResult = (await contract.call("checker", [orderIdU256], {
       blockIdentifier: "latest",
     })) as [boolean, { strk_amount: { low: string; high: string } }];
 
     if (!checkerResult[0]) return null;
 
-    // Reconstruct the u256 strk_amount from the low/high felts returned by
-    // the Cairo ExecPayload struct.
     const strkAmountBn =
       BigInt(checkerResult[1].strk_amount.low) +
       BigInt(checkerResult[1].strk_amount.high) * 2n ** 128n;
 
     if (strkAmountBn === 0n) {
-      // Defensive: checker should never return can_exec=true with amount=0,
-      // but bail out here rather than sending a zero-value swap to Atomiq.
       console.warn(
         `Order ${orderId}: checker returned strk_amount=0 — skipping`,
       );
       return null;
     }
 
-    // 2. Read the user's Bitcoin destination address from contract storage.
     const btcDestination = (await contract.call(
       "get_dca_btc_destination",
       [orderIdU256],
@@ -172,27 +163,30 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
       return null;
     }
 
-    // 3. Fetch an Atomiq STRK → BTC quote using the on-chain STRK amount.
-    //    The SDK accepts a bigint denominated in the token's base unit (wei for
-    //    STRK, i.e. 10^-18). strkAmountBn is already in that unit because the
-    //    contract arithmetic uses STRK_PRECISION = 10^18.
     const sdk = await getSwapper();
 
     const swap = (await sdk.swap(
       Tokens.STARKNET.STRK,
       Tokens.BITCOIN.BTC,
-      strkAmountBn, // exactIn, base-unit bigint
+      strkAmountBn,
       true,
       config.contractAddress,
       btcDestination,
     )) as ToBTCSwap<any>;
 
-    // 4. Extract the `initialize` transaction from the Atomiq SDK.
     const txns = await swap.txsCommit();
+
+    // Extract approve tx (STRK → Atomiq escrow)
+    const approveTx = txns.find(
+      (t: { type: string; tx: { entrypoint: string } }) =>
+        t.type === "INVOKE" && t.tx.entrypoint === "approve",
+    );
+
     const initializeTx = txns.find(
       (t: { type: string; tx: { entrypoint: string } }) =>
         t.type === "INVOKE" && t.tx.entrypoint === "initialize",
     );
+
     if (!initializeTx) {
       throw new Error(
         `Order ${orderId}: no 'initialize' tx in Atomiq calldata`,
@@ -203,7 +197,19 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
       initializeTx as { tx: { calldata: string[] } }
     ).tx.calldata;
 
-    return {
+    const calls: Call[] = [];
+
+    // Include approve if present
+    if (approveTx) {
+      calls.push({
+        contractAddress: (approveTx as { tx: { contractAddress: string } }).tx
+          .contractAddress,
+        entrypoint: "approve",
+        calldata: (approveTx as { tx: { calldata: string[] } }).tx.calldata,
+      });
+    }
+
+    calls.push({
       contractAddress: config.contractAddress,
       entrypoint: "execute_dca",
       calldata: [
@@ -211,13 +217,14 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
         orderIdU256.high.toString(),
         ...rawCalldata,
       ],
-    };
+    });
+
+    return calls;
   } catch (err) {
     console.warn(`getExecutePayload failed for order ${orderId}:`, err);
     return null;
   }
 }
-
 // ── getRefundPayload ──────────────────────────────────────────────────────────
 //
 // Checks whether an order has a stale Atomiq escrow that needs to be refunded
