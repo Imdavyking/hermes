@@ -3,15 +3,14 @@ import { account, provider } from "./config";
 
 async function main() {
   // ── 1. Read STRK address from contract ───────────────────────────────────
-  const strkAddressRaw =
-    "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
   const config = {
     contractAddress:
       "0x6363047115d50b57e072b0bc70858d9f48e987f7452265808ff3a6799e41a51",
   };
 
-  const strkAddress = "0x" + BigInt(strkAddressRaw.toString()).toString(16);
+  const strkAddress =
+    "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
   console.log(`STRK token address: ${strkAddress}`);
 
   // ── 2. Read contract's STRK balance via raw callContract ─────────────────
