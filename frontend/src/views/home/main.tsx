@@ -34,11 +34,24 @@ const erc20Abi = [
   },
 ] as const;
 
+const TABS: { key: AppTab; label: string; icon: string; desc: string }[] = [
+  { key: "dca", label: "DCA", icon: "↻", desc: "USDC → real BTC" },
+  { key: "swap", label: "Swap", icon: "⇄", desc: "wBTC ↔ STRK" },
+  { key: "deposit", label: "Deposit", icon: "↓", desc: "Private pool" },
+  { key: "withdraw", label: "Withdraw", icon: "↑", desc: "ZK exit" },
+  { key: "yield", label: "Yield", icon: "🌱", desc: "Earn on wBTC" },
+];
+
 export default function UmbraHome() {
   const { address } = useAccount();
   const [tab, setTab] = useState<AppTab>("dca");
   const [wBTCBalance, setwBTCBalance] = useState<number | null>(null);
   const [strkBalance, setStrkBalance] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const { data: currentRoot } = useReadContract({
     abi,
@@ -128,126 +141,190 @@ export default function UmbraHome() {
 
   const poolDepositCount = leafCount ? Number(leafCount) : 0;
   const btcPriceDisplay = btcPrice
-    ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+    ? `$${(Number((btcPrice as any)[0]) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
     : "—";
   const payoutDisplay = quotedStrkRaw
-    ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 8 })} STRK`
+    ? `${(Number(quotedStrkRaw as bigint) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 4 })} STRK`
     : "—";
   const wBTCDisplay =
     wBTCBalance != null ? `${Number(wBTCBalance).toFixed(8)}` : "—";
   const strkDisplay =
     strkBalance != null ? `${Number(strkBalance).toFixed(4)}` : "—";
 
-  const TABS: { key: AppTab; label: string }[] = [
-    { key: "deposit", label: "↓  Deposit" },
-    { key: "withdraw", label: "↑  Withdraw" },
-    { key: "swap", label: "⇄  Swap" },
-    { key: "yield", label: "🌱  Yield" },
-    { key: "dca", label: "↻  DCA" },
-  ];
-
   return (
     <div
       style={{
         minHeight: "100vh",
-        background: "#0a0a0f",
+        background: "#080810",
         color: "#fff",
         fontFamily: "'DM Mono', 'Courier New', monospace",
         overflowX: "hidden",
       }}
     >
-      {/* Grid background */}
+      {/* Animated grid */}
       <div
         style={{
           position: "fixed",
           inset: 0,
-          backgroundImage: `linear-gradient(rgba(255,200,0,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,200,0,0.025) 1px, transparent 1px)`,
+          zIndex: 0,
+          backgroundImage: `
+          linear-gradient(rgba(255,200,0,0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,200,0,0.03) 1px, transparent 1px)
+        `,
           backgroundSize: "48px 48px",
           pointerEvents: "none",
-          zIndex: 0,
         }}
       />
-      {/* Glow */}
+
+      {/* Top glow */}
       <div
         style={{
           position: "fixed",
-          top: "-15%",
+          top: "-20%",
           left: "50%",
           transform: "translateX(-50%)",
-          width: "55vw",
-          height: "55vw",
+          width: "60vw",
+          height: "60vw",
           borderRadius: "50%",
           background:
-            "radial-gradient(circle, rgba(255,200,0,0.045) 0%, transparent 65%)",
+            "radial-gradient(circle, rgba(255,200,0,0.06) 0%, transparent 60%)",
           pointerEvents: "none",
           zIndex: 0,
         }}
       />
 
+      {/* BTC corner accent — top right */}
+      <div
+        style={{
+          position: "fixed",
+          top: 24,
+          right: 24,
+          zIndex: 0,
+          opacity: 0.04,
+          fontSize: "12rem",
+          lineHeight: 1,
+          color: "#f7931a",
+          pointerEvents: "none",
+          fontWeight: 900,
+          letterSpacing: "-0.05em",
+        }}
+      >
+        ₿
+      </div>
+
       <div
         style={{
           position: "relative",
           zIndex: 1,
-          maxWidth: 600,
+          maxWidth: 620,
           margin: "0 auto",
           padding: "3rem 1.5rem 6rem",
+          opacity: mounted ? 1 : 0,
+          transition: "opacity 0.4s ease",
         }}
       >
-        {/* Header */}
+        {/* ── Header ───────────────────────────────────────────── */}
         <header style={{ textAlign: "center", marginBottom: "2.5rem" }}>
+          {/* Badge */}
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "0.5rem",
-              fontSize: "0.65rem",
+              fontSize: "0.6rem",
               letterSpacing: "0.25em",
               textTransform: "uppercase",
               color: "#ffc800",
-              border: "1px solid rgba(255,200,0,0.22)",
+              border: "1px solid rgba(255,200,0,0.2)",
               borderRadius: 2,
-              padding: "0.2rem 0.75rem",
-              marginBottom: "1.25rem",
+              padding: "0.25rem 0.9rem",
+              marginBottom: "1.5rem",
+              background: "rgba(255,200,0,0.04)",
             }}
           >
-            <RiShieldKeyholeFill size={11} />
-            Umbra · Private BTC Swap
+            <RiShieldKeyholeFill size={10} />
+            Umbra · Private Bitcoin DeFi · Starknet
           </div>
+
+          {/* Hero headline */}
           <h1
             style={{
-              fontSize: "clamp(2.4rem, 8vw, 4rem)",
+              fontSize: "clamp(2.6rem, 9vw, 4.4rem)",
               fontWeight: 900,
-              letterSpacing: "-0.04em",
+              letterSpacing: "-0.05em",
               margin: 0,
               lineHeight: 1.0,
             }}
           >
-            Deposit BTC.
+            Real BTC.
             <br />
-            <span style={{ color: "#ffc800" }}>Vanish.</span>
+            <span style={{ color: "#ffc800" }}>Your Wallet.</span>
           </h1>
+
+          {/* Subheadline */}
           <p
             style={{
-              color: "#3a3a4a",
-              fontSize: "0.78rem",
-              marginTop: "0.85rem",
-              letterSpacing: "0.05em",
-              lineHeight: 1.7,
+              color: "#444460",
+              fontSize: "0.75rem",
+              marginTop: "1rem",
+              letterSpacing: "0.04em",
+              lineHeight: 1.9,
             }}
           >
-            ZK proof on Starknet · Poseidon2 Merkle tree · Chainlink oracle rate
+            Schedule USDC → Bitcoin purchases delivered to your wallet
+            <br />
+            <span style={{ color: "#2a2a3e" }}>
+              ZK privacy · Chainlink oracle · Atomic swaps · No wrapped tokens
+            </span>
           </p>
+
+          {/* Feature pills */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              flexWrap: "wrap",
+              gap: "0.5rem",
+              marginTop: "1.2rem",
+            }}
+          >
+            {[
+              { label: "Native BTC delivery", color: "#f7931a" },
+              { label: "ZK anonymous", color: "#a78bfa" },
+              { label: "Non-custodial", color: "#22c55e" },
+              { label: "Chainlink oracle", color: "#3b82f6" },
+            ].map(({ label, color }) => (
+              <span
+                key={label}
+                style={{
+                  fontSize: "0.58rem",
+                  letterSpacing: "0.1em",
+                  color,
+                  background: `${color}12`,
+                  border: `1px solid ${color}30`,
+                  borderRadius: 3,
+                  padding: "0.15rem 0.6rem",
+                  textTransform: "uppercase",
+                }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+
+          {/* Connected address */}
           {address && (
             <div
               style={{
                 display: "inline-block",
-                marginTop: "0.75rem",
-                fontSize: "0.62rem",
+                marginTop: "1rem",
+                fontSize: "0.6rem",
                 color: "#22c55e",
                 border: "1px solid rgba(34,197,94,0.2)",
                 borderRadius: 4,
-                padding: "0.2rem 0.7rem",
+                padding: "0.2rem 0.75rem",
                 letterSpacing: "0.1em",
+                background: "rgba(34,197,94,0.04)",
               }}
             >
               ● {shortenAddress(address)}
@@ -255,16 +332,15 @@ export default function UmbraHome() {
           )}
         </header>
 
-        {/* Pool stats */}
+        {/* ── Stats row ────────────────────────────────────────── */}
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr 1fr 1fr",
-            gap: "0.6rem",
-            marginBottom: "0.6rem",
+            gap: "0.5rem",
+            marginBottom: "0.5rem",
           }}
         >
-          <StatCard label="Pool depth" value={poolDepositCount} />
           <StatCard label="BTC/USD" value={btcPriceDisplay} highlight />
           <StatCard
             label="1 wBTC →"
@@ -275,6 +351,7 @@ export default function UmbraHome() {
             }
             highlight
           />
+          <StatCard label="Pool depth" value={poolDepositCount} />
           <StatCard
             label="Merkle root"
             value={currentRoot ? hexRoot(currentRoot) : "—"}
@@ -287,7 +364,7 @@ export default function UmbraHome() {
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
-              gap: "0.6rem",
+              gap: "0.5rem",
               marginBottom: "1.75rem",
             }}
           >
@@ -297,81 +374,141 @@ export default function UmbraHome() {
         )}
         {!address && <div style={{ marginBottom: "1.75rem" }} />}
 
-        {/* Tab nav — 4 columns */}
+        {/* ── Tab nav ──────────────────────────────────────────── */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr 1fr",
-            background: "#111118",
-            border: "1px solid #1e1e2e",
-            borderRadius: 10,
+            gridTemplateColumns: "repeat(5, 1fr)",
+            background: "#0e0e18",
+            border: "1px solid #1a1a28",
+            borderRadius: 12,
             padding: 4,
             marginBottom: "1.5rem",
             gap: 4,
           }}
         >
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              style={{
-                background: tab === key ? "#1e1e2e" : "transparent",
-                color:
-                  tab === key
-                    ? key === "yield"
-                      ? "#22c55e"
-                      : "#ffc800"
-                    : "#3a3a4a",
-                border:
-                  tab === key ? "1px solid #2a2a3a" : "1px solid transparent",
-                borderRadius: 8,
-                padding: "0.7rem 0.4rem",
-                fontSize: "0.68rem",
-                fontFamily: "'DM Mono', monospace",
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                cursor: "pointer",
-                transition: "all 0.18s",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {label}
-            </button>
-          ))}
+          {TABS.map(({ key, label, icon, desc }) => {
+            const isActive = tab === key;
+            const accentColor =
+              key === "yield"
+                ? "#22c55e"
+                : key === "dca"
+                  ? "#f7931a"
+                  : "#ffc800";
+            return (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                style={{
+                  background: isActive ? "#16162a" : "transparent",
+                  color: isActive ? accentColor : "#333348",
+                  border: isActive
+                    ? `1px solid ${accentColor}30`
+                    : "1px solid transparent",
+                  borderRadius: 8,
+                  padding: "0.65rem 0.3rem 0.5rem",
+                  fontSize: "0.62rem",
+                  fontFamily: "'DM Mono', monospace",
+                  fontWeight: 700,
+                  letterSpacing: "0.06em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "0.15rem",
+                  lineHeight: 1.3,
+                }}
+              >
+                <span style={{ fontSize: "1rem", lineHeight: 1 }}>{icon}</span>
+                <span>{label}</span>
+                <span
+                  style={{
+                    fontSize: "0.48rem",
+                    color: isActive ? `${accentColor}99` : "#222234",
+                    letterSpacing: "0.04em",
+                    fontWeight: 400,
+                    textTransform: "none",
+                  }}
+                >
+                  {desc}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* Tab content */}
-        {tab === "deposit" && <DepositTab payoutDisplay={payoutDisplay} />}
-        {tab === "dca" && <DCATab />}
-        {tab === "withdraw" && <WithdrawTab />}
-        {tab === "swap" && <SwapTab />}
-        {tab === "yield" && <YieldTab />}
+        {/* ── Active tab indicator bar ─────────────────────────── */}
+        <div
+          style={{
+            height: 2,
+            background: "#0e0e18",
+            borderRadius: 1,
+            marginBottom: "1.5rem",
+            overflow: "hidden",
+            position: "relative",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              height: "100%",
+              width: `${100 / TABS.length}%`,
+              left: `${(TABS.findIndex((t) => t.key === tab) / TABS.length) * 100}%`,
+              background:
+                tab === "yield"
+                  ? "#22c55e"
+                  : tab === "dca"
+                    ? "#f7931a"
+                    : "#ffc800",
+              borderRadius: 1,
+              transition: "left 0.25s cubic-bezier(0.4,0,0.2,1)",
+            }}
+          />
+        </div>
 
-        {/* Footer */}
+        {/* ── Tab content ──────────────────────────────────────── */}
+        <div style={{ animation: "fadeIn 0.2s ease" }}>
+          {tab === "dca" && <DCATab />}
+          {tab === "swap" && <SwapTab />}
+          {tab === "deposit" && <DepositTab payoutDisplay={payoutDisplay} />}
+          {tab === "withdraw" && <WithdrawTab />}
+          {tab === "yield" && <YieldTab />}
+        </div>
+
+        {/* ── Footer ───────────────────────────────────────────── */}
         <footer
           style={{
             marginTop: "3.5rem",
             textAlign: "center",
-            color: "#1e1e2e",
-            fontSize: "0.58rem",
+            color: "#1a1a28",
+            fontSize: "0.55rem",
             letterSpacing: "0.18em",
             textTransform: "uppercase",
+            lineHeight: 2,
           }}
         >
-          Umbra · Starknet Sepolia · Powered by Garaga + Chainlink + Noir + Vesu
+          <div>Umbra · Starknet Sepolia</div>
+          <div style={{ color: "#141420" }}>
+            Noir · Garaga · Chainlink · Vesu · Atomiq
+          </div>
         </footer>
       </div>
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap');
-        @keyframes spin { to { transform: rotate(360deg); } }
+
+        @keyframes spin    { to { transform: rotate(360deg); } }
+        @keyframes fadeIn  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+        @keyframes pulse   { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
         * { box-sizing: border-box; }
         textarea, input { caret-color: #ffc800; }
-        ::selection { background: rgba(255,200,0,0.18); }
+        ::selection { background: rgba(255,200,0,0.15); }
         ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #0a0a0f; }
-        ::-webkit-scrollbar-thumb { background: #1e1e2e; border-radius: 2px; }
+        ::-webkit-scrollbar-track { background: #080810; }
+        ::-webkit-scrollbar-thumb { background: #1a1a28; border-radius: 2px; }
         button { font-family: 'DM Mono', monospace; }
       `}</style>
     </div>
