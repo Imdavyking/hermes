@@ -433,6 +433,7 @@ mod PrivateSwap {
         pub const DCA_STRK_AMOUNT_OUT_OF_RANGE: felt252 = 'strk amount out of 5% tolerance';
         pub const NOT_OWNER: felt252 = 'caller is not the owner';
         pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
+        pub const DCA_INSUFFICIENT_STRK: felt252 = 'strk balance < escrow amount';
     }
 
     // -------------------------------------------------------
@@ -1598,10 +1599,7 @@ mod PrivateSwap {
             let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
             let balance = strk.balance_of(get_contract_address());
 
-            assert(
-                balance >= escrow.amount,
-                format!("strk balance {} < escrow {}", balance, escrow.amount),
-            );
+            assert(balance >= escrow.amount, Errors::DCA_INSUFFICIENT_STRK);
 
             strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), escrow.amount);
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
