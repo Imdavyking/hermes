@@ -87,15 +87,15 @@ type DcaOrder {
 #   claimed  — DCAIntervalClaimed fired, LP delivered BTC to user's address
 #   refunded — DCAIntervalRefunded fired, LP failed, interval rolled back
 #
-# wbtc_received is always "0" at creation (DCAExecuted hardcodes it).
+# btc_received is always "0" at creation (DCAExecuted hardcodes it).
 # The frontend should treat claimed status as the confirmed success signal,
-# not wbtc_received.
+# not btc_received.
 type DcaExecution {
   id: ID!
   order_id: String!
   executed_intervals: Int!
   usdc_spent: BigDecimalU256!
-  wbtc_received: BigDecimalU256!
+  btc_received: BigDecimalU256!
   keeper: String!
   status: String!
   executed_at_block: Int!

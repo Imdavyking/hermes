@@ -46,7 +46,7 @@ type ExecStatus = "pending" | "claimed" | "refunded";
 interface DcaExecution {
   executedIntervals: number;
   usdcSpent: string;
-  wbtcReceived: string;
+  btcReceived: string;
   keeper: string;
   status: ExecStatus;
   executedTimestamp: number;
@@ -64,7 +64,7 @@ const fmtUsdc = (raw: string | number) =>
     maximumFractionDigits: 2,
   });
 
-const fmtSats = (raw: string) => (Number(raw) / 1e8).toFixed(8) + " wBTC";
+const fmtSats = (raw: string) => (Number(raw) / 1e8).toFixed(8) + " BTC";
 
 const fmtStrk = (raw: bigint | number) =>
   (Number(raw) / 1e18).toLocaleString(undefined, {
@@ -246,7 +246,7 @@ export default function DcaTab() {
   ).map((e: any) => ({
     executedIntervals: Number(e.executed_intervals),
     usdcSpent: e.usdc_spent,
-    wbtcReceived: e.wbtc_received,
+    btcReceived: e.btc_received,
     keeper: e.keeper,
     status: (e.status ?? "pending") as ExecStatus,
     executedTimestamp: Number(e.executed_timestamp),
@@ -333,7 +333,7 @@ export default function DcaTab() {
     enabled: !!usdcRawForPreview,
     watch: false,
   });
-  const wbtcPreviewSats = wbtcPreviewData
+  const btcPreviewSats = wbtcPreviewData
     ? Number(toDecimal((wbtcPreviewData as any).toString()))
     : null;
 
@@ -531,9 +531,9 @@ export default function DcaTab() {
       const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
-      const satsLabel = wbtcPreviewSats
-        ? wbtcPreviewSats.toLocaleString() + " sat"
-        : "wBTC";
+      const satsLabel = btcPreviewSats
+        ? btcPreviewSats.toLocaleString() + " sat"
+        : "BTC";
       toast.update(toastId, {
         render: `DCA order created! ~${satsLabel} every ${fmtHours(effHours)} × ${effExecs}`,
         isLoading: false,
@@ -660,11 +660,11 @@ export default function DcaTab() {
           style={{ flexShrink: 0, marginTop: 2 }}
         />
         <div style={{ fontSize: "0.68rem", color: "#555", lineHeight: 1.8 }}>
-          Schedule recurring USDC → wBTC purchases at the live oracle price.
-          Full USDC is deposited upfront along with a small STRK keeper fee
-          reserve. A keeper calls{" "}
-          <span style={{ color: "#ffc800" }}>execute_dca</span> each interval.
-          wBTC is delivered directly to your Bitcoin address every execution.
+          Schedule recurring USDC → BTC purchases at the live oracle price. Full
+          USDC is deposited upfront along with a small STRK keeper fee reserve.
+          A keeper calls <span style={{ color: "#ffc800" }}>execute_dca</span>{" "}
+          each interval. BTC is delivered directly to your Bitcoin address every
+          execution.
         </div>
       </div>
 
@@ -766,7 +766,7 @@ export default function DcaTab() {
               marginTop: "0.25rem",
             }}
           >
-            wBTC is delivered here each execution. Connect Xverse or paste
+            BTC is delivered here each execution. Connect Xverse or paste
             manually.
           </div>
         </div>
@@ -816,7 +816,7 @@ export default function DcaTab() {
             />
             <span style={suffix}>USDC</span>
           </div>
-          {wbtcPreviewSats !== null && (
+          {btcPreviewSats !== null && (
             <div
               style={{
                 color: "#3a3a4a",
@@ -826,7 +826,7 @@ export default function DcaTab() {
             >
               ≈{" "}
               <span style={{ color: "#ffc800" }}>
-                {wbtcPreviewSats.toLocaleString()} sat
+                {btcPreviewSats.toLocaleString()} sat
               </span>
               {btcPrice
                 ? ` at ${fmtBtcPrice(btcPrice, btcDecimals)} / BTC`
@@ -940,7 +940,7 @@ export default function DcaTab() {
             )}
             <SummaryRow
               label="Per execution"
-              value={`${fmtUsdc((Number(usdcAmount) * 1e6).toFixed(0))} → ~${wbtcPreviewSats?.toLocaleString() ?? "?"} sat`}
+              value={`${fmtUsdc((Number(usdcAmount) * 1e6).toFixed(0))} → ~${btcPreviewSats?.toLocaleString() ?? "?"} sat`}
             />
             <SummaryRow label="Interval" value={fmtHours(effHours)} />
             <SummaryRow label="Executions" value={`${effExecs}×`} />
@@ -988,7 +988,7 @@ export default function DcaTab() {
                 lineHeight: 1.7,
               }}
             >
-              wBTC is delivered to your Bitcoin address each execution. USDC +
+              BTC is delivered to your Bitcoin address each execution. USDC +
               STRK fee are both pulled upfront in step 1.
             </div>
           </div>
@@ -1225,7 +1225,7 @@ export default function DcaTab() {
                       value={order.orderId.slice(0, 14) + "…"}
                     />
                     <DetailRow
-                      label="wBTC owner"
+                      label="BTC owner"
                       value={shortenAddr(order.owner)}
                     />
                     {order.btcDestination && (
@@ -1256,7 +1256,7 @@ export default function DcaTab() {
                     />
                     {btcUsd && (
                       <DetailRow
-                        label="≈ wBTC / exec"
+                        label="≈ BTC / exec"
                         value={
                           Math.floor(
                             (Number(order.usdcPerInterval) / 1e6 / btcUsd) *
@@ -1388,9 +1388,9 @@ export default function DcaTab() {
                             (a, e) => a + Number(e.usdcSpent),
                             0,
                           );
-                          // wbtc_received is always 0 from the contract — derive
+                          // btc_received is always 0 from the contract — derive
                           // from usdc spent and current oracle price as a proxy.
-                          // When the indexer gets real wbtc values this can use them.
+                          // When the indexer gets real btc values this can use them.
                           const avg =
                             btcUsd && totalUsdcRaw > 0 ? btcUsd : null;
                           return avg ? (

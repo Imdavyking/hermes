@@ -436,7 +436,7 @@ export function createWriters(ctx: Context) {
   // confirmed delivered yet — that happens in DCAIntervalClaimed.
   //
   // rawEvent.data: [order_id.low, order_id.high, owner,
-  //   usdc_spent.low, usdc_spent.high, wbtc_received.low, wbtc_received.high,
+  //   usdc_spent.low, usdc_spent.high, btc_received.low, btc_received.high,
   //   executed_intervals, keeper, keeper_fee_paid.low, keeper_fee_paid.high]
   const handleDCAExecuted: starknet.Writer = async ({
     event,
@@ -445,22 +445,19 @@ export function createWriters(ctx: Context) {
     txId,
   }) => {
     if (!block) return;
-    let orderId: string,
-      usdcSpent: string,
-      wbtcReceived: string,
-      keeper: string;
+    let orderId: string, usdcSpent: string, btcReceived: string, keeper: string;
     let executedIntervals: number;
     if (event) {
       orderId = toDecimal(event.order_id);
       usdcSpent = toDecimal(event.usdc_spent);
-      wbtcReceived = toDecimal(event.wbtc_received);
+      btcReceived = toDecimal(event.btc_received);
       executedIntervals = Number(event.executed_intervals);
       keeper = toHexAddress(event.keeper);
     } else if (rawEvent) {
       const d = rawEvent.data;
       orderId = readU256(d[0], d[1]);
       usdcSpent = readU256(d[3], d[4]);
-      wbtcReceived = readU256(d[5], d[6]);
+      btcReceived = readU256(d[5], d[6]);
       executedIntervals = Number(d[7]);
       keeper = toHexAddress(d[8]);
     } else return;
@@ -481,7 +478,7 @@ export function createWriters(ctx: Context) {
     exec.order_id = orderId;
     exec.executed_intervals = executedIntervals;
     exec.usdc_spent = usdcSpent;
-    exec.wbtc_received = wbtcReceived; // always "0" — contract hardcodes it
+    exec.btc_received = btcReceived;
     exec.keeper = keeper;
     exec.status = STATUS_PENDING;
     exec.executed_at_block = block.block_number;

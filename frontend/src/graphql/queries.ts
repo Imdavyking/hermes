@@ -164,7 +164,7 @@ export const GET_DCA_EXECUTIONS = gql`
       order_id
       executed_intervals
       usdc_spent
-      wbtc_received
+      btc_received
       keeper
       status
       executed_at_block

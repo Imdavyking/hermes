@@ -613,7 +613,7 @@ mod PrivateSwap {
         order_id: u256,
         owner: ContractAddress,
         usdc_spent: u256,
-        wbtc_received: u256,
+        btc_received: u256,
         executed_intervals: u32,
         keeper: ContractAddress,
         keeper_fee_paid: u256,
@@ -1126,7 +1126,7 @@ mod PrivateSwap {
                         order_id,
                         owner: order.owner,
                         usdc_spent: order.usdc_per_interval,
-                        wbtc_received: 0,
+                        btc_received: 0,
                         executed_intervals: interval_index,
                         keeper,
                         keeper_fee_paid: if self.registered_keepers.read(keeper) {
@@ -1202,7 +1202,7 @@ mod PrivateSwap {
                         order_id,
                         owner: order.owner,
                         usdc_spent: order.usdc_per_interval,
-                        wbtc_received: 0,
+                        btc_received: 0,
                         executed_intervals: interval_index,
                         keeper,
                         keeper_fee_paid: if self.registered_keepers.read(keeper) {

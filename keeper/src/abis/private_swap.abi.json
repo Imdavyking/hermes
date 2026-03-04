@@ -963,6 +963,22 @@
       },
       {
         "type": "function",
+        "name": "withdraw_strk_admin",
+        "inputs": [
+          {
+            "name": "amount",
+            "type": "core::integer::u256"
+          },
+          {
+            "name": "recipient",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
         "name": "set_usdc",
         "inputs": [
           {
@@ -1369,7 +1385,7 @@
         "kind": "data"
       },
       {
-        "name": "wbtc_received",
+        "name": "btc_received",
         "type": "core::integer::u256",
         "kind": "data"
       },
