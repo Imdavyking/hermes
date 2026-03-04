@@ -10,16 +10,11 @@ import * as dotenv from "dotenv";
 import { getCompiledCode } from "./utils";
 import * as fs from "fs";
 import * as path from "path";
+import { account, provider } from "./config";
 dotenv.config();
 
-async function main() {
-  const provider = new RpcProvider({ nodeUrl: process.env.RPC_ENDPOINT });
-  const account = new Account({
-    provider: provider,
-    signer: process.env.DEPLOYER_PRIVATE_KEY!,
-    address: process.env.DEPLOYER_ADDRESS!,
-  });
 
+async function main() {
   console.log("Account connected:", account.address);
 
   // Load compiled contracts
