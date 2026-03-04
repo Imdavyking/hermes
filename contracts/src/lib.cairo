@@ -272,6 +272,7 @@ trait IPrivateSwap<TContractState> {
     // --- Admin ---
     fn set_wbtc(ref self: TContractState, wbtc: ContractAddress);
     fn set_vesu_vtoken(ref self: TContractState, vtoken: ContractAddress);
+    fn withdraw_strk_admin(ref self: TContractState, amount: u256, recipient: ContractAddress);
     fn set_usdc(ref self: TContractState, usdc: ContractAddress);
     fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
     fn add_keeper(ref self: TContractState, keeper: ContractAddress);
@@ -1539,6 +1540,14 @@ mod PrivateSwap {
             self.vesu_vtoken.write(vtoken);
         }
 
+        fn withdraw_strk_admin(ref self: ContractState, amount: u256, recipient: ContractAddress) {
+            self.assert_only_owner();
+            assert(recipient != ZERO_ADDRESS, Errors::ZERO_ADDRESS);
+            let ok = IERC20Dispatcher { contract_address: self.strk.read() }
+                .transfer(recipient, amount);
+            assert(ok, Errors::STRK_TRANSFER_FAILED);
+        }
+
         fn set_usdc(ref self: ContractState, usdc: ContractAddress) {
             self.assert_only_owner();
             let meta = IERC20MetadataDispatcher { contract_address: usdc };
@@ -1583,7 +1592,6 @@ mod PrivateSwap {
             extra_data: Span<felt252>,
         ) {
             let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
-            // Contract approves Atomiq to pull from its own balance
             strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), escrow.amount);
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
                 .initialize(escrow, signature, timeout, extra_data);
