@@ -274,7 +274,7 @@ export default function UmbraHome() {
             Schedule USDC → Bitcoin purchases delivered to your wallet
             <br />
             <span style={{ color: "#2a2a3e" }}>
-              ZK privacy · Chainlink oracle · Atomic swaps · No wrapped tokens
+              ZK privacy · Chainlink oracle · Atomic swaps
             </span>
           </p>
 
