@@ -64,8 +64,6 @@ const fmtUsdc = (raw: string | number) =>
     maximumFractionDigits: 2,
   });
 
-const fmtSats = (raw: string) => (Number(raw) / 1e8).toFixed(8) + " BTC";
-
 const fmtStrk = (raw: bigint | number) =>
   (Number(raw) / 1e18).toLocaleString(undefined, {
     minimumFractionDigits: 2,
