@@ -8,7 +8,7 @@ async function main() {
 
   const config = {
     contractAddress:
-      "0x1ec5360407b31743697d0177c7c064c68f136020fa38f81c698fa0eca58b49a",
+      "0x6363047115d50b57e072b0bc70858d9f48e987f7452265808ff3a6799e41a51",
   };
 
   const strkAddress = "0x" + BigInt(strkAddressRaw.toString()).toString(16);
