@@ -203,18 +203,13 @@ export async function getExecutePayload(orderId: string): Promise<Call | null> {
       initializeTx as { tx: { calldata: string[] } }
     ).tx.calldata;
 
-    const parsed = parseAtomiqCalldata(rawCalldata);
-
     return {
       contractAddress: config.contractAddress,
       entrypoint: "execute_dca",
       calldata: [
         orderIdU256.low.toString(),
         orderIdU256.high.toString(),
-        parsed.escrow,
-        parsed.signature,
-        parsed.timeout,
-        parsed.extra_data,
+        ...rawCalldata,
       ],
     };
   } catch (err) {

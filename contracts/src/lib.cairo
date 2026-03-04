@@ -1498,10 +1498,9 @@ mod PrivateSwap {
             timeout: u64,
             extra_data: Span<felt252>,
         ) {
-            let this = get_contract_address();
             let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
 
-            strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), amount);
+            strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), escrow.amount);
 
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
                 .initialize(escrow, signature, timeout, extra_data);
