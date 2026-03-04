@@ -64,7 +64,7 @@ async function getSwapper(): Promise<ReturnType<typeof factory.newSwapper>> {
   if (_swapper) return _swapper;
   _swapper = factory.newSwapper({
     chains: { STARKNET: { rpcUrl: config.rpcUrl } },
-    bitcoinNetwork: BitcoinNetwork.TESTNET,
+    bitcoinNetwork: BitcoinNetwork.TESTNET4,
     swapStorage: (chainId: string) =>
       new SqliteUnifiedStorage(`CHAIN_${chainId}.sqlite3`),
     chainStorageCtor: (name: string) =>
