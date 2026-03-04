@@ -1,18 +1,10 @@
-import {
-  Account,
-  CallData,
-  Contract,
-  RpcProvider,
-  hash,
-  stark,
-} from "starknet";
+import { CallData, Contract, stark } from "starknet";
 import * as dotenv from "dotenv";
 import { getCompiledCode } from "./utils";
 import * as fs from "fs";
 import * as path from "path";
 import { account, provider } from "./config";
 dotenv.config();
-
 
 async function main() {
   console.log("Account connected:", account.address);

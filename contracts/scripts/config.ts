@@ -1,11 +1,6 @@
-import {
-  Account,
-  CallData,
-  Contract,
-  RpcProvider,
-  hash,
-  stark,
-} from "starknet";
+import { Account, RpcProvider } from "starknet";
+import * as dotenv from "dotenv";
+dotenv.config();
 export const provider = new RpcProvider({ nodeUrl: process.env.RPC_ENDPOINT });
 export const account = new Account({
   provider: provider,
