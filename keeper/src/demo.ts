@@ -3,6 +3,7 @@ import { account, contract, getExecuteNowPayload } from "./starknet";
 
 const ORDER_ID = "1";
 // Atomiq escrow state values (mirrors the Cairo constants)
+const ESCROW_STATE_SOFT_CLAIMED = 2n;
 const ESCROW_STATE_CLAIMED = 3n;
 const ESCROW_STATE_REFUNDABLE = 4n;
 const ATOMIQ_ESCROW_ADDRESS =
@@ -104,7 +105,8 @@ async function demo() {
 
     if (
       escrowState !== ESCROW_STATE_CLAIMED &&
-      escrowState !== ESCROW_STATE_REFUNDABLE
+      escrowState !== ESCROW_STATE_REFUNDABLE &&
+      escrowState !== ESCROW_STATE_SOFT_CLAIMED
     ) {
       console.log(
         "\n⏳ Escrow is still in-flight. Cannot proceed until the LP claims or the escrow becomes refundable.",
