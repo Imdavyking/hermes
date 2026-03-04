@@ -110,6 +110,106 @@ export function parseAtomiqCalldata(calldata: string[]): any {
   };
 }
 
+export async function getExecuteNowPayload(
+  orderId: string,
+): Promise<Call[] | null> {
+  try {
+    const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
+
+    // Skip checker() — execute_dca_now bypasses the interval check.
+    // We still need the oracle-priced strk_amount so fetch the DCA order
+    // and compute it manually here.
+    const order = (await contract.call("get_dca_order", [orderIdU256], {
+      blockIdentifier: "latest",
+    })) as { usdc_per_interval: { low: string; high: string } };
+
+    const [strkUsd, strkDec] = (await contract.call("get_strk_usd_price", [], {
+      blockIdentifier: "latest",
+    })) as [{ low: string; high: string }, string];
+
+    const STRK_PRECISION = 10n ** 18n;
+    const USDC_PRECISION = 10n ** 6n;
+    const usdcPerInterval =
+      BigInt(order.usdc_per_interval.low) +
+      BigInt(order.usdc_per_interval.high) * 2n ** 128n;
+    const strkUsdBn = BigInt(strkUsd.low) + BigInt(strkUsd.high) * 2n ** 128n;
+    const strkDecBn = BigInt(strkDec);
+    const strkAmountBn =
+      (usdcPerInterval * STRK_PRECISION * 10n ** strkDecBn) /
+      (strkUsdBn * USDC_PRECISION);
+
+    const btcDestination = (await contract.call(
+      "get_dca_btc_destination",
+      [orderIdU256],
+      { blockIdentifier: "latest" },
+    )) as string;
+
+    if (!btcDestination) {
+      console.warn(`Order ${orderId}: no BTC destination stored — skipping`);
+      return null;
+    }
+
+    const sdk = await getSwapper();
+
+    const swap = (await sdk.swap(
+      Tokens.STARKNET.STRK,
+      Tokens.BITCOIN.BTC,
+      strkAmountBn,
+      true,
+      config.keeperAddress,
+      btcDestination,
+    )) as ToBTCSwap<any>;
+
+    const txns = await swap.txsCommit();
+
+    const approveTx = txns.find(
+      (t: { type: string; tx: { entrypoint: string } }) =>
+        t.type === "INVOKE" && t.tx.entrypoint === "approve",
+    );
+
+    const initializeTx = txns.find(
+      (t: { type: string; tx: { entrypoint: string } }) =>
+        t.type === "INVOKE" && t.tx.entrypoint === "initialize",
+    );
+
+    if (!initializeTx) {
+      throw new Error(
+        `Order ${orderId}: no 'initialize' tx in Atomiq calldata`,
+      );
+    }
+
+    const rawCalldata: string[] = (
+      initializeTx as { tx: { calldata: string[] } }
+    ).tx.calldata;
+
+    const calls: Call[] = [];
+
+    if (approveTx) {
+      calls.push({
+        contractAddress: (approveTx as { tx: { contractAddress: string } }).tx
+          .contractAddress,
+        entrypoint: "approve",
+        calldata: (approveTx as { tx: { calldata: string[] } }).tx.calldata,
+      });
+    }
+
+    calls.push({
+      contractAddress: config.contractAddress,
+      entrypoint: "execute_dca_now", // ← only difference
+      calldata: [
+        orderIdU256.low.toString(),
+        orderIdU256.high.toString(),
+        ...rawCalldata,
+      ],
+    });
+
+    return calls;
+  } catch (err) {
+    console.warn(`getExecuteNowPayload failed for order ${orderId}:`, err);
+    return null;
+  }
+}
+
 // ── getExecutePayload ─────────────────────────────────────────────────────────
 //
 // Checks whether a DCA order is due on-chain, fetches a fresh Atomiq STRK→BTC
