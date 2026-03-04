@@ -69,6 +69,29 @@ function readByteArray(
 }
 
 // -------------------------------------------------------
+// Decode a ByteArray from a parsed event object.
+//
+// When Checkpoint decodes a Cairo ByteArray event field it produces:
+//   { data: string[], pending_word: string, pending_word_len: number }
+//
+// We reconstruct the flat felt array expected by readByteArray so we
+// can reuse the same decoder for both the event and rawEvent paths.
+// -------------------------------------------------------
+function decodeByteArrayObject(bta: {
+  data: string[];
+  pending_word: string;
+  pending_word_len: number;
+}): string {
+  const feltArray = [
+    String(bta.data.length),
+    ...bta.data.map(String),
+    String(bta.pending_word),
+    String(bta.pending_word_len),
+  ];
+  return readByteArray(feltArray, 0).value;
+}
+
+// -------------------------------------------------------
 // DcaExecution status values
 //
 //   pending  — DCAExecuted fired, STRK committed to Atomiq, BTC not yet confirmed
@@ -377,7 +400,9 @@ export function createWriters(ctx: Context) {
       intervalSeconds = Number(event.interval_seconds);
       totalIntervals = Number(event.total_intervals);
       totalUsdcDeposited = toDecimal(event.total_usdc_deposited);
-      btcDestination = String(event.btc_destination);
+      // event.btc_destination is a decoded ByteArray object:
+      //   { data: string[], pending_word: string, pending_word_len: number }
+      btcDestination = decodeByteArrayObject(event.btc_destination);
     } else if (rawEvent) {
       const d = rawEvent.data;
       orderId = readU256(d[0], d[1]);
