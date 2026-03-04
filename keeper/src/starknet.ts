@@ -118,7 +118,7 @@ export function parseAtomiqCalldata(calldata: string[]): any {
 
 async function buildAtomiqCalls(
   orderId: string,
-  orderIdU256: ReturnType<typeof uint256.bnToUint256>, // ← use the actual type
+  orderIdU256: ReturnType<typeof uint256.bnToUint256>,
   strkAmountBn: bigint,
   btcDestination: string,
   entrypoint: "execute_dca" | "execute_dca_now",
@@ -130,39 +130,30 @@ async function buildAtomiqCalls(
     Tokens.BITCOIN.BTC,
     strkAmountBn,
     true,
-    config.keeperAddress,
+    config.contractAddress,
     btcDestination,
   )) as ToBTCSwap<any>;
 
   const txns = await swap.txsCommit();
 
-  const approveTx = txns.find(
-    (t: { type: string; tx: { entrypoint: string } }) =>
-      t.type === "INVOKE" && t.tx.entrypoint === "approve",
-  );
+  // The SDK returns a single INVOKE where tx is an array of calls (multicall)
+  const invoke = txns.find((t: any) => t.type === "INVOKE");
+  if (!invoke)
+    throw new Error(`Order ${orderId}: no INVOKE tx in Atomiq calldata`);
 
-  const initializeTx = txns.find(
-    (t: { type: string; tx: { entrypoint: string } }) =>
-      t.type === "INVOKE" && t.tx.entrypoint === "initialize",
+  const innerCalls: any[] = invoke.tx;
+
+  const initializeTx = innerCalls.find(
+    (c: any) => c.entrypoint === "initialize",
   );
 
   if (!initializeTx) {
-    throw new Error(`Order ${orderId}: no 'initialize' tx in Atomiq calldata`);
+    throw new Error(
+      `Order ${orderId}: no 'initialize' call in Atomiq calldata`,
+    );
   }
-
-  const rawCalldata: string[] = (initializeTx as { tx: { calldata: string[] } })
-    .tx.calldata;
 
   const calls: Call[] = [];
-
-  if (approveTx) {
-    calls.push({
-      contractAddress: (approveTx as { tx: { contractAddress: string } }).tx
-        .contractAddress,
-      entrypoint: "approve",
-      calldata: (approveTx as { tx: { calldata: string[] } }).tx.calldata,
-    });
-  }
 
   calls.push({
     contractAddress: config.contractAddress,
@@ -170,7 +161,7 @@ async function buildAtomiqCalls(
     calldata: [
       orderIdU256.low.toString(),
       orderIdU256.high.toString(),
-      ...rawCalldata,
+      ...initializeTx.calldata,
     ],
   });
 
