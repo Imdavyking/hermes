@@ -44,7 +44,9 @@ async function main() {
 
   const amount = uint256.bnToUint256(AMOUNT);
 
-  console.log(`Transferring 100 STRK to ${RECIPIENT}...`);
+  console.log(
+    `Transferring ${AMOUNT / BigInt(10 ** 18)} STRK to ${RECIPIENT}...`,
+  );
 
   const tx = await strkContract.invoke("transfer", [RECIPIENT, amount]);
 
