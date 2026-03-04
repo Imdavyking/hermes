@@ -170,7 +170,7 @@ export async function getExecutePayload(
       Tokens.BITCOIN.BTC,
       strkAmountBn,
       true,
-      config.contractAddress,
+      config.keeperAddress,
       btcDestination,
     )) as ToBTCSwap<any>;
 
