@@ -1596,6 +1596,13 @@ mod PrivateSwap {
             extra_data: Span<felt252>,
         ) {
             let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
+            let balance = strk.balance_of(get_contract_address());
+
+            assert(
+                balance >= escrow.amount,
+                format!("strk balance {} < escrow {}", balance, escrow.amount),
+            );
+
             strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), escrow.amount);
             IAtomiqEscrowDispatcher { contract_address: ATOMIQ_ESCROW.try_into().unwrap() }
                 .initialize(escrow, signature, timeout, extra_data);
