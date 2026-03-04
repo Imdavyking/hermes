@@ -372,6 +372,8 @@ mod PrivateSwap {
     //   2 = SOFT_CLAIMED — payment seen off-chain, not yet claimed on-chain
     //   3 = CLAIMED      — LP claimed, BTC delivered
     //   4 = REFUNDABLE   — LP failed, offerer can refund
+
+    const ESCROW_STATE_SOFT_CLAIMED: u8 = 2;
     const ESCROW_STATE_CLAIMED: u8 = 3;
     const ESCROW_STATE_REFUNDABLE: u8 = 4;
 
@@ -1249,7 +1251,8 @@ mod PrivateSwap {
             // Escrow must be settled (claimed or refundable) before we act.
             // States 1 (COMMITED) and 2 (SOFT_CLAIMED) mean still in flight.
             assert(
-                escrow_state.state == ESCROW_STATE_CLAIMED
+                escrow_state.state == ESCROW_STATE_SOFT_CLAIMED
+                    || escrow_state.state == ESCROW_STATE_CLAIMED
                     || escrow_state.state == ESCROW_STATE_REFUNDABLE,
                 Errors::DCA_ESCROW_NOT_SETTLED,
             );
@@ -1274,7 +1277,8 @@ mod PrivateSwap {
             self.dca_pending_interval_index.write(order_id, 0);
             self.dca_pending_escrows.write(escrow_key, zeroed_escrow);
 
-            if escrow_state.state == ESCROW_STATE_CLAIMED {
+            if escrow_state.state == ESCROW_STATE_SOFT_CLAIMED
+                || escrow_state.state == ESCROW_STATE_CLAIMED {
                 // LP claimed — BTC was delivered. Interval stands, just unlock.
                 self.emit(DCAIntervalClaimed { order_id, interval_index });
                 return;

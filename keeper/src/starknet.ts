@@ -39,7 +39,7 @@ export const contract = new Contract({
 
 const ATOMIQ_ESCROW_ADDRESS =
   "0x017bf50dd28b6d823a231355bb25813d4396c8e19d2df03026038714a22f0413";
-
+const ESCROW_STATE_SOFT_CLAIMED = 2n;
 const ESCROW_STATE_CLAIMED = 3n;
 const ESCROW_STATE_REFUNDABLE = 4n;
 
@@ -381,7 +381,11 @@ export async function getRefundPayload(orderId: string): Promise<Call | null> {
 
     const state = await getAtomiqEscrowState(escrow);
 
-    if (state !== ESCROW_STATE_CLAIMED && state !== ESCROW_STATE_REFUNDABLE) {
+    if (
+      state !== ESCROW_STATE_SOFT_CLAIMED &&
+      state !== ESCROW_STATE_CLAIMED &&
+      state !== ESCROW_STATE_REFUNDABLE
+    ) {
       console.log(
         `  Order ${orderId}: escrow still in-flight — skipping refund this tick`,
       );
