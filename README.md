@@ -1,4 +1,4 @@
-# Umbra — Private wBTC Protocol on Starknet
+# Umbra — Private BTC Protocol on Starknet
 
 > Deposit wBTC anonymously. Withdraw to any address. Swap privately for STRK. Earn yield without revealing your position. DCA recurring USDC → **real BTC delivered to your Bitcoin wallet**. No on-chain link between depositor and withdrawer.
 
