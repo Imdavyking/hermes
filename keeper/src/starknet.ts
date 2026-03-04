@@ -7,6 +7,10 @@ import {
 import { Call } from "starknet";
 import { config } from "./config";
 import abi from "./abis/private_swap.abi.json";
+import {
+  SqliteStorageManager,
+  SqliteUnifiedStorage,
+} from "@atomiqlabs/storage-sqlite";
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +50,10 @@ async function getSwapper(): Promise<ReturnType<typeof factory.newSwapper>> {
   _swapper = factory.newSwapper({
     chains: { STARKNET: { rpcUrl: config.rpcUrl } },
     bitcoinNetwork: BitcoinNetwork.TESTNET,
+    swapStorage: (chainId: string) =>
+      new SqliteUnifiedStorage(`CHAIN_${chainId}.sqlite3`),
+    chainStorageCtor: (name: string) =>
+      new SqliteStorageManager(`STORE_${name}.sqlite3`),
   });
   await _swapper.init();
   return _swapper;
@@ -75,14 +83,6 @@ async function getSwapper(): Promise<ReturnType<typeof factory.newSwapper>> {
 //   [16] sig_len
 //   [17..17+sig_len-1] signature felts
 
-interface ParsedAtomiqCalldata {
-  paymentHash: string; // felt252 hex string
-  expiry: string; // felt252 hex string — also the Atomiq escrow timeout
-  flags: string; // u128 hex string
-  strkAmount: bigint; // amount.low (amount.high assumed 0 for realistic DCA sizes)
-  signatureStart: number;
-}
-
 export function parseAtomiqCalldata(calldata: string[]): any {
   const sigLenIndex = 16;
   const sigLen = parseInt(calldata[sigLenIndex], 10);
@@ -110,33 +110,119 @@ export function parseAtomiqCalldata(calldata: string[]): any {
   };
 }
 
+// ── Shared Atomiq quote builder ───────────────────────────────────────────────
+//
+// Fetches an Atomiq STRK→BTC quote for a given strk amount and btc destination,
+// and returns [approveTx, initializeTx] calls. Used by both getExecutePayload
+// and getExecuteNowPayload.
+
+async function buildAtomiqCalls(
+  orderId: string,
+  orderIdU256: ReturnType<typeof uint256.bnToUint256>, // ← use the actual type
+  strkAmountBn: bigint,
+  btcDestination: string,
+  entrypoint: "execute_dca" | "execute_dca_now",
+): Promise<Call[] | null> {
+  const sdk = await getSwapper();
+
+  const swap = (await sdk.swap(
+    Tokens.STARKNET.STRK,
+    Tokens.BITCOIN.BTC,
+    strkAmountBn,
+    true,
+    config.keeperAddress,
+    btcDestination,
+  )) as ToBTCSwap<any>;
+
+  const txns = await swap.txsCommit();
+
+  const approveTx = txns.find(
+    (t: { type: string; tx: { entrypoint: string } }) =>
+      t.type === "INVOKE" && t.tx.entrypoint === "approve",
+  );
+
+  const initializeTx = txns.find(
+    (t: { type: string; tx: { entrypoint: string } }) =>
+      t.type === "INVOKE" && t.tx.entrypoint === "initialize",
+  );
+
+  if (!initializeTx) {
+    throw new Error(`Order ${orderId}: no 'initialize' tx in Atomiq calldata`);
+  }
+
+  const rawCalldata: string[] = (initializeTx as { tx: { calldata: string[] } })
+    .tx.calldata;
+
+  const calls: Call[] = [];
+
+  if (approveTx) {
+    calls.push({
+      contractAddress: (approveTx as { tx: { contractAddress: string } }).tx
+        .contractAddress,
+      entrypoint: "approve",
+      calldata: (approveTx as { tx: { calldata: string[] } }).tx.calldata,
+    });
+  }
+
+  calls.push({
+    contractAddress: config.contractAddress,
+    entrypoint,
+    calldata: [
+      orderIdU256.low.toString(),
+      orderIdU256.high.toString(),
+      ...rawCalldata,
+    ],
+  });
+
+  return calls;
+}
+
+// ── getExecuteNowPayload ──────────────────────────────────────────────────────
+//
+// Demo/test variant of getExecutePayload that targets execute_dca_now,
+// bypassing the on-chain interval check. Computes the STRK amount directly
+// from the oracle rather than relying on checker().
+//
+// Remove before mainnet.
+
 export async function getExecuteNowPayload(
   orderId: string,
 ): Promise<Call[] | null> {
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
 
-    // Skip checker() — execute_dca_now bypasses the interval check.
-    // We still need the oracle-priced strk_amount so fetch the DCA order
-    // and compute it manually here.
+    // Fetch DCA order to get usdc_per_interval.
     const order = (await contract.call("get_dca_order", [orderIdU256], {
       blockIdentifier: "latest",
-    })) as { usdc_per_interval: { low: string; high: string } };
+    })) as { usdc_per_interval: bigint };
 
-    const [strkUsd, strkDec] = (await contract.call("get_strk_usd_price", [], {
+    // Fetch STRK/USD oracle price. get_strk_usd_price returns (u128, u32)
+    // which starknet.js deserializes as { "0": bigint, "1": bigint }.
+    const priceResult = (await contract.call("get_strk_usd_price", [], {
       blockIdentifier: "latest",
-    })) as [{ low: string; high: string }, string];
+    })) as { "0": bigint; "1": bigint };
+
+    console.log(
+      "strk price result:",
+      JSON.stringify(
+        priceResult,
+        (_, v) => (typeof v === "bigint" ? v.toString() : v),
+        2,
+      ),
+    );
+
+    const strkUsdBn = BigInt(priceResult["0"]);
+    const strkDecBn = BigInt(priceResult["1"]);
 
     const STRK_PRECISION = 10n ** 18n;
     const USDC_PRECISION = 10n ** 6n;
-    const usdcPerInterval =
-      BigInt(order.usdc_per_interval.low) +
-      BigInt(order.usdc_per_interval.high) * 2n ** 128n;
-    const strkUsdBn = BigInt(strkUsd.low) + BigInt(strkUsd.high) * 2n ** 128n;
-    const strkDecBn = BigInt(strkDec);
+    const usdcPerInterval = BigInt(order.usdc_per_interval);
+
     const strkAmountBn =
       (usdcPerInterval * STRK_PRECISION * 10n ** strkDecBn) /
       (strkUsdBn * USDC_PRECISION);
+
+    console.log(`Order ${orderId}: computed strkAmount = ${strkAmountBn}`);
 
     const btcDestination = (await contract.call(
       "get_dca_btc_destination",
@@ -144,66 +230,20 @@ export async function getExecuteNowPayload(
       { blockIdentifier: "latest" },
     )) as string;
 
+    console.log({ btcDestination });
+
     if (!btcDestination) {
       console.warn(`Order ${orderId}: no BTC destination stored — skipping`);
       return null;
     }
 
-    const sdk = await getSwapper();
-
-    const swap = (await sdk.swap(
-      Tokens.STARKNET.STRK,
-      Tokens.BITCOIN.BTC,
+    return buildAtomiqCalls(
+      orderId,
+      orderIdU256,
       strkAmountBn,
-      true,
-      config.keeperAddress,
       btcDestination,
-    )) as ToBTCSwap<any>;
-
-    const txns = await swap.txsCommit();
-
-    const approveTx = txns.find(
-      (t: { type: string; tx: { entrypoint: string } }) =>
-        t.type === "INVOKE" && t.tx.entrypoint === "approve",
+      "execute_dca_now",
     );
-
-    const initializeTx = txns.find(
-      (t: { type: string; tx: { entrypoint: string } }) =>
-        t.type === "INVOKE" && t.tx.entrypoint === "initialize",
-    );
-
-    if (!initializeTx) {
-      throw new Error(
-        `Order ${orderId}: no 'initialize' tx in Atomiq calldata`,
-      );
-    }
-
-    const rawCalldata: string[] = (
-      initializeTx as { tx: { calldata: string[] } }
-    ).tx.calldata;
-
-    const calls: Call[] = [];
-
-    if (approveTx) {
-      calls.push({
-        contractAddress: (approveTx as { tx: { contractAddress: string } }).tx
-          .contractAddress,
-        entrypoint: "approve",
-        calldata: (approveTx as { tx: { calldata: string[] } }).tx.calldata,
-      });
-    }
-
-    calls.push({
-      contractAddress: config.contractAddress,
-      entrypoint: "execute_dca_now", // ← only difference
-      calldata: [
-        orderIdU256.low.toString(),
-        orderIdU256.high.toString(),
-        ...rawCalldata,
-      ],
-    });
-
-    return calls;
   } catch (err) {
     console.warn(`getExecuteNowPayload failed for order ${orderId}:`, err);
     return null;
@@ -213,22 +253,13 @@ export async function getExecuteNowPayload(
 // ── getExecutePayload ─────────────────────────────────────────────────────────
 //
 // Checks whether a DCA order is due on-chain, fetches a fresh Atomiq STRK→BTC
-// quote, and returns the fully-formed `execute_dca` Call object.
-//
-// The STRK amount to swap comes from checker()'s payload.strk_amount — the
-// contract computes it on-chain as the live oracle-priced STRK equivalent of
-// the order's usdc_per_interval (STRK/USD Pragma feed only, BTC cancels out):
-//
-//   strk_amount = usdc_per_interval * STRK_PRECISION * 10^strk_dec
-//                 / (strk_usd * USDC_PRECISION)
-//
-// This means the keeper never needs to replicate oracle math or hold a
-// hardcoded config value for the per-interval STRK amount.
+// quote, and returns the fully-formed `execute_dca` Call array.
 //
 // Returns null if:
 //   - checker() reports the order is not yet due (includes pending-refund guard)
 //   - the order has no BTC destination stored
 //   - the Atomiq quote or calldata cannot be obtained
+
 export async function getExecutePayload(
   orderId: string,
 ): Promise<Call[] | null> {
@@ -263,68 +294,19 @@ export async function getExecutePayload(
       return null;
     }
 
-    const sdk = await getSwapper();
-
-    const swap = (await sdk.swap(
-      Tokens.STARKNET.STRK,
-      Tokens.BITCOIN.BTC,
+    return buildAtomiqCalls(
+      orderId,
+      orderIdU256,
       strkAmountBn,
-      true,
-      config.keeperAddress,
       btcDestination,
-    )) as ToBTCSwap<any>;
-
-    const txns = await swap.txsCommit();
-
-    // Extract approve tx (STRK → Atomiq escrow)
-    const approveTx = txns.find(
-      (t: { type: string; tx: { entrypoint: string } }) =>
-        t.type === "INVOKE" && t.tx.entrypoint === "approve",
+      "execute_dca",
     );
-
-    const initializeTx = txns.find(
-      (t: { type: string; tx: { entrypoint: string } }) =>
-        t.type === "INVOKE" && t.tx.entrypoint === "initialize",
-    );
-
-    if (!initializeTx) {
-      throw new Error(
-        `Order ${orderId}: no 'initialize' tx in Atomiq calldata`,
-      );
-    }
-
-    const rawCalldata: string[] = (
-      initializeTx as { tx: { calldata: string[] } }
-    ).tx.calldata;
-
-    const calls: Call[] = [];
-
-    // Include approve if present
-    if (approveTx) {
-      calls.push({
-        contractAddress: (approveTx as { tx: { contractAddress: string } }).tx
-          .contractAddress,
-        entrypoint: "approve",
-        calldata: (approveTx as { tx: { calldata: string[] } }).tx.calldata,
-      });
-    }
-
-    calls.push({
-      contractAddress: config.contractAddress,
-      entrypoint: "execute_dca",
-      calldata: [
-        orderIdU256.low.toString(),
-        orderIdU256.high.toString(),
-        ...rawCalldata,
-      ],
-    });
-
-    return calls;
   } catch (err) {
     console.warn(`getExecutePayload failed for order ${orderId}:`, err);
     return null;
   }
 }
+
 // ── getRefundPayload ──────────────────────────────────────────────────────────
 //
 // Checks whether an order has a stale Atomiq escrow that needs to be refunded
@@ -337,16 +319,11 @@ export async function getExecutePayload(
 // Returns null if:
 //   - no pending escrow exists
 //   - the escrow expiry has not yet elapsed (too early to refund)
-//
-// The keeper calls this in a first pass before getExecutePayload() so that
-// rolled-back intervals are immediately eligible for re-execution in the
-// same keeper tick.
 
 export async function getRefundPayload(orderId: string): Promise<Call | null> {
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
 
-    // 1. Check whether this order has a pending failed interval.
     const needsRefund = (await contract.call(
       "dca_interval_needs_refund",
       [orderIdU256],
@@ -355,20 +332,15 @@ export async function getRefundPayload(orderId: string): Promise<Call | null> {
 
     if (!needsRefund) return null;
 
-    // 2. Read the stored pending escrow to check its expiry.
-    //    The contract's get_dca_pending_escrow() view derives the storage key
-    //    from order_id and the stored pending interval index.
     const escrow = (await contract.call(
       "get_dca_pending_escrow",
       [orderIdU256],
       { blockIdentifier: "latest" },
     )) as {
-      refund_data: string; // felt252 — the Atomiq escrow expiry timestamp
+      refund_data: string;
       amount: { low: string; high: string };
     };
 
-    // refund_data was written as expiry.into() in execute_dca(),
-    // so it is the Unix timestamp after which Atomiq::refund() is callable.
     const expirySeconds = BigInt(escrow.refund_data);
     const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
 
@@ -380,8 +352,6 @@ export async function getRefundPayload(orderId: string): Promise<Call | null> {
       return null;
     }
 
-    // 3. Build the refund_dca_interval calldata.
-    //    The contract reads the stored escrow itself — we only need order_id.
     return {
       contractAddress: config.contractAddress,
       entrypoint: "refund_dca_interval",
