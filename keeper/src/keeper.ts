@@ -86,24 +86,34 @@ export async function runKeeper(): Promise<void> {
 
   console.log(`  Active orders in indexer: ${allOrders.length}`);
 
-  // ── Pass 1: Refund stale Atomiq escrows ──────────────────────────────────
+  // ── Pass 1: Refund settled Atomiq escrows ─────────────────────────────────
   //
   // Before trying to execute new intervals we check every active order for a
-  // pending failed escrow (LP never sent BTC, timeout elapsed). Refunding
-  // rolls back the interval counter, making it immediately eligible for
-  // re-execution in Pass 2 of the same tick.
+  // pending settled escrow. getRefundPayload calls IAtomiqEscrowStorage::get_state
+  // to determine whether the escrow is settled (claimed or refundable):
+  //
+  //   state 3 (CLAIMED):    LP delivered BTC — clear the pending flag so the
+  //                         next interval can execute. No rollback.
+  //
+  //   state 4 (REFUNDABLE): LP failed — roll back the interval counter and
+  //                         reclaim STRK. Keeper retries automatically.
+  //
+  //   state 1/2 (in-flight): skip — nothing to do yet, retry next tick.
+  //
+  // Refund calls are batched into a single tx to minimise gas overhead.
   //
   // Why refund BEFORE execute?
   //   If we executed first, orders with a pending refund would be blocked by
   //   the DCA_INTERVAL_PENDING guard and skipped for the entire tick, delaying
-  //   the user's DCA by a full interval period unnecessarily.
+  //   the user's DCA by a full interval period unnecessarily. After a
+  //   successful refund (especially a rollback), the order becomes immediately
+  //   eligible for re-execution in Pass 2 of the same tick.
   //
-  // Refund calls are batched into a single tx to minimise gas overhead.
-  // If the refund tx reverts (e.g. escrow was already claimed by LP on a
-  // previous attempt), we log the failure and skip Pass 2 for safety —
-  // the state may be inconsistent and retrying execute could double-spend.
+  // If the refund tx reverts we skip Pass 2 entirely — on-chain state may be
+  // inconsistent and retrying execute could double-spend. We'll reassess on
+  // the next tick once the indexer has caught up.
 
-  console.log("  Pass 1: scanning for stale escrows to refund...");
+  console.log("  Pass 1: scanning for settled escrows to refund...");
 
   const refundCalls = (
     await Promise.all(
@@ -111,7 +121,7 @@ export async function runKeeper(): Promise<void> {
         const call = await getRefundPayload(o.id);
         if (call) {
           console.log(
-            `  Order ${o.id}: stale escrow detected — queuing refund`,
+            `  Order ${o.id}: settled escrow detected — queuing refund`,
           );
         }
         return call;
@@ -136,7 +146,7 @@ export async function runKeeper(): Promise<void> {
       return;
     }
   } else {
-    console.log("  No stale escrows found.");
+    console.log("  No settled escrows found.");
   }
 
   // ── Pass 2: Execute due intervals ────────────────────────────────────────

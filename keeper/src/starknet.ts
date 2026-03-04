@@ -35,6 +35,21 @@ export const contract = new Contract({
   providerOrAccount: provider,
 });
 
+// ── Atomiq constants ──────────────────────────────────────────────────────────
+
+const ATOMIQ_ESCROW_ADDRESS =
+  "0x017bf50dd28b6d823a231355bb25813d4396c8e19d2df03026038714a22f0413";
+
+const ESCROW_STATE_CLAIMED = 3n;
+const ESCROW_STATE_REFUNDABLE = 4n;
+
+const ESCROW_STATE_LABEL: Record<string, string> = {
+  "1": "COMMITED (in-flight)",
+  "2": "SOFT_CLAIMED (payment seen, not yet on-chain)",
+  "3": "CLAIMED ✓ — BTC delivered",
+  "4": "REFUNDABLE — LP failed",
+};
+
 // ── Atomiq swapper (module-level singleton) ───────────────────────────────────
 // Initialised once on first use; reused across all keeper ticks.
 
@@ -59,62 +74,108 @@ async function getSwapper(): Promise<ReturnType<typeof factory.newSwapper>> {
   return _swapper;
 }
 
-// ── Atomiq calldata parser ────────────────────────────────────────────────────
+// ── Atomiq escrow state ───────────────────────────────────────────────────────
 //
-// Parses the EscrowData fields from an Atomiq `initialize` calldata array.
+// Calls IAtomiqEscrowStorage::get_state with the full EscrowData struct so we
+// can determine whether an escrow is still in-flight, claimed, or refundable
+// before attempting refund_dca_interval on-chain.
 //
-// Starknet serialization layout (0-indexed):
-//   [0]  offerer
-//   [1]  claimer
-//   [2]  token
-//   [3]  refund_handler
-//   [4]  claim_handler
-//   [5]  flags
-//   [6]  claim_data      ← payment hash
-//   [7]  refund_data     ← expiry as felt252
-//   [8]  amount.low
-//   [9]  amount.high
-//   [10] fee_token
-//   [11] security_deposit.low
-//   [12] security_deposit.high
-//   [13] claimer_bounty.low
-//   [14] claimer_bounty.high
-//   [15] success_action discriminant (0 = None)
-//   [16] sig_len
-//   [17..17+sig_len-1] signature felts
+// EscrowData Cairo ABI order:
+//   offerer, claimer, token, refund_handler, claim_handler  — ContractAddress (felt252)
+//   flags                                                   — u128
+//   claim_data, refund_data                                 — felt252
+//   amount                                                  — u256 (low, high)
+//   fee_token                                               — ContractAddress (felt252)
+//   security_deposit                                        — u256 (low, high)
+//   claimer_bounty                                          — u256 (low, high)
+//   success_action                                          — Option<EscrowExecution>
+//                                                             None  → [0x1]
+//                                                             Some  → [0x0, hash, expiry, fee.low, fee.high]
+//
+// EscrowState return layout: [init_blockheight, finish_blockheight, state]
+//   state: 1=COMMITED, 2=SOFT_CLAIMED, 3=CLAIMED, 4=REFUNDABLE
 
-export function parseAtomiqCalldata(calldata: string[]): any {
-  const sigLenIndex = 16;
-  const sigLen = parseInt(calldata[sigLenIndex], 10);
-  const signature = calldata.slice(sigLenIndex + 1, sigLenIndex + 1 + sigLen);
-
-  return {
-    escrow: {
-      offerer: `0x${BigInt(calldata[0]).toString(16)}`,
-      claimer: `0x${BigInt(calldata[1]).toString(16)}`,
-      token: `0x${BigInt(calldata[2]).toString(16)}`,
-      refund_handler: `0x${BigInt(calldata[3]).toString(16)}`,
-      claim_handler: `0x${BigInt(calldata[4]).toString(16)}`,
-      flags: calldata[5],
-      claim_data: calldata[6],
-      refund_data: calldata[7],
-      amount: { low: calldata[8], high: calldata[9] },
-      fee_token: `0x${BigInt(calldata[10]).toString(16)}`,
-      security_deposit: { low: calldata[11], high: calldata[12] },
-      claimer_bounty: { low: calldata[13], high: calldata[14] },
-      success_action: calldata[15],
-    },
-    signature,
-    timeout: calldata[sigLenIndex + sigLen + 1],
-    extra_data: calldata[sigLenIndex + sigLen + 2],
+function serializeSuccessAction(successAction: {
+  Some: unknown;
+  None: boolean;
+}): string[] {
+  if (successAction.None) {
+    return ["0x1"];
+  }
+  const exec = successAction.Some as {
+    hash: bigint;
+    expiry: bigint;
+    fee: bigint;
   };
+  return [
+    "0x0",
+    exec.hash.toString(),
+    exec.expiry.toString(),
+    (exec.fee & 0xffffffffffffffffffffffffffffffffn).toString(),
+    (exec.fee >> 128n).toString(),
+  ];
+}
+
+async function getAtomiqEscrowState(
+  escrow: Record<string, unknown>,
+): Promise<bigint> {
+  const successAction = escrow.success_action as {
+    Some: unknown;
+    None: boolean;
+  };
+
+  const calldata = [
+    escrow.offerer,
+    escrow.claimer,
+    escrow.token,
+    escrow.refund_handler,
+    escrow.claim_handler,
+    escrow.flags,
+    escrow.claim_data,
+    escrow.refund_data,
+    // u256 amount: low, high
+    (
+      BigInt(escrow.amount as bigint) & 0xffffffffffffffffffffffffffffffffn
+    ).toString(),
+    (BigInt(escrow.amount as bigint) >> 128n).toString(),
+    escrow.fee_token,
+    // u256 security_deposit: low, high
+    (
+      BigInt(escrow.security_deposit as bigint) &
+      0xffffffffffffffffffffffffffffffffn
+    ).toString(),
+    (BigInt(escrow.security_deposit as bigint) >> 128n).toString(),
+    // u256 claimer_bounty: low, high
+    (
+      BigInt(escrow.claimer_bounty as bigint) &
+      0xffffffffffffffffffffffffffffffffn
+    ).toString(),
+    (BigInt(escrow.claimer_bounty as bigint) >> 128n).toString(),
+    // Option<EscrowExecution>
+    ...serializeSuccessAction(successAction),
+  ].map(String);
+
+  const raw = await provider.callContract({
+    contractAddress: ATOMIQ_ESCROW_ADDRESS,
+    entrypoint: "get_state",
+    calldata,
+  });
+
+  const result = raw as unknown as string[];
+  // [init_blockheight, finish_blockheight, state]
+  const state = BigInt(result[2]);
+
+  console.log(
+    `    Atomiq escrow state: ${state} — ${ESCROW_STATE_LABEL[state.toString()] ?? "unknown"}`,
+  );
+
+  return state;
 }
 
 // ── Shared Atomiq quote builder ───────────────────────────────────────────────
 //
 // Fetches an Atomiq STRK→BTC quote for a given strk amount and btc destination,
-// and returns [approveTx, initializeTx] calls. Used by both getExecutePayload
-// and getExecuteNowPayload.
+// and returns the fully-formed execute_dca / execute_dca_now Call array.
 
 async function buildAtomiqCalls(
   orderId: string,
@@ -136,43 +197,36 @@ async function buildAtomiqCalls(
 
   const txns = await swap.txsCommit();
 
-  // The SDK returns a single INVOKE where tx is an array of calls (multicall)
   const invoke = txns.find((t: any) => t.type === "INVOKE");
   if (!invoke)
     throw new Error(`Order ${orderId}: no INVOKE tx in Atomiq calldata`);
 
   const innerCalls: any[] = invoke.tx;
-
   const initializeTx = innerCalls.find(
     (c: any) => c.entrypoint === "initialize",
   );
-
-  if (!initializeTx) {
+  if (!initializeTx)
     throw new Error(
       `Order ${orderId}: no 'initialize' call in Atomiq calldata`,
     );
-  }
 
-  const calls: Call[] = [];
-
-  calls.push({
-    contractAddress: config.contractAddress,
-    entrypoint,
-    calldata: [
-      orderIdU256.low.toString(),
-      orderIdU256.high.toString(),
-      ...initializeTx.calldata,
-    ],
-  });
-
-  return calls;
+  return [
+    {
+      contractAddress: config.contractAddress,
+      entrypoint,
+      calldata: [
+        orderIdU256.low.toString(),
+        orderIdU256.high.toString(),
+        ...initializeTx.calldata,
+      ],
+    },
+  ];
 }
 
 // ── getExecuteNowPayload ──────────────────────────────────────────────────────
 //
-// Demo/test variant of getExecutePayload that targets execute_dca_now,
-// bypassing the on-chain interval check. Computes the STRK amount directly
-// from the oracle rather than relying on checker().
+// Demo/test variant that targets execute_dca_now, bypassing the on-chain
+// interval check. Computes the STRK amount directly from the oracle.
 //
 // Remove before mainnet.
 
@@ -182,13 +236,10 @@ export async function getExecuteNowPayload(
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
 
-    // Fetch DCA order to get usdc_per_interval.
     const order = (await contract.call("get_dca_order", [orderIdU256], {
       blockIdentifier: "latest",
     })) as { usdc_per_interval: bigint };
 
-    // Fetch STRK/USD oracle price. get_strk_usd_price returns (u128, u32)
-    // which starknet.js deserializes as { "0": bigint, "1": bigint }.
     const priceResult = (await contract.call("get_strk_usd_price", [], {
       blockIdentifier: "latest",
     })) as { "0": bigint; "1": bigint };
@@ -243,8 +294,8 @@ export async function getExecuteNowPayload(
 
 // ── getExecutePayload ─────────────────────────────────────────────────────────
 //
-// Checks whether a DCA order is due on-chain, fetches a fresh Atomiq STRK→BTC
-// quote, and returns the fully-formed `execute_dca` Call array.
+// Checks whether a DCA order is due on-chain via checker(), fetches a fresh
+// Atomiq STRK→BTC quote, and returns the fully-formed execute_dca Call array.
 //
 // Returns null if:
 //   - checker() reports the order is not yet due (includes pending-refund guard)
@@ -300,16 +351,15 @@ export async function getExecutePayload(
 
 // ── getRefundPayload ──────────────────────────────────────────────────────────
 //
-// Checks whether an order has a stale Atomiq escrow that needs to be refunded
-// (i.e. the LP never sent BTC and the escrow timeout has elapsed).
+// Checks whether an order has a pending Atomiq escrow that has settled
+// (claimed or refundable) and returns a refund_dca_interval Call if so.
 //
-// Returns a `refund_dca_interval` Call if:
-//   - dca_interval_needs_refund is true for the order
-//   - the stored escrow's expiry (refund_data) has elapsed
+// Uses IAtomiqEscrowStorage::get_state as the authoritative check — not
+// wall-clock expiry — so we only submit the on-chain tx when it will succeed.
 //
 // Returns null if:
-//   - no pending escrow exists
-//   - the escrow expiry has not yet elapsed (too early to refund)
+//   - no pending escrow exists for the order
+//   - the escrow is still in-flight (state 1 or 2)
 
 export async function getRefundPayload(orderId: string): Promise<Call | null> {
   try {
@@ -327,18 +377,13 @@ export async function getRefundPayload(orderId: string): Promise<Call | null> {
       "get_dca_pending_escrow",
       [orderIdU256],
       { blockIdentifier: "latest" },
-    )) as {
-      refund_data: string;
-      amount: { low: string; high: string };
-    };
+    )) as Record<string, unknown>;
 
-    const expirySeconds = BigInt(escrow.refund_data);
-    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const state = await getAtomiqEscrowState(escrow);
 
-    if (nowSeconds < expirySeconds) {
-      const remaining = expirySeconds - nowSeconds;
+    if (state !== ESCROW_STATE_CLAIMED && state !== ESCROW_STATE_REFUNDABLE) {
       console.log(
-        `Order ${orderId}: escrow not yet expired (${remaining}s remaining — skipping refund)`,
+        `  Order ${orderId}: escrow still in-flight — skipping refund this tick`,
       );
       return null;
     }

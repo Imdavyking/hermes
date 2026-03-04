@@ -69,6 +69,17 @@ function readByteArray(
 }
 
 // -------------------------------------------------------
+// DcaExecution status values
+//
+//   pending  — DCAExecuted fired, STRK committed to Atomiq, BTC not yet confirmed
+//   claimed  — DCAIntervalClaimed fired, LP delivered BTC to the user's address
+//   refunded — DCAIntervalRefunded fired, LP failed, interval rolled back + STRK reclaimed
+// -------------------------------------------------------
+const STATUS_PENDING = "pending";
+const STATUS_CLAIMED = "claimed";
+const STATUS_REFUNDED = "refunded";
+
+// -------------------------------------------------------
 // Factory
 // -------------------------------------------------------
 export function createWriters(ctx: Context) {
@@ -366,7 +377,7 @@ export function createWriters(ctx: Context) {
       intervalSeconds = Number(event.interval_seconds);
       totalIntervals = Number(event.total_intervals);
       totalUsdcDeposited = toDecimal(event.total_usdc_deposited);
-      btcDestination = String(event.btc_destination); // Checkpoint ABI decoder returns string
+      btcDestination = String(event.btc_destination);
     } else if (rawEvent) {
       const d = rawEvent.data;
       orderId = readU256(d[0], d[1]);
@@ -395,6 +406,10 @@ export function createWriters(ctx: Context) {
   };
 
   // DCA EXECUTED
+  //
+  // Creates a DcaExecution record with status=pending. BTC has not been
+  // confirmed delivered yet — that happens in DCAIntervalClaimed.
+  //
   // rawEvent.data: [order_id.low, order_id.high, owner,
   //   usdc_spent.low, usdc_spent.high, wbtc_received.low, wbtc_received.high,
   //   executed_intervals, keeper, keeper_fee_paid.low, keeper_fee_paid.high]
@@ -424,6 +439,7 @@ export function createWriters(ctx: Context) {
       executedIntervals = Number(d[7]);
       keeper = toHexAddress(d[8]);
     } else return;
+
     const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
       order.executed_intervals = executedIntervals;
@@ -432,6 +448,7 @@ export function createWriters(ctx: Context) {
       if (executedIntervals >= order.total_intervals) order.is_active = false;
       await order.save();
     }
+
     const exec = new DcaExecution(
       `${orderId}-${executedIntervals}`,
       ctx.indexerName,
@@ -439,15 +456,57 @@ export function createWriters(ctx: Context) {
     exec.order_id = orderId;
     exec.executed_intervals = executedIntervals;
     exec.usdc_spent = usdcSpent;
-    exec.wbtc_received = wbtcReceived;
+    exec.wbtc_received = wbtcReceived; // always "0" — contract hardcodes it
     exec.keeper = keeper;
+    exec.status = STATUS_PENDING;
     exec.executed_at_block = block.block_number;
     exec.executed_tx_hash = txId;
     exec.executed_timestamp = block.timestamp ?? 0;
     await exec.save();
   };
 
+  // DCA INTERVAL CLAIMED
+  //
+  // LP successfully delivered BTC. Updates the DcaExecution status to
+  // claimed. The DcaOrder counter is already correct from DCAExecuted —
+  // no rollback needed.
+  //
+  // rawEvent.data: [order_id.low, order_id.high, interval_index]
+  const handleDCAIntervalClaimed: starknet.Writer = async ({
+    event,
+    rawEvent,
+    block,
+  }) => {
+    if (!block) return;
+    let orderId: string;
+    let intervalIndex: number;
+    if (event) {
+      orderId = toDecimal(event.order_id);
+      intervalIndex = Number(event.interval_index);
+    } else if (rawEvent) {
+      const d = rawEvent.data;
+      orderId = readU256(d[0], d[1]);
+      intervalIndex = Number(d[2]);
+    } else return;
+
+    const exec = await DcaExecution.loadEntity(
+      `${orderId}-${intervalIndex}`,
+      ctx.indexerName,
+    );
+    if (exec) {
+      exec.status = STATUS_CLAIMED;
+      exec.claimed_at_block = block.block_number;
+      await exec.save();
+    }
+  };
+
   // DCA INTERVAL REFUNDED
+  //
+  // LP failed to deliver BTC. The on-chain contract rolled back
+  // executed_intervals and last_execution. We mirror that here and mark the
+  // execution record as refunded rather than deleting it so the UI can show
+  // the full retry history.
+  //
   // rawEvent.data: [order_id.low, order_id.high, interval_index,
   //   strk_returned.low, strk_returned.high]
   const handleDCAIntervalRefunded: starknet.Writer = async ({
@@ -466,11 +525,17 @@ export function createWriters(ctx: Context) {
       orderId = readU256(d[0], d[1]);
       intervalIndex = Number(d[2]);
     } else return;
+
     const exec = await DcaExecution.loadEntity(
       `${orderId}-${intervalIndex}`,
       ctx.indexerName,
     );
-    if (exec) await exec.delete();
+    if (exec) {
+      exec.status = STATUS_REFUNDED;
+      exec.refunded_at_block = block.block_number;
+      await exec.save();
+    }
+
     const order = await DcaOrder.loadEntity(orderId, ctx.indexerName);
     if (order) {
       order.executed_intervals = Math.max(0, order.executed_intervals - 1);
@@ -523,6 +588,7 @@ export function createWriters(ctx: Context) {
     handleOwnershipTransferred,
     handleDCAOrderCreated,
     handleDCAExecuted,
+    handleDCAIntervalClaimed,
     handleDCAIntervalRefunded,
     handleDCACancelled,
   };

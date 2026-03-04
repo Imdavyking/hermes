@@ -1,6 +1,5 @@
 import { config } from "./config";
 import { runKeeper } from "./keeper";
-import { parseAtomiqCalldata } from "./starknet";
 
 console.log("Umbra DCA Keeper starting");
 console.log(`  Contract:      ${config.contractAddress}`);

@@ -82,6 +82,14 @@ type DcaOrder {
   cancelled_at_block: Int
 }
 
+# status lifecycle per interval:
+#   pending  — DCAExecuted fired, STRK sent to Atomiq, BTC not yet confirmed
+#   claimed  — DCAIntervalClaimed fired, LP delivered BTC to user's address
+#   refunded — DCAIntervalRefunded fired, LP failed, interval rolled back
+#
+# wbtc_received is always "0" at creation (DCAExecuted hardcodes it).
+# The frontend should treat claimed status as the confirmed success signal,
+# not wbtc_received.
 type DcaExecution {
   id: ID!
   order_id: String!
@@ -89,7 +97,10 @@ type DcaExecution {
   usdc_spent: BigDecimalU256!
   wbtc_received: BigDecimalU256!
   keeper: String!
+  status: String!
   executed_at_block: Int!
   executed_tx_hash: String!
   executed_timestamp: Int!
+  claimed_at_block: Int
+  refunded_at_block: Int
 }
