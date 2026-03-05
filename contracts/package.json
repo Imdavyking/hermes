@@ -9,7 +9,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "deploy": "ts-node scripts/deploy.ts",
     "metadata": "ts-node scripts/metadata.ts",
-    "fund": "ts-node scripts/fund.ts"
+    "fund": "ts-node scripts/fund.ts",
+    "withdraw": "ts-node scripts/withdraw_contract_strk.ts"
   },
   "keywords": [],
   "author": "",
