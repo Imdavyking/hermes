@@ -6,18 +6,6 @@
 
 ---
 
-## What Makes This Different
-
-Most "BTC DCA" tools mint a wrapped token on the same chain. Umbra delivers **real BTC to your Bitcoin wallet** via atomic swaps through the Atomiq LP network — no custodian, no bridge risk, no wrapped token sitting on Starknet.
-
-- User deposits USDC and specifies a **Bitcoin address** as destination
-- Keepers execute each interval, committing STRK to an Atomiq escrow
-- Atomiq LPs deliver native BTC to the user's Bitcoin address
-- If an LP fails to deliver, the escrow is refunded and the interval retried automatically
-- The full lifecycle (pending → claimed / refunded) is indexed and visible in the UI
-
----
-
 ## How It Works
 
 ### 1. Deposit
