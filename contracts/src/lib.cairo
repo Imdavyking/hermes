@@ -327,8 +327,8 @@ mod PrivateSwap {
 
     const ZERO_ADDRESS: ContractAddress = 0.try_into().unwrap();
 
-    // 7 days — intentionally generous; tighten per asset in production
-    const MAX_ORACLE_AGE_SECS: u64 = 604_800;
+    // 2 weeks — generous for testnet where feeds update infrequently
+    const MAX_ORACLE_AGE_SECS: u64 = 1_209_600;
 
     const MIN_EXPIRY_DURATION_SECS: u64 = 3_600;
     const RATE_VALID_FOR_SECS: u64 = 3_600;
