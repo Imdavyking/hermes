@@ -682,8 +682,6 @@ mod PrivateSwap {
         self.chainlink_feeds.write(BTC_USD, BTC_USD_CHAINLINK);
         self.chainlink_feeds.write(STRK_USD, STRK_USD_CHAINLINK);
 
-        self.use_pragma.write(false);
-
         let owner = tx_info.account_contract_address;
         self.owner.write(owner);
         self.emit(OwnershipTransferred { previous_owner: ZERO_ADDRESS, new_owner: owner });
