@@ -662,12 +662,7 @@ mod PrivateSwap {
     // -------------------------------------------------------
 
     #[constructor]
-    fn constructor(
-        ref self: ContractState,
-        verifier_class_hash: ClassHash, // Pass true for mainnet (Pragma primary),
-        // false for Sepolia testnet (Chainlink primary — more accurate on testnet).
-        is_mainnet: bool,
-    ) {
+    fn constructor(ref self: ContractState, verifier_class_hash: ClassHash) {
         let tx_info = get_tx_info();
 
         self.wBTC.write(VESU_WBTC_ADDRESS.try_into().unwrap());
@@ -1158,79 +1153,6 @@ mod PrivateSwap {
                 );
         }
 
-        // ---------------------------------------------------
-        // EXECUTE DCA NOW (demo/test only — bypasses interval check)
-        // ---------------------------------------------------
-        fn execute_dca_now(
-            ref self: ContractState,
-            order_id: u256,
-            escrow: EscrowData,
-            signature: Array<felt252>,
-            timeout: u64,
-            extra_data: Span<felt252>,
-        ) {
-            let mut order = self.dca_orders.read(order_id);
-            let keeper = get_caller_address();
-
-            assert(order.is_active, Errors::DCA_NOT_ACTIVE);
-            assert(order.executed_intervals < order.total_intervals, Errors::DCA_COMPLETED);
-            assert(!self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING);
-
-            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
-            let expected_strk: u256 = order.usdc_per_interval
-                * STRK_PRECISION
-                * self.pow10(strk_dec.into())
-                / (strk_usd.into() * USDC_PRECISION);
-            let lower_bound = expected_strk
-                * (BPS_DENOMINATOR - STRK_TOLERANCE_BPS)
-                / BPS_DENOMINATOR;
-            let upper_bound = expected_strk
-                * (BPS_DENOMINATOR + STRK_TOLERANCE_BPS)
-                / BPS_DENOMINATOR;
-            assert(
-                escrow.amount >= lower_bound && escrow.amount <= upper_bound,
-                Errors::DCA_STRK_AMOUNT_OUT_OF_RANGE,
-            );
-
-            let interval_index = order.executed_intervals + 1;
-            order.last_execution = get_block_timestamp();
-            order.executed_intervals = interval_index;
-            if order.executed_intervals == order.total_intervals {
-                order.is_active = false;
-            }
-            self.dca_orders.write(order_id, order);
-
-            let escrow_key: u256 = order_id * ESCROW_KEY_MULTIPLIER + interval_index.into();
-            self.dca_pending_escrows.write(escrow_key, escrow);
-            self.dca_pending_interval_index.write(order_id, interval_index);
-            self.dca_interval_needs_refund.write(order_id, true);
-
-            self._commit_strk_to_atomiq(escrow, signature, timeout, extra_data);
-
-            if self.registered_keepers.read(keeper) {
-                let reserved = self.dca_strk_reserved.read(order_id);
-                self.dca_strk_reserved.write(order_id, reserved - KEEPER_FEE_STRK);
-                IERC20Dispatcher { contract_address: self.strk.read() }
-                    .transfer(keeper, KEEPER_FEE_STRK);
-            }
-
-            self
-                .emit(
-                    DCAExecuted {
-                        order_id,
-                        owner: order.owner,
-                        usdc_spent: order.usdc_per_interval,
-                        btc_received: 0,
-                        executed_intervals: interval_index,
-                        keeper,
-                        keeper_fee_paid: if self.registered_keepers.read(keeper) {
-                            KEEPER_FEE_STRK
-                        } else {
-                            0
-                        },
-                    },
-                );
-        }
 
         // ---------------------------------------------------
         // REFUND DCA INTERVAL
@@ -1661,13 +1583,7 @@ mod PrivateSwap {
                 (self.try_chainlink_price(asset_key), self.try_pragma_price(asset_key))
             };
 
-            match primary {
-                Option::Some(price) => price,
-                Option::None => match fallback {
-                    Option::Some(price) => price,
-                    Option::None => panic!("{}", Errors::BOTH_ORACLES_STALE),
-                },
-            }
+            primary.unwrap_or(fallback.expect(Errors::BOTH_ORACLES_STALE))
         }
 
         fn try_pragma_price(self: @ContractState, asset_key: felt252) -> Option<(u128, u32)> {
