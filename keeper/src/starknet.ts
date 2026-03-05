@@ -182,7 +182,7 @@ async function buildAtomiqCalls(
   orderIdU256: ReturnType<typeof uint256.bnToUint256>,
   strkAmountBn: bigint,
   btcDestination: string,
-  entrypoint: "execute_dca" ,
+  entrypoint: "execute_dca",
 ): Promise<Call[] | null> {
   const sdk = await getSwapper();
 
@@ -241,13 +241,11 @@ export async function getExecutePayload(
 
     const checkerResult = (await contract.call("checker", [orderIdU256], {
       blockIdentifier: "latest",
-    })) as [boolean, { strk_amount: { low: string; high: string } }];
+    })) as [boolean, { strk_amount: bigint }];
 
     if (!checkerResult[0]) return null;
 
-    const strkAmountBn =
-      BigInt(checkerResult[1].strk_amount.low) +
-      BigInt(checkerResult[1].strk_amount.high) * 2n ** 128n;
+    const strkAmountBn = checkerResult[1].strk_amount as bigint;
 
     if (strkAmountBn === 0n) {
       console.warn(
