@@ -5,6 +5,7 @@ mod incremental_merkle_tree;
 mod mockUSDC;
 mod poseidon2;
 mod poseidon2lib;
+mod pragma_oracle;
 use crate::field::FieldTrait;
 use crate::poseidon2lib::Poseidon2Trait;
 
@@ -44,15 +45,12 @@ trait IMockWBTC<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
-// EscrowExecution is needed for the success_action field in EscrowData
-// which is passed to IAtomiqEscrowStorage::get_state.
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct EscrowExecution {
     hash: felt252,
     expiry: u64,
     fee: u256,
 }
-
 
 #[derive(Drop, Serde, Copy, starknet::Store)]
 struct EscrowData {
@@ -224,24 +222,8 @@ trait IPrivateSwap<TContractState> {
         timeout: u64,
         extra_data: Span<felt252>,
     );
-    // --- Interface ---
-    fn execute_dca_now(
-        ref self: TContractState,
-        order_id: u256,
-        escrow: EscrowData,
-        signature: Array<felt252>,
-        timeout: u64,
-        extra_data: Span<felt252>,
-    );
-    // Called by anyone after an Atomiq escrow has settled.
-    // If the LP claimed (state=3): clears the pending flag so the next
-    // interval can be executed — no rollback.
-    // If refundable (state=4): rolls back the interval counter so the keeper
-    // retries automatically and reclaims STRK from Atomiq.
     fn refund_dca_interval(ref self: TContractState, order_id: u256);
     fn cancel_dca(ref self: TContractState, order_id: u256);
-    // checker() returns (can_exec, payload) where payload.strk_amount is the
-    // live oracle-priced STRK equivalent of usdc_per_interval.
     fn checker(self: @TContractState, order_id: u256) -> (bool, ExecPayload);
 
     // --- Views ---
@@ -268,6 +250,7 @@ trait IPrivateSwap<TContractState> {
     fn get_dca_pending_escrow(self: @TContractState, order_id: u256) -> EscrowData;
     fn dca_interval_needs_refund(self: @TContractState, order_id: u256) -> bool;
     fn get_dca_pending_interval_index(self: @TContractState, order_id: u256) -> u32;
+    fn is_using_pragma(self: @TContractState) -> bool;
 
     // --- Admin ---
     fn set_wbtc(ref self: TContractState, wbtc: ContractAddress);
@@ -277,6 +260,7 @@ trait IPrivateSwap<TContractState> {
     fn transfer_ownership(ref self: TContractState, new_owner: ContractAddress);
     fn add_keeper(ref self: TContractState, keeper: ContractAddress);
     fn remove_keeper(ref self: TContractState, keeper: ContractAddress);
+    fn set_use_pragma(ref self: TContractState, use_pragma: bool);
 }
 
 // -------------------------------------------------------
@@ -299,6 +283,10 @@ mod PrivateSwap {
     use starknet::{SyscallResultTrait, get_tx_info};
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent;
     use crate::incremental_merkle_tree::IncrementalMerkleTreeComponent::InternalTrait;
+    use crate::pragma_oracle::{
+        AggregationMode, DataType, IPragmaABIDispatcher, IPragmaABIDispatcherTrait,
+        PragmaPricesResponse,
+    };
     use super::{
         ContractAddress, DCAOrder, EscrowData, ExecPayload, FieldTrait, IAggregatorProxyDispatcher,
         IAggregatorProxyDispatcherTrait, IAtomiqEscrowDispatcher, IAtomiqEscrowDispatcherTrait,
@@ -321,12 +309,25 @@ mod PrivateSwap {
 
     const TREE_DEPTH: u32 = 10;
 
-    const BTC_USD_FEED: felt252 = 0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
-    const STRK_USD_FEED: felt252 =
+    // Universal asset keys — used as the single identifier passed to fetch_oracle_price.
+    // When use_pragma=true  → used directly as Pragma SpotEntry asset id.
+    // When use_pragma=false → looked up in chainlink_feeds map to get the feed address.
+    const BTC_USD: felt252 = 'BTC/USD';
+    const STRK_USD: felt252 = 'STRK/USD';
+
+    // Chainlink feed addresses (Sepolia)
+    const BTC_USD_CHAINLINK: felt252 =
+        0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a;
+    const STRK_USD_CHAINLINK: felt252 =
         0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937;
+
+    // Pragma oracle address (Sepolia)
+    const PRAGMA_ORACLE_ADDRESS: felt252 =
+        0x036031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a;
 
     const ZERO_ADDRESS: ContractAddress = 0.try_into().unwrap();
 
+    // 7 days — intentionally generous; tighten per asset in production
     const MAX_ORACLE_AGE_SECS: u64 = 604_800;
 
     const MIN_EXPIRY_DURATION_SECS: u64 = 3_600;
@@ -367,7 +368,6 @@ mod PrivateSwap {
     //   2 = SOFT_CLAIMED — payment seen off-chain, not yet claimed on-chain
     //   3 = CLAIMED      — LP claimed, BTC delivered
     //   4 = REFUNDABLE   — LP failed, offerer can refund
-
     const ESCROW_STATE_SOFT_CLAIMED: u8 = 2;
     const ESCROW_STATE_CLAIMED: u8 = 3;
     const ESCROW_STATE_REFUNDABLE: u8 = 4;
@@ -429,6 +429,12 @@ mod PrivateSwap {
         pub const NOT_OWNER: felt252 = 'caller is not the owner';
         pub const ZERO_ADDRESS: felt252 = 'new owner cannot be zero';
         pub const DCA_INSUFFICIENT_STRK: felt252 = 'strk balance < escrow amount';
+        pub const NO_CHAINLINK_FEED: felt252 = 'no chainlink feed for asset';
+        pub const STALE_PRAGMA_PRICE: felt252 = 'stale pragma price';
+        pub const INVALID_PRAGMA_PRICE: felt252 = 'invalid pragma price';
+        pub const STALE_CHAINLINK_PRICE: felt252 = 'stale chainlink price';
+        pub const INVALID_CHAINLINK_PRICE: felt252 = 'invalid chainlink price';
+        pub const BOTH_ORACLES_STALE: felt252 = 'both oracles stale';
     }
 
     // -------------------------------------------------------
@@ -460,6 +466,14 @@ mod PrivateSwap {
         vesu_vtoken: ContractAddress,
         verifier: ContractAddress,
         owner: ContractAddress,
+        // Oracle toggle:
+        //   true  = Pragma primary, Chainlink fallback  (recommended for mainnet)
+        //   false = Chainlink primary, Pragma fallback  (recommended for Sepolia testnet)
+        // Set via constructor `is_mainnet` arg; can be changed by owner via set_use_pragma().
+        use_pragma: bool,
+        // Maps universal asset key ('BTC/USD', 'STRK/USD') → Chainlink feed address.
+        // Populated in constructor; extended by owner via set_chainlink_feed().
+        chainlink_feeds: Map<felt252, felt252>,
     }
 
     // -------------------------------------------------------
@@ -487,19 +501,7 @@ mod PrivateSwap {
         DCACancelled: DCACancelled,
         DCAIntervalRefunded: DCAIntervalRefunded,
         DCAIntervalClaimed: DCAIntervalClaimed,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct DCAOrderCreated {
-        #[key]
-        order_id: u256,
-        owner: ContractAddress,
-        usdc_per_interval: u256,
-        interval_seconds: u64,
-        total_intervals: u32,
-        total_usdc_deposited: u256,
-        total_strk_fee_deposited: u256,
-        btc_destination: ByteArray,
+        OracleToggled: OracleToggled,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -601,6 +603,18 @@ mod PrivateSwap {
         new_owner: ContractAddress,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct DCAOrderCreated {
+        #[key]
+        order_id: u256,
+        owner: ContractAddress,
+        usdc_per_interval: u256,
+        interval_seconds: u64,
+        total_intervals: u32,
+        total_usdc_deposited: u256,
+        total_strk_fee_deposited: u256,
+        btc_destination: ByteArray,
+    }
 
     #[derive(Drop, starknet::Event)]
     struct DCAExecuted {
@@ -623,8 +637,6 @@ mod PrivateSwap {
         strk_fee_refunded: u256,
     }
 
-    // Emitted when the LP failed to deliver BTC and STRK was refunded.
-    // The interval counter is rolled back so the keeper retries.
     #[derive(Drop, starknet::Event)]
     struct DCAIntervalRefunded {
         #[key]
@@ -633,8 +645,6 @@ mod PrivateSwap {
         strk_returned: u256,
     }
 
-    // Emitted when the LP successfully claimed (BTC was delivered).
-    // The interval counter is kept and the next interval is unlocked.
     #[derive(Drop, starknet::Event)]
     struct DCAIntervalClaimed {
         #[key]
@@ -642,12 +652,22 @@ mod PrivateSwap {
         interval_index: u32,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct OracleToggled {
+        use_pragma: bool,
+    }
+
     // -------------------------------------------------------
     // Constructor
     // -------------------------------------------------------
 
     #[constructor]
-    fn constructor(ref self: ContractState, verifier_class_hash: ClassHash) {
+    fn constructor(
+        ref self: ContractState,
+        verifier_class_hash: ClassHash, // Pass true for mainnet (Pragma primary),
+        // false for Sepolia testnet (Chainlink primary — more accurate on testnet).
+        is_mainnet: bool,
+    ) {
         let tx_info = get_tx_info();
 
         self.wBTC.write(VESU_WBTC_ADDRESS.try_into().unwrap());
@@ -661,6 +681,15 @@ mod PrivateSwap {
 
         self.imt.initializer(TREE_DEPTH);
         self.dca_order_count.write(0);
+
+        // Map universal asset keys → Chainlink feed addresses.
+        // These are used when use_pragma=false (Chainlink primary path).
+        self.chainlink_feeds.write(BTC_USD, BTC_USD_CHAINLINK);
+        self.chainlink_feeds.write(STRK_USD, STRK_USD_CHAINLINK);
+
+        // Mainnet → Pragma primary (accurate, native Starknet oracle).
+        // Testnet → Chainlink primary (Pragma testnet feeds are stale/mock).
+        self.use_pragma.write(is_mainnet);
 
         let owner = tx_info.account_contract_address;
         self.owner.write(owner);
@@ -1071,13 +1100,9 @@ mod PrivateSwap {
             assert(now >= order.last_execution + order.interval_seconds, Errors::DCA_NOT_DUE);
             assert(!self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING);
 
-            // Validate strk_amount is within 5% of the live oracle value for
-            // usdc_per_interval. This prevents the keeper from committing a
-            // wildly wrong STRK amount to Atomiq.
-            //
-            // expected = usdc_per_interval * STRK_PRECISION * 10^strk_dec
-            //            / (strk_usd * USDC_PRECISION)
-            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
+            // Validate strk_amount is within 5% of the live oracle value.
+            // Uses unified fetch_oracle_price which respects the use_pragma toggle.
+            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
             let expected_strk: u256 = order.usdc_per_interval
                 * STRK_PRECISION
                 * self.pow10(strk_dec.into())
@@ -1151,8 +1176,7 @@ mod PrivateSwap {
             assert(order.executed_intervals < order.total_intervals, Errors::DCA_COMPLETED);
             assert(!self.dca_interval_needs_refund.read(order_id), Errors::DCA_INTERVAL_PENDING);
 
-            // Same oracle tolerance check as execute_dca
-            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
+            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
             let expected_strk: u256 = order.usdc_per_interval
                 * STRK_PRECISION
                 * self.pow10(strk_dec.into())
@@ -1168,7 +1192,6 @@ mod PrivateSwap {
                 Errors::DCA_STRK_AMOUNT_OUT_OF_RANGE,
             );
 
-            // Skip interval elapsed check — force last_execution to now so state stays consistent
             let interval_index = order.executed_intervals + 1;
             order.last_execution = get_block_timestamp();
             order.executed_intervals = interval_index;
@@ -1211,24 +1234,6 @@ mod PrivateSwap {
 
         // ---------------------------------------------------
         // REFUND DCA INTERVAL
-        //
-        // Callable by anyone once an Atomiq escrow has settled.
-        //
-        // Queries IAtomiqEscrowStorage::get_state to determine the outcome:
-        //
-        //   state == 2 (SOFT_CLAIMED) or state == 3 (CLAIMED):
-        //     The LP claimed STRK — BTC was delivered to the user.
-        //     Clear the pending flag so the next interval can execute.
-        //     No rollback of executed_intervals.
-        //
-        //   state == 4 (REFUNDABLE):
-        //     The LP failed to deliver BTC.
-        //     Roll back executed_intervals and last_execution so the keeper
-        //     retries this interval automatically. Then call Atomiq refund
-        //     to reclaim the STRK back to this contract.
-        //
-        //   state == 1 (COMMITED):
-        //     Still in flight — reverts with DCA_ESCROW_NOT_SETTLED.
         // ---------------------------------------------------
         fn refund_dca_interval(ref self: ContractState, order_id: u256) {
             assert(self.dca_interval_needs_refund.read(order_id), Errors::DCA_NO_PENDING_ESCROW);
@@ -1237,14 +1242,11 @@ mod PrivateSwap {
             let escrow_key: u256 = order_id * ESCROW_KEY_MULTIPLIER + interval_index.into();
             let escrow = self.dca_pending_escrows.read(escrow_key);
 
-            // Query the Atomiq escrow contract for the current state of this escrow.
-            // We always initialize with success_action = None.
             let escrow_state = IAtomiqEscrowStorageDispatcher {
                 contract_address: ATOMIQ_ESCROW.try_into().unwrap(),
             }
                 .get_state(escrow);
 
-            // Escrow must be settled (claimed or refundable) before we act.
             assert(
                 escrow_state.state == ESCROW_STATE_SOFT_CLAIMED
                     || escrow_state.state == ESCROW_STATE_CLAIMED
@@ -1274,7 +1276,6 @@ mod PrivateSwap {
 
             if escrow_state.state == ESCROW_STATE_SOFT_CLAIMED
                 || escrow_state.state == ESCROW_STATE_CLAIMED {
-                // LP claimed — BTC was delivered. Interval stands, just unlock.
                 self.emit(DCAIntervalClaimed { order_id, interval_index });
                 return;
             }
@@ -1355,22 +1356,10 @@ mod PrivateSwap {
 
         // ---------------------------------------------------
         // CHECKER
-        //
-        // Returns (can_exec, payload) where payload.strk_amount is the live
-        // STRK equivalent of the order's usdc_per_interval at the current
-        // Pragma oracle price.
-        //
-        // Derivation — BTC oracle cancels out entirely:
-        //   strk = usdc_per_interval * STRK_PRECISION * 10^strk_dec
-        //          / (strk_usd * USDC_PRECISION)
-        //
-        // strk_amount is 0 when can_exec is false — oracle call skipped to
-        // avoid reverting on a stale feed when the order is not due.
         // ---------------------------------------------------
         fn checker(self: @ContractState, order_id: u256) -> (bool, ExecPayload) {
             let order = self.dca_orders.read(order_id);
             let now = get_block_timestamp();
-
             let pending_refund = self.dca_interval_needs_refund.read(order_id);
 
             let can_exec = !pending_refund
@@ -1381,7 +1370,7 @@ mod PrivateSwap {
                     && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
 
             let strk_amount: u256 = if can_exec {
-                let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
+                let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
                 order.usdc_per_interval
                     * STRK_PRECISION
                     * self.pow10(strk_dec.into())
@@ -1473,16 +1462,16 @@ mod PrivateSwap {
         }
 
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
-            self.fetch_oracle_price(BTC_USD_FEED)
+            self.fetch_oracle_price(BTC_USD)
         }
 
         fn get_strk_usd_price(self: @ContractState) -> (u128, u32) {
-            self.fetch_oracle_price(STRK_USD_FEED)
+            self.fetch_oracle_price(STRK_USD)
         }
 
         fn get_btc_strk_rate(self: @ContractState) -> u256 {
-            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD_FEED);
-            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD_FEED);
+            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD);
+            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
             assert(btc_usd > 0, 'invalid BTC price');
             assert(strk_usd > 0, 'invalid STRK price');
             (btc_usd.into() * self.pow10(strk_dec.into()) * STRK_PRECISION)
@@ -1521,6 +1510,10 @@ mod PrivateSwap {
 
         fn get_dca_pending_interval_index(self: @ContractState, order_id: u256) -> u32 {
             self.dca_pending_interval_index.read(order_id)
+        }
+
+        fn is_using_pragma(self: @ContractState) -> bool {
+            self.use_pragma.read()
         }
 
         // ---------------------------------------------------
@@ -1571,6 +1564,12 @@ mod PrivateSwap {
             self.owner.write(new_owner);
             self.emit(OwnershipTransferred { previous_owner: previous, new_owner });
         }
+
+        fn set_use_pragma(ref self: ContractState, use_pragma: bool) {
+            self.assert_only_owner();
+            self.use_pragma.write(use_pragma);
+            self.emit(OracleToggled { use_pragma });
+        }
     }
 
     // -------------------------------------------------------
@@ -1592,7 +1591,6 @@ mod PrivateSwap {
         ) {
             let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
             let balance = strk.balance_of(get_contract_address());
-
             assert(balance >= escrow.amount, Errors::DCA_INSUFFICIENT_STRK);
 
             strk.approve(ATOMIQ_ESCROW.try_into().unwrap(), escrow.amount);
@@ -1637,21 +1635,74 @@ mod PrivateSwap {
             wbtc_returned
         }
 
-        fn fetch_oracle_price(self: @ContractState, feed_address: felt252) -> (u128, u32) {
+        // -------------------------------------------------------
+        // UNIFIED ORACLE FETCH
+        //
+        // Takes a universal asset key ('BTC/USD' or 'STRK/USD').
+        //
+        // use_pragma=true  (mainnet):
+        //   1. Try Pragma  — accurate, native Starknet oracle
+        //   2. Fallback    → Chainlink if Pragma is stale
+        //
+        // use_pragma=false (testnet):
+        //   1. Try Chainlink — closer to real price on Sepolia
+        //   2. Fallback      → Pragma if Chainlink is stale
+        //
+        // Reverts with BOTH_ORACLES_STALE if neither is fresh.
+        // -------------------------------------------------------
+        // ── Raw reads — no staleness logic, just fetch
+        // ──────────────
+        // ── Orchestrator — primary + fallback
+        // ───────────────────────
+        fn fetch_oracle_price(self: @ContractState, asset_key: felt252) -> (u128, u32) {
+            let (primary, fallback) = if self.use_pragma.read() {
+                (self.try_pragma_price(asset_key), self.try_chainlink_price(asset_key))
+            } else {
+                (self.try_chainlink_price(asset_key), self.try_pragma_price(asset_key))
+            };
+
+            match primary {
+                Option::Some(price) => price,
+                Option::None => match fallback {
+                    Option::Some(price) => price,
+                    Option::None => panic!("{}", Errors::BOTH_ORACLES_STALE),
+                },
+            }
+        }
+
+        fn try_pragma_price(self: @ContractState, asset_key: felt252) -> Option<(u128, u32)> {
+            let oracle = IPragmaABIDispatcher {
+                contract_address: PRAGMA_ORACLE_ADDRESS.try_into().unwrap(),
+            };
+            let output: PragmaPricesResponse = oracle
+                .get_data(DataType::SpotEntry(asset_key), AggregationMode::Median);
+
+            if output.price > 0 && output.last_updated_timestamp
+                + MAX_ORACLE_AGE_SECS >= get_block_timestamp() {
+                Option::Some((output.price, output.decimals))
+            } else {
+                Option::None
+            }
+        }
+
+        fn try_chainlink_price(self: @ContractState, asset_key: felt252) -> Option<(u128, u32)> {
+            let feed_address = self.chainlink_feeds.read(asset_key);
+            assert(feed_address != 0, Errors::NO_CHAINLINK_FEED);
             let feed = IAggregatorProxyDispatcher {
                 contract_address: feed_address.try_into().unwrap(),
             };
             let round = feed.latest_round_data();
-            assert(
-                round.updated_at + MAX_ORACLE_AGE_SECS >= get_block_timestamp(),
-                'stale oracle price',
-            );
-            assert(round.answer > 0, 'invalid oracle price');
-            (round.answer, feed.decimals().into())
+
+            if round.answer > 0 && round.updated_at + MAX_ORACLE_AGE_SECS >= get_block_timestamp() {
+                Option::Some((round.answer, feed.decimals().into()))
+            } else {
+                Option::None
+            }
         }
 
+
         fn wbtc_for_usdc(self: @ContractState, usdc_amount: u256) -> u256 {
-            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD_FEED);
+            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD);
             usdc_amount
                 * WBTC_PRECISION
                 * self.pow10(btc_dec.into())

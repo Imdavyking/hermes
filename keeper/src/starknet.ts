@@ -175,14 +175,14 @@ async function getAtomiqEscrowState(
 // ── Shared Atomiq quote builder ───────────────────────────────────────────────
 //
 // Fetches an Atomiq STRK→BTC quote for a given strk amount and btc destination,
-// and returns the fully-formed execute_dca / execute_dca_now Call array.
+// and returns the fully-formed execute_dca Call array.
 
 async function buildAtomiqCalls(
   orderId: string,
   orderIdU256: ReturnType<typeof uint256.bnToUint256>,
   strkAmountBn: bigint,
   btcDestination: string,
-  entrypoint: "execute_dca" | "execute_dca_now",
+  entrypoint: "execute_dca" ,
 ): Promise<Call[] | null> {
   const sdk = await getSwapper();
 
@@ -221,75 +221,6 @@ async function buildAtomiqCalls(
       ],
     },
   ];
-}
-
-// ── getExecuteNowPayload ──────────────────────────────────────────────────────
-//
-// Demo/test variant that targets execute_dca_now, bypassing the on-chain
-// interval check. Computes the STRK amount directly from the oracle.
-//
-// Remove before mainnet.
-
-export async function getExecuteNowPayload(
-  orderId: string,
-): Promise<Call[] | null> {
-  try {
-    const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
-
-    const order = (await contract.call("get_dca_order", [orderIdU256], {
-      blockIdentifier: "latest",
-    })) as { usdc_per_interval: bigint };
-
-    const priceResult = (await contract.call("get_strk_usd_price", [], {
-      blockIdentifier: "latest",
-    })) as { "0": bigint; "1": bigint };
-
-    console.log(
-      "strk price result:",
-      JSON.stringify(
-        priceResult,
-        (_, v) => (typeof v === "bigint" ? v.toString() : v),
-        2,
-      ),
-    );
-
-    const strkUsdBn = BigInt(priceResult["0"]);
-    const strkDecBn = BigInt(priceResult["1"]);
-
-    const STRK_PRECISION = 10n ** 18n;
-    const USDC_PRECISION = 10n ** 6n;
-    const usdcPerInterval = BigInt(order.usdc_per_interval);
-
-    const strkAmountBn =
-      (usdcPerInterval * STRK_PRECISION * 10n ** strkDecBn) /
-      (strkUsdBn * USDC_PRECISION);
-
-    console.log(`Order ${orderId}: computed strkAmount = ${strkAmountBn}`);
-
-    const btcDestination = (await contract.call(
-      "get_dca_btc_destination",
-      [orderIdU256],
-      { blockIdentifier: "latest" },
-    )) as string;
-
-    console.log({ btcDestination });
-
-    if (!btcDestination) {
-      console.warn(`Order ${orderId}: no BTC destination stored — skipping`);
-      return null;
-    }
-
-    return buildAtomiqCalls(
-      orderId,
-      orderIdU256,
-      strkAmountBn,
-      btcDestination,
-      "execute_dca_now",
-    );
-  } catch (err) {
-    console.warn(`getExecuteNowPayload failed for order ${orderId}:`, err);
-    return null;
-  }
 }
 
 // ── getExecutePayload ─────────────────────────────────────────────────────────
