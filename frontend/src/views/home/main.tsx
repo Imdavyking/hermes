@@ -274,7 +274,7 @@ export default function UmbraHome() {
             Schedule USDC → Bitcoin purchases delivered to your wallet
             <br />
             <span style={{ color: "#2a2a3e" }}>
-              ZK privacy · Chainlink oracle · Atomic swaps
+              ZK privacy · Pragma/Chainlink oracle · Atomic swaps
             </span>
           </p>
 
@@ -292,7 +292,7 @@ export default function UmbraHome() {
               { label: "Native BTC delivery", color: "#f7931a" },
               { label: "ZK anonymous", color: "#a78bfa" },
               { label: "Non-custodial", color: "#22c55e" },
-              { label: "Chainlink oracle", color: "#3b82f6" },
+              { label: "Pragma/Chainlink oracle", color: "#3b82f6" },
             ].map(({ label, color }) => (
               <span
                 key={label}
@@ -491,7 +491,7 @@ export default function UmbraHome() {
         >
           <div>Umbra · Starknet Sepolia</div>
           <div style={{ color: "#141420" }}>
-            Noir · Garaga · Chainlink · Vesu · Atomiq
+            Noir · Garaga · Pragma/Chainlink · Vesu · Atomiq
           </div>
         </footer>
       </div>

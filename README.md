@@ -2,7 +2,7 @@
 
 > Deposit wBTC anonymously. Withdraw to any address. Swap privately for STRK. Earn yield without revealing your position. DCA recurring USDC → **real BTC delivered to your Bitcoin wallet**. No on-chain link between depositor and withdrawer.
 
-**Noir** (ZK proofs) · **Garaga** (on-chain verifier) · **Chainlink** (oracle) · **Vesu** (yield) · **Poseidon2/BN254** (Merkle tree) · **HTLCs** (atomic swaps) · **Atomiq** (cross-chain LP network)
+**Noir** (ZK proofs) · **Garaga** (on-chain verifier) · **Pragma/Chainlink** (oracle) · **Vesu** (yield) · **Poseidon2/BN254** (Merkle tree) · **HTLCs** (atomic swaps) · **Atomiq** (cross-chain LP network)
 
 ---
 
@@ -56,7 +56,7 @@
 
 ### 5. DCA (USDC → Real BTC via Atomiq)
 
-Schedule recurring fixed-dollar BTC purchases at the live Chainlink oracle price. USDC is a stable spend — BTC received varies with price, which is exactly the point of DCA. Unlike simple wBTC-minting DCA tools, Umbra delivers **native BTC to your Bitcoin wallet** via the Atomiq cross-chain LP network.
+Schedule recurring fixed-dollar BTC purchases at the live Pragma/Chainlink oracle price. USDC is a stable spend — BTC received varies with price, which is exactly the point of DCA. Unlike simple wBTC-minting DCA tools, Umbra delivers **native BTC to your Bitcoin wallet** via the Atomiq cross-chain LP network.
 
 **Creating an order:**
 
@@ -123,7 +123,7 @@ The same proof is used for `zk_withdraw_wbtc`, `start_earning`, and `post_wbtc_o
 | `withdraw_wbtc(order_id)`                                                               | Bob claims wBTC using revealed secret                                                  |
 | `refund_wbtc(order_id)`                                                                 | Alice reclaims wBTC after expiry                                                       |
 | `refund_strk(order_id)`                                                                 | Bob reclaims STRK after his expiry                                                     |
-| `get_btc_strk_rate()`                                                                   | Live BTC/STRK cross rate from Chainlink                                                |
+| `get_btc_strk_rate()`                                                                   | Live BTC/STRK cross rate from Pragma/Chainlink                                         |
 | `get_quoted_strk_amount()`                                                              | STRK owed for one lot at current price                                                 |
 | `create_dca_order(btc_destination, usdc_per_interval, interval_hours, total_intervals)` | Deposit USDC + STRK fee upfront, schedule recurring BTC purchases to a Bitcoin address |
 | `execute_dca(order_id, escrow, signature, timeout, extra_data)`                         | Keeper: commit STRK to Atomiq escrow for one interval's BTC delivery                   |
@@ -179,9 +179,16 @@ keeper/      Automated keeper — polls checker(), builds Atomiq escrow, calls e
 | Checkpoint indexer               | Single GraphQL query vs O(n) RPC calls for order and execution history                       |
 | Mock USDC with public mint       | Judges can fund themselves instantly without external faucets                                |
 
-**Oracle (Chainlink, Sepolia):**
+**Oracle (Pragma, Chainlink, Sepolia):**
 
 ```
+// Pragma oracle address (Sepolia)
+const PRAGMA_ORACLE_ADDRESS: felt252 =
+ 0x036031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a;
+const BTC_USD: felt252 = 'BTC/USD';
+const STRK_USD: felt252 = 'STRK/USD';
+
+// Chainlink
 BTC/USD:  0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a
 STRK/USD: 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937
 

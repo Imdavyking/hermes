@@ -325,7 +325,7 @@ export default function WithdrawTab() {
               marginBottom: "0.2rem",
             }}
           >
-            via Chainlink
+            via Pragma/Chainlink
           </div>
           <div style={{ color: "#3a3a4a", fontSize: "0.65rem" }}>
             BTC/USD ÷ STRK/USD
