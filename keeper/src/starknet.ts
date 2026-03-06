@@ -238,17 +238,15 @@ export async function getExecutePayload(
   try {
     const orderIdU256 = uint256.bnToUint256(BigInt(orderId));
 
-    const [canExec, { strk_amount }] = (await contract.call(
-      "checker",
-      [orderIdU256],
-      {
-        blockIdentifier: "latest",
-      },
-    )) as [boolean, { strk_amount: bigint }];
+    const checkerResult = (await contract.call("checker", [orderIdU256], {
+      blockIdentifier: "latest",
+    })) as [boolean, { strk_amount: bigint }];
 
-    if (!canExec) return null;
+    if (!checkerResult[0]) return null;
 
-    if (strk_amount === 0n) {
+    const strkAmountBn = checkerResult[1].strk_amount as bigint;
+
+    if (strkAmountBn === 0n) {
       console.warn(
         `Order ${orderId}: checker returned strk_amount=0 — skipping`,
       );
@@ -269,7 +267,7 @@ export async function getExecutePayload(
     return buildAtomiqCalls(
       orderId,
       orderIdU256,
-      strk_amount,
+      strkAmountBn,
       btcDestination,
       "execute_dca",
     );
