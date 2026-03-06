@@ -8,53 +8,7 @@
 
 ## How It Works
 
-### 1. Deposit
-
-1. Generate `nullifier` and `secret` offchain
-2. Compute `commitment = Poseidon2(nullifier, secret)`
-3. Save your note `{ nullifier, secret, commitment }` — **required for all future actions**
-4. Approve and call `deposit(commitment)` — locks `1,000 sat` wBTC, inserts leaf into Merkle tree
-
-### 2. ZK Withdraw
-
-1. Load your note → frontend reconstructs Merkle tree from indexed deposits
-2. Noir generates a ZK proof of membership without revealing your leaf
-3. Call `zk_withdraw_wbtc(proof, recipient)` → contract verifies proof, checks nullifier, sends wBTC
-
-> `recipient` is bound to the proof via `recipient_hash = Poseidon2(recipient)` — changing it invalidates the proof and prevents frontrunning.
-
-### 3. Yield Earning (Vesu)
-
-1. Load your note → generate ZK proof (same flow as withdraw)
-2. Call `start_earning(proof, recipient)` — marks nullifier spent, deposits wBTC into Vesu lending pool
-3. Vesu mints yield-bearing shares that appreciate as borrowers pay interest
-4. When ready, call `stop_earning(nullifier_hash)` — redeems shares, sends wBTC + all accrued yield to `recipient`
-
-> No ZK proof needed to stop earning — only the `recipient` address committed at start time can call it.  
-> Once `start_earning` is called, the note is consumed. The only exit is `stop_earning`.
-
-### 4. HTLC Swap (wBTC → STRK)
-
-**Alice (wBTC seller):**
-
-1. Generate `secret`, compute `hashlock = pedersen(0, secret)`
-2. Call `post_wbtc_order(proof, strk_dest, hashlock, expiry, slippage_bps)` — locks wBTC, quotes live rate
-3. After Bob fills, call `withdraw_strk(strk_order_id, secret)` — claims STRK, publishes secret on-chain
-
-**Bob (STRK seller):**
-
-1. Find Alice's order via indexer or `wbtc_order_id`
-2. Approve STRK, call `fill_wbtc_order(wbtc_order_id, bob_expiry)` — locks STRK at live rate
-3. Watch for Alice's `withdraw_strk`, then call `withdraw_wbtc(wbtc_order_id)` — secret is now on-chain
-
-**Safety guarantees:**
-
-- Bob expiry < Alice expiry — Bob can always refund STRK before Alice's window opens
-- `swap_initiated` flag — Alice cannot refund wBTC after revealing her secret
-- Rate expiry (1h) — stale quotes rejected at fill time
-- Slippage guard (0.1–10%) — fills rejected if live rate drops below Alice's floor
-
-### 5. DCA (USDC → Real BTC via Atomiq)
+### 1. DCA (USDC → Real BTC via Atomiq)
 
 Schedule recurring fixed-dollar BTC purchases at the live Pragma/Chainlink oracle price. USDC is a stable spend — BTC received varies with price, which is exactly the point of DCA. Unlike simple wBTC-minting DCA tools, Umbra delivers **native BTC to your Bitcoin wallet** via the Atomiq cross-chain LP network.
 
@@ -88,6 +42,52 @@ Schedule recurring fixed-dollar BTC purchases at the live Pragma/Chainlink oracl
 - `interval_hours`: 1–720 (1 hour to 30 days)
 - `total_intervals`: 1–1,000
 - `strk_amount` validated within 5% of live oracle price to prevent keeper manipulation
+
+### 2. Deposit
+
+1. Generate `nullifier` and `secret` offchain
+2. Compute `commitment = Poseidon2(nullifier, secret)`
+3. Save your note `{ nullifier, secret, commitment }` — **required for all future actions**
+4. Approve and call `deposit(commitment)` — locks `1,000 sat` wBTC, inserts leaf into Merkle tree
+
+### 3. ZK Withdraw
+
+1. Load your note → frontend reconstructs Merkle tree from indexed deposits
+2. Noir generates a ZK proof of membership without revealing your leaf
+3. Call `zk_withdraw_wbtc(proof, recipient)` → contract verifies proof, checks nullifier, sends wBTC
+
+> `recipient` is bound to the proof via `recipient_hash = Poseidon2(recipient)` — changing it invalidates the proof and prevents frontrunning.
+
+### 4. Yield Earning (Vesu)
+
+1. Load your note → generate ZK proof (same flow as withdraw)
+2. Call `start_earning(proof, recipient)` — marks nullifier spent, deposits wBTC into Vesu lending pool
+3. Vesu mints yield-bearing shares that appreciate as borrowers pay interest
+4. When ready, call `stop_earning(nullifier_hash)` — redeems shares, sends wBTC + all accrued yield to `recipient`
+
+> No ZK proof needed to stop earning — only the `recipient` address committed at start time can call it.  
+> Once `start_earning` is called, the note is consumed. The only exit is `stop_earning`.
+
+### 5. HTLC Swap (wBTC → STRK)
+
+**Alice (wBTC seller):**
+
+1. Generate `secret`, compute `hashlock = pedersen(0, secret)`
+2. Call `post_wbtc_order(proof, strk_dest, hashlock, expiry, slippage_bps)` — locks wBTC, quotes live rate
+3. After Bob fills, call `withdraw_strk(strk_order_id, secret)` — claims STRK, publishes secret on-chain
+
+**Bob (STRK seller):**
+
+1. Find Alice's order via indexer or `wbtc_order_id`
+2. Approve STRK, call `fill_wbtc_order(wbtc_order_id, bob_expiry)` — locks STRK at live rate
+3. Watch for Alice's `withdraw_strk`, then call `withdraw_wbtc(wbtc_order_id)` — secret is now on-chain
+
+**Safety guarantees:**
+
+- Bob expiry < Alice expiry — Bob can always refund STRK before Alice's window opens
+- `swap_initiated` flag — Alice cannot refund wBTC after revealing her secret
+- Rate expiry (1h) — stale quotes rejected at fill time
+- Slippage guard (0.1–10%) — fills rejected if live rate drops below Alice's floor
 
 ---
 
