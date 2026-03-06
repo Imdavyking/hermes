@@ -161,15 +161,14 @@ async function getAtomiqEscrowState(
     calldata,
   });
 
-  const result = raw as unknown as string[];
-  // [init_blockheight, finish_blockheight, state]
-  const state = BigInt(result[2]);
+  const [_init_blockheight, _finish_blockheight, state] =
+    raw as unknown as string[];
 
   console.log(
     `    Atomiq escrow state: ${state} — ${ESCROW_STATE_LABEL[state.toString()] ?? "unknown"}`,
   );
 
-  return state;
+  return BigInt(state);
 }
 
 // ── Shared Atomiq quote builder ───────────────────────────────────────────────
