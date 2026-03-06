@@ -156,7 +156,7 @@ Vesu vToken: 0x05868ed6b7c57ac071bf6bfe762174a2522858b700ba9fb062709e63b65bf186
 contracts/   Cairo contracts (PrivateSwap, IMT, Poseidon2, MockUSDC)
 noir/        ZK circuit (Merkle membership proof)
 indexer/     Checkpoint indexer → GraphQL API
-frontend/    React UI (Deposit, Withdraw, Swap, Yield, DCA tabs)
+frontend/    React UI (DCA, Deposit, Withdraw, Swap, Yield tabs)
 keeper/      Automated keeper — polls checker(), builds Atomiq escrow, calls execute_dca
 ```
 
