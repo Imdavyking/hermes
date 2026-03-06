@@ -165,7 +165,7 @@ async function getAtomiqEscrowState(
     raw as unknown as string[];
 
   console.log(
-    `    Atomiq escrow state: ${state} — ${ESCROW_STATE_LABEL[state.toString()] ?? "unknown"}`,
+    `    Atomiq escrow state: ${state} — ${ESCROW_STATE_LABEL[state] ?? "unknown"}`,
   );
 
   return BigInt(state);
