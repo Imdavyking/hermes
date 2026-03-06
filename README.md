@@ -153,7 +153,7 @@ Vesu vToken: 0x05868ed6b7c57ac071bf6bfe762174a2522858b700ba9fb062709e63b65bf186
 ## Architecture
 
 ```
-contracts/   Cairo contracts (PrivateSwap, IMT, Poseidon2, MockWBTC, MockUSDC)
+contracts/   Cairo contracts (PrivateSwap, IMT, Poseidon2, MockUSDC)
 noir/        ZK circuit (Merkle membership proof)
 indexer/     Checkpoint indexer → GraphQL API
 frontend/    React UI (Deposit, Withdraw, Swap, Yield, DCA tabs)
