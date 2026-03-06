@@ -1,6 +1,6 @@
 # Umbra — Private BTC Protocol on Starknet
 
-> Deposit wBTC anonymously. Withdraw to any address. Swap privately for STRK. Earn yield without revealing your position. DCA recurring USDC → **real BTC delivered to your Bitcoin wallet**. No on-chain link between depositor and withdrawer.
+> DCA recurring USDC → **real BTC delivered to your Bitcoin wallet**. Deposit wBTC anonymously. Withdraw to any address. Swap privately for STRK. Earn yield without revealing your position. No on-chain link between depositor and withdrawer.
 
 **Noir** (ZK proofs) · **Garaga** (on-chain verifier) · **Pragma/Chainlink** (oracle) · **Vesu** (yield) · **Poseidon2/BN254** (Merkle tree) · **HTLCs** (atomic swaps) · **Atomiq** (cross-chain LP network)
 
@@ -220,10 +220,10 @@ make install-app-deps          # frontend + keeper JS deps
 
 ```bash
 make build-circuit             # nargo build
-make exec-circuit              # generate witness
-make prove-circuit             # bb prove (ultra_honk, keccak)
 make gen-vk                    # write verification key
 make gen-verifier              # garaga: emit Cairo verifier contract
+make exec-circuit              # generate witness
+make prove-circuit             # bb prove (ultra_honk, keccak)
 ```
 
 ### 3. Build & deploy contracts
