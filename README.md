@@ -1,6 +1,6 @@
-# Umbra — Private BTC Protocol on Starknet
+# Umbra — BTC Protocol on Starknet
 
-> DCA recurring USDC → **real BTC delivered to your Bitcoin wallet**. Deposit wBTC anonymously. Withdraw to any address. Swap privately for STRK. Earn yield without revealing your position. No on-chain link between depositor and withdrawer.
+> DCA recurring USDC → **real BTC delivered to your Bitcoin wallet**. Deposit wBTC anonymously. Withdraw to any address. No on-chain link between depositor and withdrawer.
 
 **Noir** (ZK proofs) · **Garaga** (on-chain verifier) · **Pragma/Chainlink** (oracle) · **Vesu** (yield) · **Poseidon2/BN254** (Merkle tree) · **HTLCs** (atomic swaps) · **Atomiq** (cross-chain LP network)
 
@@ -61,12 +61,11 @@ Schedule recurring fixed-dollar BTC purchases at the live Pragma/Chainlink oracl
 ### 4. Yield Earning (Vesu)
 
 1. Load your note → generate ZK proof (same flow as withdraw)
-2. Call `start_earning(proof, recipient)` — marks nullifier spent, deposits wBTC into Vesu lending pool
+2. Call `start_earning(proof, recipient)` — marks nullifier spent, deposits wBTC into Vesu lending pool, locks `recipient` on-chain
 3. Vesu mints yield-bearing shares that appreciate as borrowers pay interest
 4. When ready, call `stop_earning(nullifier_hash)` — redeems shares, sends wBTC + all accrued yield to `recipient`
 
-> No ZK proof needed to stop earning — only the `recipient` address committed at start time can call it.  
-> Once `start_earning` is called, the note is consumed. The only exit is `stop_earning`.
+> The link between the original depositor and the yield position is broken by the ZK proof — but the recipient address and share balance are public storage. Once `start_earning` is called, the note is consumed. The only exit is `stop_earning`.
 
 ### 5. HTLC Swap (wBTC → STRK)
 
@@ -93,7 +92,7 @@ Schedule recurring fixed-dollar BTC purchases at the live Pragma/Chainlink oracl
 
 ## ZK Circuit
 
-Public inputs: `root`, `nullifier_hash`, `recipient_hash`  
+Public inputs: `root`, `nullifier_hash`, `recipient_hash`
 Private inputs: `nullifier`, `secret`, `recipient`, `merkle_proof[10]`, `is_even[10]`
 
 The circuit proves:
