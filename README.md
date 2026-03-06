@@ -197,7 +197,7 @@ wBTC for USDC = usdc_amount × WBTC_PRECISION × 10^btc_dec / (btc_usd × USDC_P
 STRK for USDC = usdc_amount × STRK_PRECISION × 10^strk_dec / (strk_usd × USDC_PRECISION)
 ```
 
-Max oracle age: 7 days (testnet) — tighten to 1h for mainnet.
+Max oracle age: 14 days (testnet) — tighten to 1h for mainnet.
 
 ---
 

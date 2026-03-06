@@ -29,7 +29,10 @@ install-garaga:
 	pip install garaga==1.0.1
 
 install-app-deps:
-	cd app && bun install
+	cd frontend && yarn
+	cd contracts && yarn
+	cd indexer && yarn
+	cd keeper && yarn
 
 devnet:
 	starknet-devnet --accounts=2 --seed=0 --initial-balance=100000000000000000000000
