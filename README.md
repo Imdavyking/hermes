@@ -188,7 +188,7 @@ const PRAGMA_ORACLE_ADDRESS: felt252 =
 const BTC_USD: felt252 = 'BTC/USD';
 const STRK_USD: felt252 = 'STRK/USD';
 
-// Chainlink
+// Chainlink (Sepolia)
 BTC/USD:  0x0258b8f498b767c200577227e3e9f009c9b0fe7f6a3c8c2c24efd588c54747a
 STRK/USD: 0x0a5db422ee7c28beead49303646e44ef9cbb8364eeba4d8af9ac06a3b556937
 
