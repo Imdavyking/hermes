@@ -73,7 +73,7 @@ export default function HomePage() {
           fontFamily: "var(--mono)",
         }}
       >
-        <Header address={address} btcPrice={btcPrice} />
+        <Header btcPrice={btcPrice} />
         <PriceTicker btcPrice={btcPrice} strkPrice={strkPrice} />
 
         {/* ── Hero ──────────────────────────────────────────────────────── */}

@@ -10,7 +10,8 @@ import OrdersPanel from "../components/dca/OrdersPanel";
 import { Section, StatCell } from "../components/ui/Layout";
 
 const fmtStrk = (raw: bigint) =>
-  (Number(raw) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 4 }) + " STRK";
+  (Number(raw) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 4 }) +
+  " STRK";
 
 type AppTab = "create" | "orders";
 
@@ -39,17 +40,24 @@ export default function AppPage() {
   const [tab, setTab] = useState<AppTab>("create");
 
   const { data: btcPriceData } = useReadContract({
-    abi, address: CONTRACT_ADDRESS,
+    abi,
+    address: CONTRACT_ADDRESS,
     functionName: "get_btc_usd_price",
-    args: [], watch: true, refetchInterval: 30_000,
+    args: [],
+    watch: true,
+    refetchInterval: 30_000,
   });
   const { data: strkPriceData } = useReadContract({
-    abi, address: CONTRACT_ADDRESS,
+    abi,
+    address: CONTRACT_ADDRESS,
     functionName: "get_strk_usd_price",
-    args: [], watch: true, refetchInterval: 30_000,
+    args: [],
+    watch: true,
+    refetchInterval: 30_000,
   });
   const { data: keeperFeeData } = useReadContract({
-    abi, address: CONTRACT_ADDRESS,
+    abi,
+    address: CONTRACT_ADDRESS,
     functionName: "keeper_fee_strk",
     args: [],
   });
@@ -64,25 +72,44 @@ export default function AppPage() {
   return (
     <>
       <Scanline />
-      <div style={{ position: "relative", zIndex: 1, minHeight: "100vh", fontFamily: "var(--mono)" }}>
-        <Header address={address} btcPrice={btcPrice} />
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          minHeight: "100vh",
+          fontFamily: "var(--mono)",
+        }}
+      >
+        <Header btcPrice={btcPrice} />
         <PriceTicker btcPrice={btcPrice} strkPrice={strkPrice} />
 
-        <main style={{ maxWidth: 860, margin: "0 auto", padding: "1.5rem 1rem 4rem" }}>
-
+        <main
+          style={{
+            maxWidth: 860,
+            margin: "0 auto",
+            padding: "1.5rem 1rem 4rem",
+          }}
+        >
           {/* ── Stat row ─────────────────────────────────────────────────── */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: "1px",
-            background: "var(--border)",
-            border: "1px solid var(--border)",
-            marginBottom: "1.5rem",
-          }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, 1fr)",
+              gap: "1px",
+              background: "var(--border)",
+              border: "1px solid var(--border)",
+              marginBottom: "1.5rem",
+            }}
+          >
             <StatCell
               label="BTC / USD"
-              value={btcPrice ? `$${(btcPrice / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
-              accent large
+              value={
+                btcPrice
+                  ? `$${(btcPrice / 1e8).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                  : "—"
+              }
+              accent
+              large
             />
             <StatCell
               label="STRK / USD"
@@ -94,14 +121,16 @@ export default function AppPage() {
           </div>
 
           {/* ── Tab nav ───────────────────────────────────────────────────── */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            border: "1px solid var(--border)",
-            background: "var(--border)",
-            gap: "1px",
-            marginBottom: "1.5rem",
-          }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              border: "1px solid var(--border)",
+              background: "var(--border)",
+              gap: "1px",
+              marginBottom: "1.5rem",
+            }}
+          >
             {TABS.map(({ key, label }) => {
               const active = tab === key;
               return (
@@ -116,7 +145,9 @@ export default function AppPage() {
                     fontFamily: "var(--display)",
                     fontSize: "0.9rem",
                     letterSpacing: "0.12em",
-                    borderBottom: active ? "2px solid var(--orange)" : "2px solid transparent",
+                    borderBottom: active
+                      ? "2px solid var(--orange)"
+                      : "2px solid transparent",
                     cursor: "pointer",
                     transition: "all 0.15s",
                     textAlign: "left",
@@ -130,7 +161,10 @@ export default function AppPage() {
 
           {/* ── Tab content ───────────────────────────────────────────────── */}
           {tab === "create" && (
-            <Section title="Schedule BTC Purchase" tag="USDC → NATIVE BTC VIA ATOMIQ">
+            <Section
+              title="Schedule BTC Purchase"
+              tag="USDC → NATIVE BTC VIA ATOMIQ"
+            >
               <CreateForm keeperFee={keeperFee} btcUsd={btcUsd} />
             </Section>
           )}
@@ -141,31 +175,40 @@ export default function AppPage() {
           )}
 
           {/* ── Info strip ────────────────────────────────────────────────── */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: "1px",
-            background: "var(--border)",
-            border: "1px solid var(--border)",
-            marginTop: "1.5rem",
-          }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: "1px",
+              background: "var(--border)",
+              border: "1px solid var(--border)",
+              marginTop: "1.5rem",
+            }}
+          >
             {INFO_CARDS.map(({ title, body }) => (
-              <div key={title} style={{ background: "var(--surface)", padding: "1.1rem" }}>
-                <div style={{
-                  fontFamily: "var(--display)",
-                  fontSize: "0.72rem",
-                  color: "var(--orange)",
-                  letterSpacing: "0.15em",
-                  marginBottom: "0.55rem",
-                }}>
+              <div
+                key={title}
+                style={{ background: "var(--surface)", padding: "1.1rem" }}
+              >
+                <div
+                  style={{
+                    fontFamily: "var(--display)",
+                    fontSize: "0.72rem",
+                    color: "var(--orange)",
+                    letterSpacing: "0.15em",
+                    marginBottom: "0.55rem",
+                  }}
+                >
                   {title}
                 </div>
-                <p style={{
-                  fontSize: "0.6rem",
-                  color: "var(--muted)",
-                  lineHeight: 1.85,
-                  letterSpacing: "0.04em",
-                }}>
+                <p
+                  style={{
+                    fontSize: "0.6rem",
+                    color: "var(--muted)",
+                    lineHeight: 1.85,
+                    letterSpacing: "0.04em",
+                  }}
+                >
                   {body}
                 </p>
               </div>
@@ -174,21 +217,42 @@ export default function AppPage() {
         </main>
 
         {/* ── Footer ────────────────────────────────────────────────────── */}
-        <footer style={{
-          borderTop: "1px solid var(--border)",
-          padding: "0.9rem 1.5rem",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "var(--surface)",
-        }}>
-          <span style={{ fontFamily: "var(--display)", fontSize: "0.85rem", color: "var(--muted2)", letterSpacing: "0.12em" }}>
+        <footer
+          style={{
+            borderTop: "1px solid var(--border)",
+            padding: "0.9rem 1.5rem",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "var(--surface)",
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--display)",
+              fontSize: "0.85rem",
+              color: "var(--muted2)",
+              letterSpacing: "0.12em",
+            }}
+          >
             HERMES
           </span>
-          <span style={{ fontSize: "0.5rem", color: "var(--muted2)", letterSpacing: "0.15em" }}>
+          <span
+            style={{
+              fontSize: "0.5rem",
+              color: "var(--muted2)",
+              letterSpacing: "0.15em",
+            }}
+          >
             STARKNET SEPOLIA · UNAUDITED · DO NOT USE WITH REAL FUNDS
           </span>
-          <span style={{ fontSize: "0.5rem", color: "var(--muted2)", letterSpacing: "0.12em" }}>
+          <span
+            style={{
+              fontSize: "0.5rem",
+              color: "var(--muted2)",
+              letterSpacing: "0.12em",
+            }}
+          >
             CHAINLINK + PRAGMA · ATOMIQ
           </span>
         </footer>
