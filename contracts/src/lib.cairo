@@ -156,6 +156,8 @@ trait IHermes<TContractState> {
     fn dca_interval_needs_refund(self: @TContractState, order_id: u256) -> bool;
     fn get_dca_pending_interval_index(self: @TContractState, order_id: u256) -> u32;
     fn is_using_pragma(self: @TContractState) -> bool;
+    fn preview_btc_for_usdc(self: @TContractState, usdc_amount: u256) -> u256;
+
 
     // --- Admin ---
     fn withdraw_strk_admin(ref self: TContractState, amount: u256, recipient: ContractAddress);
@@ -197,6 +199,7 @@ mod Hermes {
     // -------------------------------------------------------
 
     const STRK_PRECISION: u256 = 1_000_000_000_000_000_000;
+    const BTC_PRECISION: u256 = 100_000_000;
     const USDC_PRECISION: u256 = 1_000_000;
 
     // Universal asset keys — used as the single identifier passed to fetch_oracle_price.
@@ -771,6 +774,10 @@ mod Hermes {
             self.fetch_oracle_price(BTC_USD)
         }
 
+        fn preview_btc_for_usdc(self: @ContractState, usdc_amount: u256) -> u256 {
+            self.btc_for_usdc(usdc_amount)
+        }
+
         fn get_strk_usd_price(self: @ContractState) -> (u128, u32) {
             self.fetch_oracle_price(STRK_USD)
         }
@@ -922,6 +929,14 @@ mod Hermes {
             } else {
                 Option::None
             }
+        }
+
+        fn btc_for_usdc(self: @ContractState, usdc_amount: u256) -> u256 {
+            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD);
+            usdc_amount
+                * BTC_PRECISION
+                * self.pow10(btc_dec.into())
+                / (btc_usd.into() * USDC_PRECISION)
         }
 
         fn pow10(self: @ContractState, n: u256) -> u256 {
