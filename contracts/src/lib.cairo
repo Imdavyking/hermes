@@ -1,7 +1,4 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
-
-
-mod mockUSDC;
 mod pragma_oracle;
 
 // -------------------------------------------------------
@@ -126,8 +123,6 @@ struct DCAOrder {
 
 #[starknet::interface]
 trait IPrivateSwap<TContractState> {
-    // --- Core pool ---
-
     // --- DCA (USDC → BTC via Atomiq) ---
     fn create_dca_order(
         ref self: TContractState,
@@ -151,7 +146,6 @@ trait IPrivateSwap<TContractState> {
     fn get_dca_order(self: @TContractState, order_id: u256) -> DCAOrder;
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
-    fn get_btc_strk_rate(self: @TContractState) -> u256;
     fn get_dca_strk_reserved(self: @TContractState, order_id: u256) -> u256;
     fn get_dca_btc_destination(self: @TContractState, order_id: u256) -> ByteArray;
     fn keeper_fee_strk(self: @TContractState) -> u256;
@@ -178,18 +172,15 @@ trait IPrivateSwap<TContractState> {
 
 #[starknet::contract]
 mod PrivateSwap {
-    use core::pedersen::pedersen;
     use openzeppelin::token::erc20::interface::{
         IERC20Dispatcher, IERC20DispatcherTrait, IERC20MetadataDispatcher,
         IERC20MetadataDispatcherTrait,
     };
-    use starknet::class_hash::ClassHash;
+    use starknet::get_tx_info;
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
     };
-    use starknet::syscalls::deploy_syscall;
-    use starknet::{SyscallResultTrait, get_tx_info};
     use crate::pragma_oracle::{
         AggregationMode, DataType, IPragmaABIDispatcher, IPragmaABIDispatcherTrait,
         PragmaPricesResponse,
@@ -201,7 +192,6 @@ mod PrivateSwap {
         get_caller_address, get_contract_address,
     };
 
-    component!(path: IncrementalMerkleTreeComponent, storage: imt, event: ImtEvent);
 
     // -------------------------------------------------------
     // Constants
@@ -298,6 +288,9 @@ mod PrivateSwap {
         pub const STALE_CHAINLINK_PRICE: felt252 = 'stale chainlink price';
         pub const INVALID_CHAINLINK_PRICE: felt252 = 'invalid chainlink price';
         pub const BOTH_ORACLES_STALE: felt252 = 'both oracles stale';
+        pub const USDC_TRANSFER_FAILED: felt252 = 'USDC transfer failed';
+        pub const INSUFFICIENT_ALLOWANCE: felt252 = 'insufficient token allowance';
+        pub const STRK_TRANSFER_FAILED: felt252 = 'STRK transfer failed';
     }
 
     // -------------------------------------------------------
@@ -410,15 +403,11 @@ mod PrivateSwap {
     // -------------------------------------------------------
 
     #[constructor]
-    fn constructor(ref self: ContractState, verifier_class_hash: ClassHash) {
+    fn constructor(ref self: ContractState) {
         let tx_info = get_tx_info();
 
         self.strk.write(REAL_STRK_ADDRESS.try_into().unwrap());
         self.usdc.write(USDC_ADDRESS.try_into().unwrap());
-
-        let (verifier_address, _) = deploy_syscall(verifier_class_hash, 0, array![].span(), false)
-            .unwrap_syscall();
-        self.verifier.write(verifier_address);
 
         self.dca_order_count.write(0);
 
@@ -440,6 +429,79 @@ mod PrivateSwap {
 
     #[abi(embed_v0)]
     impl PrivateSwapImpl of super::IPrivateSwap<ContractState> {
+        // ---------------------------------------------------
+        // CREATE DCA ORDER
+        // ---------------------------------------------------
+        fn create_dca_order(
+            ref self: ContractState,
+            btc_destination: ByteArray,
+            usdc_per_interval: u256,
+            interval_hours: u64,
+            total_intervals: u32,
+        ) -> u256 {
+            assert(total_intervals > 0, Errors::DCA_INVALID_INTERVALS);
+            assert(total_intervals <= DCA_MAX_INTERVALS, Errors::DCA_TOO_MANY_INTERVALS);
+            assert(interval_hours > 0, Errors::DCA_INVALID_INTERVAL_HOURS);
+            assert(interval_hours <= DCA_MAX_INTERVAL_HOURS, Errors::DCA_INTERVAL_TOO_LONG);
+            assert(usdc_per_interval >= MIN_USDC_PER_INTERVAL, Errors::DCA_USDC_TOO_LOW);
+
+            let caller = get_caller_address();
+            let this = get_contract_address();
+
+            let total_usdc: u256 = usdc_per_interval * total_intervals.into();
+            let usdc = IERC20Dispatcher { contract_address: self.usdc.read() };
+            assert(usdc.allowance(caller, this) >= total_usdc, Errors::INSUFFICIENT_ALLOWANCE);
+            let ok = usdc.transfer_from(caller, this, total_usdc);
+            assert(ok, Errors::USDC_TRANSFER_FAILED);
+
+            let total_strk_fee: u256 = KEEPER_FEE_STRK * total_intervals.into();
+            let strk = IERC20Dispatcher { contract_address: self.strk.read() };
+            assert(strk.allowance(caller, this) >= total_strk_fee, Errors::DCA_STRK_FEE_ALLOWANCE);
+            let ok2 = strk.transfer_from(caller, this, total_strk_fee);
+            assert(ok2, Errors::STRK_TRANSFER_FAILED);
+
+            let order_id = self.dca_order_count.read() + 1;
+            self.dca_order_count.write(order_id);
+            let btc_destination_for_event = btc_destination.clone();
+            self.dca_btc_destinations.write(order_id, btc_destination);
+
+            let interval_seconds: u64 = interval_hours * 3_600;
+
+            self
+                .dca_orders
+                .write(
+                    order_id,
+                    DCAOrder {
+                        owner: caller,
+                        usdc_per_interval,
+                        interval_seconds,
+                        last_execution: get_block_timestamp(),
+                        total_intervals,
+                        executed_intervals: 0,
+                        is_active: true,
+                    },
+                );
+
+            self.dca_strk_reserved.write(order_id, total_strk_fee);
+            self.dca_interval_needs_refund.write(order_id, false);
+            self.dca_pending_interval_index.write(order_id, 0);
+
+            self
+                .emit(
+                    DCAOrderCreated {
+                        order_id,
+                        owner: caller,
+                        usdc_per_interval,
+                        interval_seconds,
+                        total_intervals,
+                        total_usdc_deposited: total_usdc,
+                        total_strk_fee_deposited: total_strk_fee,
+                        btc_destination: btc_destination_for_event,
+                    },
+                );
+
+            order_id
+        }
         // ---------------------------------------------------
         // EXECUTE DCA
         // ---------------------------------------------------
@@ -717,15 +779,6 @@ mod PrivateSwap {
 
         fn get_strk_usd_price(self: @ContractState) -> (u128, u32) {
             self.fetch_oracle_price(STRK_USD)
-        }
-
-        fn get_btc_strk_rate(self: @ContractState) -> u256 {
-            let (btc_usd, btc_dec) = self.fetch_oracle_price(BTC_USD);
-            let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
-            assert(btc_usd > 0, 'invalid BTC price');
-            assert(strk_usd > 0, 'invalid STRK price');
-            (btc_usd.into() * self.pow10(strk_dec.into()) * STRK_PRECISION)
-                / (strk_usd.into() * self.pow10(btc_dec.into()))
         }
 
 
