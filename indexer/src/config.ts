@@ -1,5 +1,5 @@
 import { CheckpointConfig } from "@snapshot-labs/checkpoint";
-import PrivateSwapAbi from "./abis/private_swap.abi.json";
+import HermesAbi from "./abis/hermes.abi.json";
 
 if (!process.env.RPC_URL) {
   throw new Error("RPC_URL environment variable is not set");
@@ -19,7 +19,7 @@ export const config: CheckpointConfig = {
     {
       contract: process.env.CONTRACT_ADDRESS,
       start: Number(process.env.START_BLOCK),
-      abi: "PrivateSwapAbi",
+      abi: "HermesAbi",
       events: [
         { name: "OwnershipTransferred", fn: "handleOwnershipTransferred" },
         { name: "DCAOrderCreated", fn: "handleDCAOrderCreated" },
@@ -30,5 +30,5 @@ export const config: CheckpointConfig = {
       ],
     },
   ],
-  abis: { PrivateSwapAbi },
+  abis: { HermesAbi },
 };
