@@ -5,7 +5,6 @@ import { CONTRACT_ADDRESS } from "../utils/constants";
 import Scanline from "../components/layout/Scanline";
 import Header from "../components/layout/Header";
 import PriceTicker from "../components/layout/PriceTicker";
-import { useAccount } from "@starknet-react/core";
 
 const STEPS = [
   {
@@ -36,7 +35,6 @@ const FEATURES = [
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { address } = useAccount();
 
   const { data: btcPriceData } = useReadContract({
     abi,

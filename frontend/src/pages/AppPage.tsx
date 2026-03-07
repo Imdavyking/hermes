@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAccount, useReadContract } from "@starknet-react/core";
+import { useReadContract } from "@starknet-react/core";
 import abi from "../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../utils/constants";
 import Scanline from "../components/layout/Scanline";
@@ -36,7 +36,6 @@ const INFO_CARDS = [
 ];
 
 export default function AppPage() {
-  const { address } = useAccount();
   const [tab, setTab] = useState<AppTab>("create");
 
   const { data: btcPriceData } = useReadContract({
