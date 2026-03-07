@@ -9,31 +9,31 @@ dotenv.config();
 async function main() {
   console.log("Account connected:", account.address);
 
-  const { sierraCode: privateSwapSierra, casmCode: privateSwapCasm } =
+  const { sierraCode: hermesSierra, casmCode: hermesCasm } =
     await getCompiledCode("contracts_Hermes");
 
-  // 4. Declare + Deploy PrivateSwap with all three class hashes
-  const privateSwapCalldata = new CallData(privateSwapSierra.abi);
-  const constructorCalldata = privateSwapCalldata.compile("constructor", {});
+  // 4. Declare + Deploy hermes with all three class hashes
+  const hermesCalldata = new CallData(hermesSierra.abi);
+  const constructorCalldata = hermesCalldata.compile("constructor", {});
 
   const deployResponse = await account.declareAndDeploy({
-    contract: privateSwapSierra,
-    casm: privateSwapCasm,
+    contract: hermesSierra,
+    casm: hermesCasm,
     constructorCalldata,
     salt: stark.randomAddress(),
   });
   await provider.waitForTransaction(deployResponse.deploy.transaction_hash);
 
-  const privateSwapContract = new Contract({
-    abi: privateSwapSierra.abi,
+  const hermesContract = new Contract({
+    abi: hermesSierra.abi,
     address: deployResponse.deploy.contract_address,
     providerOrAccount: account,
   });
 
   await provider.waitForTransaction(deployResponse.deploy.transaction_hash);
 
-  console.log("✅ PrivateSwap deployed at:", privateSwapContract.address);
-  console.log("STRK address:", await privateSwapContract.strk_address());
+  console.log("✅ hermes deployed at:", hermesContract.address);
+  console.log("STRK address:", await hermesContract.strk_address());
   // --- MOCKING
   // Also load MockUSDC
   // contract is identical in structure (ERC20 + mint), just configured
@@ -53,9 +53,9 @@ async function main() {
   const mockUSDCAddress = mockUSDCDeployResponse.deploy.contract_address;
   console.log("✅ MockUSDC deployed at:", mockUSDCAddress);
 
-  // 5. Register MockUSDC on PrivateSwap via set_mock_usdc (owner-only)
+  // 5. Register MockUSDC on hermes via set_mock_usdc (owner-only)
   console.log("\n--- Calling set_mock_usdc ---");
-  const setMockTx = await privateSwapContract.set_usdc(mockUSDCAddress);
+  const setMockTx = await hermesContract.set_usdc(mockUSDCAddress);
   await provider.waitForTransaction(setMockTx.transaction_hash);
   console.log("✅ set_mock_usdc confirmed, tx:", setMockTx.transaction_hash);
 
@@ -92,7 +92,7 @@ async function main() {
     console.log(`  Updated ${filePath}`);
   }
 
-  const contractAddress = privateSwapContract.address;
+  const contractAddress = hermesContract.address;
 
   console.log("\n--- Updating .env files ---");
   updateEnvFile("../frontend/.env", "VITE_CONTRACT_ADDRESS", contractAddress);
