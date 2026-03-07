@@ -32,12 +32,48 @@ export default function ConnectWalletButton({
               await connectAsync({ connector });
             }
       }
-      className={`cursor-pointer font-semibold rounded transition-all duration-300 disabled:opacity-50
-        ${compact ? "px-2 py-1 text-xs" : "px-6 py-2 text-sm"}
-        ${address ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}
-        text-white whitespace-nowrap
-      `}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        background: "transparent",
+        border: "1px solid var(--border)",
+        color: address ? "var(--muted)" : "var(--orange)",
+        fontFamily: "var(--mono)",
+        fontSize: compact ? "0.6rem" : "0.65rem",
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+        padding: compact ? "0.35rem 0.65rem" : "0.5rem 1rem",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        transition: "border-color 0.15s, color 0.15s",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor =
+          "var(--orange)";
+        (e.currentTarget as HTMLButtonElement).style.color = address
+          ? "var(--text)"
+          : "var(--orange)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.borderColor =
+          "var(--border)";
+        (e.currentTarget as HTMLButtonElement).style.color = address
+          ? "var(--muted)"
+          : "var(--orange)";
+      }}
     >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: address ? "var(--green, #22c55e)" : "var(--muted, #555)",
+          boxShadow: address ? "0 0 6px var(--green, #22c55e)" : "none",
+          flexShrink: 0,
+          display: "block",
+        }}
+      />
       {!address
         ? compact
           ? "Connect"
