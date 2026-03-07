@@ -4,7 +4,14 @@ import {
   type StarknetkitConnector,
   useStarknetkitConnectModal,
 } from "starknetkit";
-export default function ConnectWalletButton() {
+
+interface ConnectWalletButtonProps {
+  compact?: boolean;
+}
+
+export default function ConnectWalletButton({
+  compact,
+}: ConnectWalletButtonProps) {
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const { connectAsync, connectors } = useConnect();
@@ -15,33 +22,29 @@ export default function ConnectWalletButton() {
   });
 
   return (
-    <div className="flex flex-col items-center space-y-2">
-      <button
-        onClick={
-          address
-            ? () => {
-                disconnect();
-              }
-            : async () => {
-                const { connector } = await starknetkitConnectModal();
-                if (!connector) {
-                  return;
-                }
-                await connectAsync({ connector });
-              }
-        }
-        className={`cursor-pointer px-6 py-2 ${
-          address
-            ? "bg-red-600 hover:bg-red-700"
-            : "bg-blue-600 hover:bg-blue-700"
-        } text-white font-semibold rounded-lg transition-all duration-300 disabled:opacity-50`}
-      >
-        {!address
-          ? "Connect Wallet"
-          : address
-            ? `Disconnect (${ellipsify(address)})`
-            : "Connecting..."}
-      </button>
-    </div>
+    <button
+      onClick={
+        address
+          ? () => disconnect()
+          : async () => {
+              const { connector } = await starknetkitConnectModal();
+              if (!connector) return;
+              await connectAsync({ connector });
+            }
+      }
+      className={`cursor-pointer font-semibold rounded transition-all duration-300 disabled:opacity-50
+        ${compact ? "px-2 py-1 text-xs" : "px-6 py-2 text-sm"}
+        ${address ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}
+        text-white whitespace-nowrap
+      `}
+    >
+      {!address
+        ? compact
+          ? "Connect"
+          : "Connect Wallet"
+        : compact
+          ? ellipsify(address, 4)
+          : `Disconnect (${ellipsify(address)})`}
+    </button>
   );
 }
