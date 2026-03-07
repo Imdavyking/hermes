@@ -1,5 +1,6 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
 mod pragma_oracle;
+mod mockUSDC;
 
 // -------------------------------------------------------
 // External Interfaces

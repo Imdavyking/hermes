@@ -9,31 +9,12 @@ dotenv.config();
 async function main() {
   console.log("Account connected:", account.address);
 
-  // Load compiled contracts
-  const { sierraCode: verifierSierra, casmCode: verifierCasm } =
-    await getCompiledCode(
-      "../../verifier/target/dev/verifier_UltraKeccakZKHonkVerifier",
-    );
-
   const { sierraCode: privateSwapSierra, casmCode: privateSwapCasm } =
-    await getCompiledCode("contracts_PrivateSwap");
-
-  // 1. Declare Verifier
-  const verifierDeclare = await account.declareIfNot({
-    contract: verifierSierra,
-    casm: verifierCasm,
-  });
-  if (verifierDeclare.transaction_hash) {
-    await provider.waitForTransaction(verifierDeclare.transaction_hash);
-  }
-  const verifierClassHash = verifierDeclare.class_hash;
-  console.log("Verifier class hash:", verifierClassHash);
+    await getCompiledCode("contracts_Hermes");
 
   // 4. Declare + Deploy PrivateSwap with all three class hashes
   const privateSwapCalldata = new CallData(privateSwapSierra.abi);
-  const constructorCalldata = privateSwapCalldata.compile("constructor", {
-    verifier_class_hash: verifierClassHash,
-  });
+  const constructorCalldata = privateSwapCalldata.compile("constructor", {});
 
   const deployResponse = await account.declareAndDeploy({
     contract: privateSwapSierra,
@@ -52,14 +33,13 @@ async function main() {
   await provider.waitForTransaction(deployResponse.deploy.transaction_hash);
 
   console.log("✅ PrivateSwap deployed at:", privateSwapContract.address);
-  console.log("wBTC address:", await privateSwapContract.wBTC_address());
   console.log("STRK address:", await privateSwapContract.strk_address());
   // --- MOCKING
   // Also load MockUSDC
   // contract is identical in structure (ERC20 + mint), just configured
   // as usdc (6 decimals, name "usdc") in its constructor.
   const { sierraCode: mockUSDCSierra, casmCode: mockUSDCCasm } =
-    await getCompiledCode("contracts_MockUSDc");
+    await getCompiledCode("contracts_MockUSDC");
   const mockUSDCDeployResponse = await account.declareAndDeploy({
     contract: mockUSDCSierra,
     casm: mockUSDCCasm,
