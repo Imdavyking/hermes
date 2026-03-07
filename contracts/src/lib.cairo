@@ -145,6 +145,7 @@ trait IHermes<TContractState> {
     fn checker(self: @TContractState, order_id: u256) -> (bool, ExecPayload);
     fn get_dca_order(self: @TContractState, order_id: u256) -> DCAOrder;
     fn get_btc_usd_price(self: @TContractState) -> (u128, u32);
+    fn test_get_btc_usd_price(self: @TContractState) -> (u128, u32);
     fn get_strk_usd_price(self: @TContractState) -> (u128, u32);
     fn get_dca_strk_reserved(self: @TContractState, order_id: u256) -> u256;
     fn get_dca_btc_destination(self: @TContractState, order_id: u256) -> ByteArray;
@@ -769,6 +770,9 @@ mod Hermes {
 
         fn get_btc_usd_price(self: @ContractState) -> (u128, u32) {
             self.fetch_oracle_price(BTC_USD)
+        }
+        fn test_get_btc_usd_price(self: @ContractState) -> (u128, u32) {
+            self.try_chainlink_price(BTC_USD).unwrap()
         }
 
         fn get_strk_usd_price(self: @ContractState) -> (u128, u32) {
