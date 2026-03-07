@@ -126,7 +126,7 @@ The same proof is used for `zk_withdraw_wbtc`, `start_earning`, and `post_wbtc_o
 | `get_quoted_strk_amount()`                                                              | STRK owed for one lot at current price                                                 |
 | `create_dca_order(btc_destination, usdc_per_interval, interval_hours, total_intervals)` | Deposit USDC + STRK fee upfront, schedule recurring BTC purchases to a Bitcoin address |
 | `execute_dca(order_id, escrow, signature, timeout, extra_data)`                         | Keeper: commit STRK to Atomiq escrow for one interval's BTC delivery                   |
-| `refund_dca_interval(order_id)`                                                         | Settle a pending Atomiq escrow — claim (BTC delivered) or refund (LP failed, retry)    |
+| `claim_dca_interval(order_id)`                                                          | Settle a pending Atomiq escrow — claim (BTC delivered) or refund (LP failed, retry)    |
 | `cancel_dca(order_id)`                                                                  | Cancel active order, refund remaining USDC + STRK fee reserve                          |
 | `checker(order_id)`                                                                     | Keeper resolver: returns `(can_exec, payload)` with live `strk_amount`                 |
 | `preview_wbtc_for_usdc(usdc_amount)`                                                    | How much wBTC a USDC amount buys at current oracle price                               |

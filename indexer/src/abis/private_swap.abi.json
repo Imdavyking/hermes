@@ -596,7 +596,7 @@
       },
       {
         "type": "function",
-        "name": "refund_dca_interval",
+        "name": "claim_dca_interval",
         "inputs": [
           {
             "name": "order_id",

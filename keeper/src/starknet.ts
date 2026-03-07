@@ -78,7 +78,7 @@ async function getSwapper(): Promise<ReturnType<typeof factory.newSwapper>> {
 //
 // Calls IAtomiqEscrowStorage::get_state with the full EscrowData struct so we
 // can determine whether an escrow is still in-flight, claimed, or refundable
-// before attempting refund_dca_interval on-chain.
+// before attempting claim_dca_interval on-chain.
 //
 // EscrowData Cairo ABI order:
 //   offerer, claimer, token, refund_handler, claim_handler  — ContractAddress (felt252)
@@ -280,7 +280,7 @@ export async function getExecutePayload(
 // ── getRefundPayload ──────────────────────────────────────────────────────────
 //
 // Checks whether an order has a pending Atomiq escrow that has settled
-// (claimed or refundable) and returns a refund_dca_interval Call if so.
+// (claimed or refundable) and returns a claim_dca_interval Call if so.
 //
 // Uses IAtomiqEscrowStorage::get_state as the authoritative check — not
 // wall-clock expiry — so we only submit the on-chain tx when it will succeed.
@@ -322,7 +322,7 @@ export async function getRefundPayload(orderId: string): Promise<Call | null> {
 
     return {
       contractAddress: config.contractAddress,
-      entrypoint: "refund_dca_interval",
+      entrypoint: "claim_dca_interval",
       calldata: [orderIdU256.low.toString(), orderIdU256.high.toString()],
     };
   } catch (err) {
