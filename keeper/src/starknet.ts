@@ -6,7 +6,7 @@ import {
 } from "@atomiqlabs/chain-starknet";
 import { Call } from "starknet";
 import { config } from "./config";
-import abi from "./abis/private_swap.abi.json";
+import abi from "./abis/hermes.abi.json";
 import {
   SqliteStorageManager,
   SqliteUnifiedStorage,
