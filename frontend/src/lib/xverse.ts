@@ -1,6 +1,6 @@
 // lib/xverse.ts
 // Connects Xverse wallet and returns the user's Bitcoin payment address.
-// No signing, no balance fetching — address is used as DCA wBTC destination.
+// No signing, no balance fetching — address is used as DCA BTC destination.
 
 import {
   request,
@@ -19,7 +19,7 @@ export function isXverseInstalled(): boolean {
  * Bitcoin payment address (P2WPKH / P2SH-P2WPKH).
  *
  * The returned address is stored as `btc_destination` in the DCA order
- * so the Atomiq LP can deliver wBTC directly to the user's Bitcoin wallet
+ * so the Atomiq LP can deliver BTC directly to the user's Bitcoin wallet
  * on each interval execution.
  */
 export async function connectXverse(): Promise<string> {
@@ -30,7 +30,7 @@ export async function connectXverse(): Promise<string> {
   }
   const response = await request("getAccounts", {
     purposes: [AddressPurpose.Payment],
-    message: "Connect your Bitcoin wallet to receive DCA wBTC purchases",
+    message: "Connect your Bitcoin wallet to receive DCA BTC purchases",
   });
 
   if (response.status === "success") {

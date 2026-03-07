@@ -137,7 +137,7 @@ export default function CreateForm({ keeperFee }: CreateFormProps) {
   // ── BTC preview ───────────────────────────────────────────────────────────────
   const usdcRawForPreview =
     usdc && Number(usdc) > 0 ? BigInt(Math.round(Number(usdc) * 1e6)) : null;
-  const { data: wbtcPreviewData } = useReadContract({
+  const { data: btcPreviewData } = useReadContract({
     abi,
     address: CONTRACT_ADDRESS,
     functionName: "preview_btc_for_usdc",
@@ -147,8 +147,8 @@ export default function CreateForm({ keeperFee }: CreateFormProps) {
     enabled: !!usdcRawForPreview,
     watch: false,
   });
-  const btcPreviewSats = wbtcPreviewData
-    ? Number(BigInt((wbtcPreviewData as any).toString()))
+  const btcPreviewSats = btcPreviewData
+    ? Number(BigInt((btcPreviewData as any).toString()))
     : null;
 
   // ── Derived ───────────────────────────────────────────────────────────────────
