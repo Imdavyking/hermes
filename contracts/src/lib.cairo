@@ -1,6 +1,6 @@
 use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
-mod pragma_oracle;
 mod mockUSDC;
+mod pragma_oracle;
 
 // -------------------------------------------------------
 // External Interfaces
@@ -397,9 +397,6 @@ mod Hermes {
         self.chainlink_feeds.write(BTC_USD, BTC_USD_CHAINLINK);
         self.chainlink_feeds.write(STRK_USD, STRK_USD_CHAINLINK);
 
-        // Sepolia testnet: Chainlink primary, Pragma fallback
-        self.use_pragma.write(false);
-
         let owner = tx_info.account_contract_address;
         self.owner.write(owner);
         self.emit(OwnershipTransferred { previous_owner: ZERO_ADDRESS, new_owner: owner });
@@ -711,8 +708,9 @@ mod Hermes {
             let can_exec = !pending_refund
                 && order.is_active
                 && order.executed_intervals < order.total_intervals
-                && now >= order.last_execution + order.interval_seconds
-                && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
+                && now >= order.last_execution
+                + order.interval_seconds
+                    && self.dca_strk_reserved.read(order_id) >= KEEPER_FEE_STRK;
 
             let strk_amount: u256 = if can_exec {
                 let (strk_usd, strk_dec) = self.fetch_oracle_price(STRK_USD);
@@ -853,9 +851,7 @@ mod Hermes {
             timeout: u64,
             extra_data: Span<felt252>,
         ) {
-            let strk = IERC20Dispatcher {
-                contract_address: REAL_STRK_ADDRESS.try_into().unwrap(),
-            };
+            let strk = IERC20Dispatcher { contract_address: REAL_STRK_ADDRESS.try_into().unwrap() };
             let balance = strk.balance_of(get_contract_address());
             assert(balance >= escrow.amount, Errors::DCA_INSUFFICIENT_STRK);
 
@@ -896,8 +892,8 @@ mod Hermes {
             let output: PragmaPricesResponse = oracle
                 .get_data(DataType::SpotEntry(asset_key), AggregationMode::Median);
 
-            if output.price > 0
-                && output.last_updated_timestamp + MAX_ORACLE_AGE_SECS >= get_block_timestamp() {
+            if output.price > 0 && output.last_updated_timestamp
+                + MAX_ORACLE_AGE_SECS >= get_block_timestamp() {
                 Option::Some((output.price, output.decimals))
             } else {
                 Option::None
@@ -912,8 +908,7 @@ mod Hermes {
             };
             let round = feed.latest_round_data();
 
-            if round.answer > 0
-                && round.updated_at + MAX_ORACLE_AGE_SECS >= get_block_timestamp() {
+            if round.answer > 0 && round.updated_at + MAX_ORACLE_AGE_SECS >= get_block_timestamp() {
                 Option::Some((round.answer, feed.decimals().into()))
             } else {
                 Option::None
