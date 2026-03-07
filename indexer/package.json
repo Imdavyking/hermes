@@ -1,7 +1,7 @@
 {
-  "name": "private-swap-indexer",
+  "name": "indexer",
   "version": "1.0.0",
-  "description": "Checkpoint indexer for PrivateSwap on Starknet Sepolia",
+  "description": "Checkpoint indexer",
   "main": "dist/src/index.js",
   "scripts": {
     "codegen": "checkpoint generate",
