@@ -143,7 +143,7 @@ make artifacts
 ```bash
 cp indexer/.env.example indexer/.env
 cp frontend/.env.example frontend/.env
-make up                        # docker compose up --build
+make start                        # docker compose up --build
 ```
 
 Services: **Postgres** `:5555` · **Indexer + GraphQL** `:5100` · **Frontend** `:3000`
