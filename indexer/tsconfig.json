@@ -10,6 +10,6 @@
     "skipDefaultLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*", "src/.checkpoint/**/*"],
+  "include": ["src/**/*", ".checkpoint/**/*"],
   "exclude": ["node_modules", "dist"]
 }
