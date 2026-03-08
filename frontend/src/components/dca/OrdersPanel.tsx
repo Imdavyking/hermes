@@ -6,11 +6,15 @@ import { useQuery } from "@apollo/client";
 import abi from "../../assets/json/abi";
 import { CONTRACT_ADDRESS } from "../../utils/constants";
 import { assertReceiptSuccess } from "../../utils/helpers";
-import { GET_ACTIVE_DCA_ORDERS, GET_DCA_EXECUTIONS } from "../../graphql/queries";
+import {
+  GET_ACTIVE_DCA_ORDERS,
+  GET_DCA_EXECUTIONS,
+} from "../../graphql/queries";
 import OrderCard, { type DcaOrder, type DcaExecution } from "./OrderCard";
 import Spinner from "../ui/Spinner";
 
-const toHexAddr = (raw: string) => "0x" + BigInt(raw).toString(16).padStart(64, "0");
+const toHexAddr = (raw: string) =>
+  "0x" + BigInt(raw).toString(16).padStart(64, "0");
 
 interface OrdersPanelProps {
   keeperFee: bigint;
@@ -26,7 +30,11 @@ export default function OrdersPanel({ keeperFee, btcUsd }: OrdersPanelProps) {
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
-  const { data: ordersData, loading: ordersLoading, refetch } = useQuery(GET_ACTIVE_DCA_ORDERS, {
+  const {
+    data: ordersData,
+    loading: ordersLoading,
+    refetch,
+  } = useQuery(GET_ACTIVE_DCA_ORDERS, {
     variables: { owner: myAddr },
     skip: !myAddr,
     fetchPolicy: "network-only",
@@ -48,13 +56,18 @@ export default function OrdersPanel({ keeperFee, btcUsd }: OrdersPanelProps) {
       createdTxHash: o.created_tx_hash,
     }));
 
-  const { data: execData, loading: execLoading } = useQuery(GET_DCA_EXECUTIONS, {
-    variables: { orderId: expanded ?? "" },
-    skip: !expanded,
-    fetchPolicy: "network-only",
-  });
+  const { data: execData, loading: execLoading } = useQuery(
+    GET_DCA_EXECUTIONS,
+    {
+      variables: { orderId: expanded ?? "" },
+      skip: !expanded,
+      fetchPolicy: "network-only",
+    },
+  );
 
-  const execHistory: DcaExecution[] = ((execData?.dcaexecutions ?? []) as any[]).map((e: any) => ({
+  const execHistory: DcaExecution[] = (
+    (execData?.dcaexecutions ?? []) as any[]
+  ).map((e: any) => ({
     executedIntervals: Number(e.executed_intervals),
     usdcSpent: e.usdc_spent,
     keeper: e.keeper,
@@ -70,20 +83,32 @@ export default function OrdersPanel({ keeperFee, btcUsd }: OrdersPanelProps) {
     setCancelling(orderId);
     const toastId = toast.loading("Cancelling order…");
     try {
-      const populate = contract.populate("cancel_dca", [uint256.bnToUint256(BigInt(orderId))]);
+      const populate = contract.populate("cancel_dca", [
+        uint256.bnToUint256(BigInt(orderId)),
+      ]);
       await account.estimateInvokeFee([populate]);
       const tx = await account.execute([populate]);
       const receipt = await account.waitForTransaction(tx.transaction_hash);
       assertReceiptSuccess(receipt);
       toast.update(toastId, {
         render: "Order cancelled. Unspent USDC + STRK fee reserve refunded.",
-        isLoading: false, type: "success", autoClose: 5000,
+        isLoading: false,
+        type: "success",
+        autoClose: 5000,
       });
       setHidden((p) => new Set([...p, orderId]));
       if (expanded === orderId) setExpanded(null);
     } catch (err: any) {
-      const msg = err?.baseError?.data?.execution_error?.error ?? err?.message ?? String(err);
-      toast.update(toastId, { render: msg, isLoading: false, type: "error", autoClose: 5000 });
+      const msg =
+        err?.baseError?.data?.execution_error?.error ??
+        err?.message ??
+        String(err);
+      toast.update(toastId, {
+        render: msg,
+        isLoading: false,
+        type: "error",
+        autoClose: 5000,
+      });
     } finally {
       setCancelling(null);
     }
@@ -91,11 +116,16 @@ export default function OrdersPanel({ keeperFee, btcUsd }: OrdersPanelProps) {
 
   if (!address) {
     return (
-      <div style={{
-        textAlign: "center", padding: "2rem",
-        fontSize: "0.65rem", color: "var(--muted2)",
-        letterSpacing: "0.12em", fontFamily: "var(--mono)",
-      }}>
+      <div
+        style={{
+          textAlign: "center",
+          padding: "2rem",
+          fontSize: "0.65rem",
+          color: "var(--muted2)",
+          letterSpacing: "0.12em",
+          fontFamily: "var(--mono)",
+        }}
+      >
         CONNECT WALLET TO SEE YOUR ORDERS
       </div>
     );
@@ -104,34 +134,70 @@ export default function OrdersPanel({ keeperFee, btcUsd }: OrdersPanelProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
       {/* Toolbar */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-        <span style={{ fontSize: "0.55rem", color: "var(--muted)", letterSpacing: "0.15em" }}>
-          {ordersLoading ? "LOADING…" : `${orders.length} ACTIVE ORDER${orders.length !== 1 ? "S" : ""}`}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "0.25rem",
+        }}
+      >
+        <span
+          style={{
+            fontSize: "0.55rem",
+            color: "var(--muted)",
+            letterSpacing: "0.15em",
+          }}
+        >
+          {ordersLoading
+            ? "LOADING…"
+            : `${orders.length} ACTIVE ORDER${orders.length !== 1 ? "S" : ""}`}
         </span>
-        <button onClick={() => refetch()} style={{
-          background: "transparent", color: "var(--muted)",
-          border: "1px solid var(--border2)",
-          padding: "0.25rem 0.65rem",
-          fontSize: "0.55rem", letterSpacing: "0.12em",
-          fontFamily: "var(--mono)", borderRadius: 2,
-          cursor: "pointer", display: "flex", alignItems: "center", gap: "0.35rem",
-        }}>
+        <button
+          onClick={() => refetch()}
+          style={{
+            background: "transparent",
+            color: "var(--muted)",
+            border: "1px solid var(--border2)",
+            padding: "0.25rem 0.65rem",
+            fontSize: "0.55rem",
+            letterSpacing: "0.12em",
+            fontFamily: "var(--mono)",
+            borderRadius: 2,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.35rem",
+          }}
+        >
           {ordersLoading ? <Spinner size={9} /> : "↻"} REFRESH
         </button>
       </div>
 
       {ordersLoading && (
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.62rem", color: "var(--muted)" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            fontSize: "0.62rem",
+            color: "var(--muted)",
+          }}
+        >
           <Spinner size={10} /> Loading from indexer…
         </div>
       )}
 
       {!ordersLoading && orders.length === 0 && (
-        <div style={{
-          textAlign: "center", padding: "2rem",
-          fontSize: "0.62rem", color: "var(--muted2)",
-          letterSpacing: "0.12em",
-        }}>
+        <div
+          style={{
+            textAlign: "center",
+            padding: "2rem",
+            fontSize: "0.62rem",
+            color: "var(--muted2)",
+            letterSpacing: "0.12em",
+          }}
+        >
           NO ACTIVE DCA ORDERS
         </div>
       )}
@@ -143,7 +209,9 @@ export default function OrdersPanel({ keeperFee, btcUsd }: OrdersPanelProps) {
           keeperFee={keeperFee}
           btcUsd={btcUsd}
           expanded={expanded === order.orderId}
-          onToggle={() => setExpanded(expanded === order.orderId ? null : order.orderId)}
+          onToggle={() =>
+            setExpanded(expanded === order.orderId ? null : order.orderId)
+          }
           onCancel={handleCancel}
           cancelling={cancelling === order.orderId}
           execHistory={expanded === order.orderId ? execHistory : []}
