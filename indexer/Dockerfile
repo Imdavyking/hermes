@@ -8,9 +8,8 @@ COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
 COPY . .
-RUN yarn codegen
 RUN yarn build
 
 EXPOSE 5100
 
-CMD ["yarn", "start"]
+CMD ["sh", "-c", "yarn codegen && yarn start"]
