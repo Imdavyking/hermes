@@ -38,6 +38,7 @@ checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
 async function run() {
   await checkpoint.resetMetadata();
+  await checkpoint.reset();
 
   const app = express();
   app.use(express.json({ limit: "4mb" }));
