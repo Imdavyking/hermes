@@ -37,7 +37,6 @@ const sepoliaIndexer = new starknet.StarknetIndexer(
 checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
 async function run() {
-  await checkpoint.reset();
   await checkpoint.resetMetadata();
 
   const app = express();
