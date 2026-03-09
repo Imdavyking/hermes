@@ -38,7 +38,7 @@ checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
 async function run() {
   await checkpoint.reset();
-  await checkpoint.start();
+
   const app = express();
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ limit: "4mb", extended: false }));
@@ -47,6 +47,8 @@ async function run() {
 
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => console.log(`Listening at http://localhost:${PORT}`));
+
+  await checkpoint.start();
 }
 
 run().catch((err) => {
