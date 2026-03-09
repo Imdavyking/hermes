@@ -13,4 +13,4 @@ RUN yarn build
 
 EXPOSE 5100
 
-CMD ["sh", "-c", "yarn codegen && node dist/src/index.js"]
+CMD ["node", "dist/src/index.js"]
