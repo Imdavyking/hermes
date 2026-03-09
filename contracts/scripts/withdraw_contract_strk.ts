@@ -2,15 +2,14 @@ import { hash } from "starknet";
 import { account, provider } from "./config";
 
 const UDC_ADDRESS =
-  "0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf";
+  "0x02ceed65a4bd731034c01113685c831b01c15d7d432f71afb1cf1634b53a2125";
 
 const CONTRACT_DEPLOYED_KEY = hash.getSelectorFromName("ContractDeployed");
 
 // All accounts you've ever deployed from
-const DEPLOYER_SUFFIXES = [
-  account.address,
-  "0x02ceed65a4bd731034c01113685c831b01c15d7d432f71afb1cf1634b53a2125",
-].map((a) => a.replace("0x", "").slice(-62).toLowerCase());
+const DEPLOYER_SUFFIXES = [account.address].map((a) =>
+  a.replace("0x", "").slice(-62).toLowerCase(),
+);
 
 console.log({ DEPLOYER_SUFFIXES });
 
