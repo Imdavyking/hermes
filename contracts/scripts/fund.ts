@@ -7,8 +7,8 @@ const STRK_ADDRESS =
   "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
 const RECIPIENT =
-  "0x0407C98032c3A826952D9E25C1e4a999f72471E2946751446675F8F381470CC5";
-const AMOUNT = BigInt(100) * BigInt(10 ** 18); // 100 STRK (18 decimals)
+  "0x7b3a1214a1aad4f2dcc3b505185ec57bc0e368e0d1e39f14e0b4826a568e216";
+const AMOUNT = BigInt(1000) * BigInt(10 ** 18);
 
 async function main() {
   const provider = new RpcProvider({ nodeUrl: process.env.RPC_ENDPOINT });
