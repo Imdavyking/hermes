@@ -117,6 +117,8 @@ export function createWriters(ctx: Context) {
     const newOwner = event
       ? toHexAddress(event.new_owner)
       : toHexAddress(rawEvent.data[1]);
+    const existing = await OwnershipTransfer.loadEntity(txId, ctx.indexerName);
+    if (existing) return;
     const transfer = new OwnershipTransfer(txId, ctx.indexerName);
     transfer.previous_owner = previousOwner;
     transfer.new_owner = newOwner;
