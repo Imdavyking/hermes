@@ -59,6 +59,7 @@ const factory = new SwapperFactory<[StarknetInitializerType]>([
 const Tokens = factory.Tokens;
 
 let _swapper: ReturnType<typeof factory.newSwapper> | null = null;
+    // getPriceFn: (tickers: string[], abortSignal?: AbortSignal) => customPricingApi.getUsdPriceForTickers(tickers) //Overrides the default pricing API engine with a custom price getter
 
 async function getSwapper(): Promise<ReturnType<typeof factory.newSwapper>> {
   if (_swapper) return _swapper;
