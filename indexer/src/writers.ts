@@ -180,6 +180,8 @@ export function createWriters(ctx: Context) {
       const decoded = readByteArray(d, 11);
       btcDestination = decoded.value;
     } else return;
+    const existing = await DcaOrder.loadEntity(orderId, ctx.indexerName);
+    if (existing) return;
     const order = new DcaOrder(orderId, ctx.indexerName);
     order.owner = owner;
     order.usdc_per_interval = usdcPerInterval;
@@ -235,6 +237,11 @@ export function createWriters(ctx: Context) {
       await order.save();
     }
 
+    const existing = await DcaExecution.loadEntity(
+      `${orderId}-${executedIntervals}`,
+      ctx.indexerName,
+    );
+    if (existing) return;
     const exec = new DcaExecution(
       `${orderId}-${executedIntervals}`,
       ctx.indexerName,
