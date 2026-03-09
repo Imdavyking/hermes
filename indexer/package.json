@@ -16,6 +16,7 @@
     "@snapshot-labs/checkpoint": "0.1.0-beta.68",
     "@snapshot-labs/sx": "0.1.9",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "dotenv": "^16.3.1",
     "express": "^4.18.2"
   },

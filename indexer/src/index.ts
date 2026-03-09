@@ -8,6 +8,7 @@ import { RpcProvider } from "starknet";
 import { config } from "./config";
 import { createWriters } from "./writers";
 import overrides from "./overrides.json";
+import crypto from "crypto";
 
 export type Context = {
   indexerName: string;
@@ -47,7 +48,13 @@ async function initializeCheckpoint() {
     return;
   }
 
-  const currentVersionTag = `commit:${GIT_COMMIT}|contract:${config.sources[0].contract}|start:${config.start}`;
+  const currentVersionTag = crypto
+    .createHash("sha256")
+    .update(
+      `commit:${GIT_COMMIT}|contract:${config.sources[0].contract}|start:${config.start}`,
+    )
+    .digest("hex")
+    .slice(0, 64);
   const { knex } = checkpoint.getBaseContext();
 
   const isInitialized = await knex.schema.hasTable("_metadatas");
