@@ -1,8 +1,11 @@
-import { hash } from "starknet";
+import { hash, uint256, CallData } from "starknet";
 import { account, provider } from "./config";
 
 const UDC_ADDRESS =
   "0x02ceed65a4bd731034c01113685c831b01c15d7d432f71afb1cf1634b53a2125";
+
+const STRK_ADDRESS =
+  "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
 const CONTRACT_DEPLOYED_KEY = hash.getSelectorFromName("ContractDeployed");
 const CONCURRENCY = 3;
@@ -14,6 +17,10 @@ const DEPLOYER_SUFFIXES = [account.address].map((a) =>
 );
 
 console.log({ DEPLOYER_SUFFIXES });
+
+// -------------------------------------------------------
+// Helpers
+// -------------------------------------------------------
 
 function isOurDeployer(address: string): boolean {
   const normalized = address.replace("0x", "").toLowerCase();
@@ -29,8 +36,7 @@ async function fetchWithRetry(txHash: string): Promise<any> {
     try {
       return await provider.getTransaction(txHash);
     } catch (err: any) {
-      const isLast = attempt === MAX_RETRIES;
-      if (isLast) throw err;
+      if (attempt === MAX_RETRIES) throw err;
       const delay = RETRY_DELAY_MS * attempt;
       console.warn(
         `  Retry ${attempt}/${MAX_RETRIES} for ${txHash} in ${delay}ms...`,
@@ -55,6 +61,10 @@ async function limit<T>(
   await Promise.all(Array.from({ length: concurrency }, worker));
   return results;
 }
+
+// -------------------------------------------------------
+// Step 1 — discover deployed contracts
+// -------------------------------------------------------
 
 async function getDeployedContracts(): Promise<string[]> {
   const contracts: string[] = [];
@@ -118,18 +128,76 @@ async function getDeployedContracts(): Promise<string[]> {
     );
 
     await limit(tasks, CONCURRENCY);
-
     continuationToken = result.continuation_token;
   } while (continuationToken);
 
   return contracts;
 }
 
+// -------------------------------------------------------
+// Step 2 — check balance and withdraw
+// -------------------------------------------------------
+
+async function getStrkBalance(contractAddress: string): Promise<bigint> {
+  const result = await provider.callContract({
+    contractAddress: STRK_ADDRESS,
+    entrypoint: "balance_of",
+    calldata: CallData.compile([contractAddress]),
+  });
+  const r = result as unknown as string[];
+  return uint256.uint256ToBN({ low: r[0], high: r[1] });
+}
+
+async function withdrawStrk(contractAddress: string): Promise<void> {
+  const balance = await getStrkBalance(contractAddress);
+  const strkAmount = Number(balance) / 1e18;
+  console.log(`\n  ${contractAddress}`);
+  console.log(`  Balance: ${strkAmount} STRK`);
+
+  if (balance === BigInt(0)) {
+    console.log(`  Skipping — empty.`);
+    return;
+  }
+
+  try {
+    const tx = await account.execute([
+      {
+        contractAddress,
+        entrypoint: "withdraw_strk_admin",
+        calldata: CallData.compile([
+          uint256.bnToUint256(balance),
+          account.address,
+        ]),
+      },
+    ]);
+    console.log(`  Tx: ${tx.transaction_hash}`);
+
+    const receipt = await account.waitForTransaction(tx.transaction_hash);
+    const reverted = (receipt as any).revert_reason;
+    if (reverted) throw new Error(`Reverted: ${reverted}`);
+
+    console.log(`  ✓ Withdrew ${strkAmount} STRK`);
+  } catch (err: any) {
+    console.warn(`  ✗ Withdraw failed: ${err.message}`);
+  }
+}
+
+// -------------------------------------------------------
+// Main
+// -------------------------------------------------------
+
 async function main() {
-  console.log(`Fetching contracts deployed by any known account...`);
+  console.log(`Scanning contracts deployed by ${account.address}...\n`);
   const contracts = await getDeployedContracts();
-  console.log(`\nFound ${contracts.length} contracts:`);
-  contracts.forEach((c) => console.log(`  ${c}`));
+  console.log(`\nFound ${contracts.length} contracts. Checking balances...\n`);
+
+  // Sequential — each withdraw waits for confirmation before next
+  // to avoid nonce collisions on the same account
+  for (const contractAddress of contracts) {
+    await withdrawStrk(contractAddress);
+  }
+
+  console.log("\nDone.");
 }
 
 main().catch((err) => {
