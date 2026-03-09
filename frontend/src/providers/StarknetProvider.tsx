@@ -16,7 +16,7 @@ import { InjectedConnector } from "starknetkit/injected";
 import { WebWalletConnector } from "starknetkit/webwallet";
 import { ControllerConnector } from "starknetkit/controller";
 import { getStarknet } from "@starknet-io/get-starknet-core";
-import { StarknetConfig, publicProvider } from "@starknet-react/core";
+import { StarknetConfig } from "@starknet-react/core";
 import { sepolia } from "@starknet-react/chains";
 
 const isMobileDevice = () => {
