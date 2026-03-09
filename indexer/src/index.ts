@@ -26,7 +26,6 @@ const checkpoint = new Checkpoint(schema, {
   resetOnConfigChange: true,
 });
 
-// Register the Sepolia indexer
 const sepoliaContext: Context = {
   indexerName: "sepolia",
   provider: new RpcProvider({ nodeUrl: config.network_node_url }),
@@ -36,10 +35,53 @@ const sepoliaIndexer = new starknet.StarknetIndexer(
 );
 checkpoint.addIndexer("sepolia", config, sepoliaIndexer);
 
-async function run() {
-  // await checkpoint.resetMetadata();
-  // await checkpoint.reset();
+// ── Version-based reset ───────────────────────────────────────────────────────
+async function initializeCheckpoint() {
+  const GIT_COMMIT =
+    process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT;
 
+  if (!GIT_COMMIT) {
+    console.log("No GIT_COMMIT found, resetting (local dev).");
+    await checkpoint.resetMetadata();
+    await checkpoint.reset();
+    return;
+  }
+
+  const currentVersionTag = `commit:${GIT_COMMIT}|contract:${config.sources[0].contract}|start:${config.start}`;
+  const { knex } = checkpoint.getBaseContext();
+
+  const isInitialized = await knex.schema.hasTable("_metadatas");
+  if (isInitialized) {
+    const row = await knex
+      .select("*")
+      .from("_metadatas")
+      .where({ id: "version_tag", indexer: "_global" })
+      .first();
+
+    const storedTag = row?.value ?? null;
+
+    if (storedTag === currentVersionTag) {
+      console.log("Version unchanged, continuing.", { currentVersionTag });
+      return;
+    }
+
+    console.log("Version changed, resetting.", {
+      currentVersionTag,
+      storedTag,
+    });
+  }
+
+  await checkpoint.resetMetadata();
+  await checkpoint.reset();
+
+  await knex("_metadatas").insert({
+    id: "version_tag",
+    indexer: "_global",
+    value: currentVersionTag,
+  });
+}
+
+async function run() {
   const app = express();
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ limit: "4mb", extended: false }));
@@ -49,6 +91,7 @@ async function run() {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => console.log(`Listening at http://localhost:${PORT}`));
 
+  await initializeCheckpoint();
   await checkpoint.start();
 }
 
