@@ -12,3 +12,4 @@ coverage
 
 # Checkpoint
 .checkpoint
+node_modules/
