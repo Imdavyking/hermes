@@ -1,56 +1,81 @@
-import { uint256, CallData } from "starknet";
+import { hash } from "starknet";
 import { account, provider } from "./config";
 
+const UDC_ADDRESS =
+  "0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf";
+
+const CONTRACT_DEPLOYED_KEY = hash.getSelectorFromName("ContractDeployed");
+
+// All accounts you've ever deployed from
+const DEPLOYER_SUFFIXES = [
+  account.address,
+  "0x02ceed65a4bd731034c01113685c831b01c15d7d432f71afb1cf1634b53a2125",
+].map((a) => a.replace("0x", "").slice(-62).toLowerCase());
+
+console.log({ DEPLOYER_SUFFIXES });
+
+function isOurDeployer(address: string): boolean {
+  const normalized = address.replace("0x", "").toLowerCase();
+  return DEPLOYER_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+async function getDeployedContracts(): Promise<string[]> {
+  const contracts: string[] = [];
+  let continuationToken: string | undefined = undefined;
+  const checkedTxs = new Set<string>();
+
+  do {
+    const result = await provider.getEvents({
+      address: UDC_ADDRESS,
+      keys: [[CONTRACT_DEPLOYED_KEY]],
+      from_block: { block_number: 7000000 },
+      to_block: "latest",
+      chunk_size: 1000,
+      continuation_token: continuationToken,
+    });
+
+    for (const event of result.events) {
+      if (event.data.length < 2) continue;
+
+      // Case 1: deployer field is one of our wallets directly
+      if (isOurDeployer(event.data[1])) {
+        contracts.push(event.data[0]);
+        console.log(
+          `  [direct] block ${event.block_number} → ${event.data[0]}`,
+        );
+        continue;
+      }
+
+      // Case 2: UDC deployed on our behalf — check tx sender
+      const txHash = event.transaction_hash;
+      if (checkedTxs.has(txHash)) continue;
+      checkedTxs.add(txHash);
+
+      try {
+        const tx = await provider.getTransaction(txHash);
+        const sender = (tx as any).sender_address ?? "";
+        if (isOurDeployer(sender)) {
+          contracts.push(event.data[0]);
+          console.log(
+            `  [via udc] block ${event.block_number} → ${event.data[0]}`,
+          );
+        }
+      } catch (err) {
+        console.warn(`  Failed to fetch tx ${txHash}:`, err);
+      }
+    }
+
+    continuationToken = result.continuation_token;
+  } while (continuationToken);
+
+  return contracts;
+}
+
 async function main() {
-  // ── 1. Read STRK address from contract ───────────────────────────────────
-
-  const config = {
-    contractAddress:
-      "0x239ff2dfb282380b45db1cb4ee4a204d770976dfaeeba17080d9f81befbd6ad",
-  };
-
-  const strkAddress =
-    "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
-  console.log(`STRK token address: ${strkAddress}`);
-
-  // ── 2. Read contract's STRK balance via raw callContract ─────────────────
-  const balanceResult = await provider.callContract({
-    contractAddress: strkAddress,
-    entrypoint: "balance_of",
-    calldata: CallData.compile([config.contractAddress]),
-  });
-
-  const result = balanceResult as unknown as string[];
-  const balance = uint256.uint256ToBN({ low: result[0], high: result[1] });
-  console.log(
-    `Contract STRK balance: ${balance} (${Number(balance) / 1e18} STRK)`,
-  );
-
-  if (balance === BigInt(0)) {
-    console.log("Nothing to withdraw.");
-    return;
-  }
-
-  // ── 3. Withdraw all to admin via raw execute ──────────────────────────────
-  const recipient = account.address;
-  console.log(`Withdrawing to: ${recipient}`);
-
-  const balanceU256 = uint256.bnToUint256(balance);
-
-  const tx = await account.execute([
-    {
-      contractAddress: config.contractAddress,
-      entrypoint: "withdraw_strk_admin",
-      calldata: CallData.compile([balanceU256, recipient]),
-    },
-  ]);
-  console.log(`Tx submitted: ${tx.transaction_hash}`);
-
-  const receipt = await account.waitForTransaction(tx.transaction_hash);
-  const reverted = (receipt as any).revert_reason;
-  if (reverted) throw new Error(`Transaction reverted: ${reverted}`);
-
-  console.log(`✓ Withdrew ${Number(balance) / 1e18} STRK to ${recipient}`);
+  console.log(`Fetching contracts deployed by any known account...`);
+  const contracts = await getDeployedContracts();
+  console.log(`\nFound ${contracts.length} contracts:`);
+  contracts.forEach((c) => console.log(`  ${c}`));
 }
 
 main().catch((err) => {
