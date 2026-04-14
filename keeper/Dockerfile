@@ -1,18 +1,18 @@
 # syntax=docker/dockerfile:1
 
 ARG NODE_VERSION=22.8.0
-ARG NODE_ENV=development
 
 FROM node:${NODE_VERSION}-alpine
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --frozen-lockfile
+# Copy lock file too — this is critical
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
 
 COPY tsconfig.json ./
 COPY src/ ./src/
 
-RUN npm run build
+RUN yarn build
 
 CMD ["node", "dist/index.js"]

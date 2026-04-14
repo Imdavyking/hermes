@@ -1,7 +1,7 @@
 {
-  "name": "umbra-keeper",
+  "name": "hermes-keeper",
   "version": "1.0.0",
-  "description": "DCA order keeper for Umbra protocol",
+  "description": "DCA order keeper for Hermes protocol",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
